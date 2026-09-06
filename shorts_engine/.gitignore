@@ -1,0 +1,76 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# .gitignore — Batch Greek Shorts Processing Engine
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+*.whl
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Streamlit cache
+.streamlit/
+
+# Output videos (large binary, user-generated)
+output/
+*.mp4
+*.mkv
+*.mov
+*.avi
+*.webm
+
+# Temp / scratch
+tmp/
+temp/
+*.tmp
+
+# Model cache (faster-whisper downloads large .bin files)
+models/
+*.bin
+
+# Pexels / B-roll download cache
+broll_cache/
+
+# API Keys & Secrets
+# ─────────────────────────────────────────────────────────────────
+# The following two API keys are required by this project:
+#   PEXELS_API_KEY   — https://www.pexels.com/api/
+#   GEMINI_API_KEY   — https://aistudio.google.com/app/apikey
+#
+# NEVER commit files containing these keys to version control.
+# Supported storage patterns — all are ignored below:
+#   .env                  (python-dotenv / generic)
+#   .env.*                (.env.local, .env.production, etc.)
+#   keys.json             (manual JSON credential file)
+#   .streamlit/secrets.toml (Streamlit native secrets)
+# ─────────────────────────────────────────────────────────────────
+.env
+*.env
+.env.*
+keys.json
+secrets.toml
+.streamlit/secrets.toml
+
+# Bundled FFmpeg binaries (downloaded at runtime by run.bat)
+bin/
+
+# IDE / OS artefacts
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
