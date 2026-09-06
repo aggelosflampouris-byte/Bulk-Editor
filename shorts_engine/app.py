@@ -96,24 +96,17 @@ st.markdown("""
         transform: translateY(-1px);
     }
 
-    /* 9:16 video preview container */
-    .video-container-916 {
-        width: 100%;
-        max-width: 340px;
-        margin: 0 auto 1rem auto;
-        aspect-ratio: 9 / 16;
-        border-radius: 16px;
-        overflow: hidden;
-        border: 1px solid rgba(139, 92, 246, 0.3);
-        background: #000;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
-    .video-container-916 video {
+    /* Constrain st.video() player to a 9:16 portrait shape.
+       Streamlit renders video as an <iframe> inside [data-testid=stVideo].
+       We target it inside .video-col to avoid affecting other players. */
+    .video-col [data-testid="stVideo"],
+    .video-col [data-testid="stVideo"] > div,
+    .video-col [data-testid="stVideo"] iframe {
         width: 100% !important;
-        height: 100% !important;
-        object-fit: contain;
+        aspect-ratio: 9 / 16 !important;
+        height: auto !important;
+        border-radius: 12px;
+        overflow: hidden;
     }
 
     /* Result cards */
@@ -335,22 +328,29 @@ def _render_result_card(result: ProcessingResult, index: int) -> None:
         st.markdown(status_badge, unsafe_allow_html=True)
 
     if result.success and result.output_file:
-        # 9:16 video preview container
-        if result.output_file.is_file():
-            st.markdown(
-                '<div class="video-container-916">',
-                unsafe_allow_html=True,
-            )
-            st.video(str(result.output_file))
+        # Two-column layout: video player left, metadata right.
+        # Using st.columns() to constrain width — st.video() cannot be
+        # nested inside an HTML <div> injected via unsafe_allow_html.
+        vid_col, meta_col = st.columns([2, 3])
+
+        with vid_col:
+            st.markdown('<div class="video-col">', unsafe_allow_html=True)
+            if result.output_file.is_file():
+                st.video(str(result.output_file))
+                st.download_button(
+                    label="⬇ Download Short (.mp4)",
+                    data=result.output_file.read_bytes(),
+                    file_name=result.output_file.name,
+                    mime="video/mp4",
+                    key=f"video_download_{index}",
+                    use_container_width=True,
+                )
             st.markdown('</div>', unsafe_allow_html=True)
 
-        col_out, col_seo = st.columns(2)
-
-        with col_out:
+        with meta_col:
             st.markdown("**📁 Output file**")
             st.code(str(result.output_file), language=None)
 
-        with col_seo:
             if result.seo:
                 st.markdown("**📝 SEO Metadata**")
                 st.markdown(f"**Title:** {result.seo.title}")
@@ -365,7 +365,7 @@ def _render_result_card(result: ProcessingResult, index: int) -> None:
                 with st.expander("Full Description"):
                     st.text(result.seo.description)
 
-                # Download SEO JSON button
+                # Download SEO JSON
                 seo_json_path = result.output_file.parent / f"seo_{result.output_file.stem.replace('_short','')}.json"
                 if seo_json_path.is_file():
                     st.download_button(
@@ -375,16 +375,6 @@ def _render_result_card(result: ProcessingResult, index: int) -> None:
                         mime="application/json",
                         key=f"seo_download_{index}",
                     )
-
-        # Download processed video
-        if result.output_file.is_file():
-            st.download_button(
-                label="⬇ Download Short (.mp4)",
-                data=result.output_file.read_bytes(),
-                file_name=result.output_file.name,
-                mime="video/mp4",
-                key=f"video_download_{index}",
-            )
 
     if result.error:
         st.error(f"**Error:** {result.error}")
