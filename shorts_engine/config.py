@@ -128,12 +128,15 @@ def assert_system_binaries() -> None:
         )
 
 
-# ── ASS Subtitle Style ─────────────────────────────────────────────────────────
+# ── ASS Subtitle Styles ────────────────────────────────────────────────────────
 
-# A complete ASS V4+ style definition that is safe for Greek character rendering.
-# Arial is specified as the primary font because it ships with Windows and has
-# broad Greek Unicode glyph coverage. The fallback chain ensures correct rendering
-# even when Arial is unavailable (Linux/macOS scenarios).
+# Default subtitle style — Greek-safe Arial.
+#
+# Key positioning parameters:
+#   Alignment = 2  (bottom-centre in the Numpad layout)
+#   MarginV   = 540  — pushes the baseline 540 px above the bottom edge of the
+#               1920-px frame, placing captions in the speaker's lower-third
+#               (roughly 28% up) rather than the dead-zone at the very bottom.
 #
 # Format order: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour,
 #   OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut,
@@ -141,10 +144,18 @@ def assert_system_binaries() -> None:
 #   Alignment, MarginL, MarginR, MarginV, Encoding
 ASS_STYLE_LINE: str = (
     "Style: Default,Arial,56,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,"
-    "1,0,0,0,100,100,0,0,1,2.5,1.5,2,80,80,60,1"
+    "1,0,0,0,100,100,0,0,1,2.5,1.5,2,80,80,540,1"
 )
 
-# Full ASS file header template.  {events_section} is replaced at generation time.
+# Highlight style — identical to Default but with a yellow primary colour.
+# Active words receive {\rHighlight} via karaoke tags so the current spoken
+# word highlights while unspoken text remains white.
+ASS_HIGHLIGHT_STYLE_LINE: str = (
+    "Style: Highlight,Arial,56,&H0000FFFF,&H000000FF,&H00000000,&H80000000,"
+    "1,0,0,0,100,100,0,0,1,2.5,1.5,2,80,80,540,1"
+)
+
+# Full ASS file header template.  {dialogue_lines} is replaced at generation time.
 ASS_HEADER_TEMPLATE: str = """\
 [Script Info]
 ScriptType: v4.00+
@@ -156,6 +167,7 @@ YCbCr Matrix: TV.709
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 {style_line}
+{highlight_style_line}
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text

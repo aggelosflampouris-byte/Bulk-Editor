@@ -17,7 +17,7 @@ from typing import Optional
 
 from faster_whisper import WhisperModel
 
-from config import ASS_HEADER_TEMPLATE, ASS_STYLE_LINE
+from config import ASS_HEADER_TEMPLATE, ASS_HIGHLIGHT_STYLE_LINE, ASS_STYLE_LINE
 
 logger = logging.getLogger(__name__)
 
@@ -30,12 +30,20 @@ class TranscriptionSegment:
     Uses __slots__ for memory efficiency when processing many segments.
     """
 
-    __slots__ = ("start", "end", "text")
+    __slots__ = ("start", "end", "text", "words")
 
-    def __init__(self, start: float, end: float, text: str) -> None:
+    def __init__(
+        self,
+        start: float,
+        end: float,
+        text: str,
+        words: Optional[list[tuple[float, float, str]]] = None,
+    ) -> None:
         self.start: float = start
         self.end: float = end
         self.text: str = text.strip()
+        # Each entry: (word_start, word_end, word_text)
+        self.words: Optional[list[tuple[float, float, str]]] = words
 
     def __repr__(self) -> str:
         return f"TranscriptionSegment(start={self.start:.2f}, end={self.end:.2f}, text={self.text!r})"
@@ -85,7 +93,7 @@ def transcribe(
             str(video_path),
             language="el",
             beam_size=5,
-            word_timestamps=False,
+            word_timestamps=True,
             vad_filter=True,
             vad_parameters={"min_silence_duration_ms": 300},
         )
@@ -94,11 +102,21 @@ def transcribe(
             f"Transcription failed for '{video_path.name}': {exc}"
         ) from exc
 
-    segments: list[TranscriptionSegment] = [
-        TranscriptionSegment(seg.start, seg.end, seg.text)
-        for seg in raw_segments
-        if seg.text.strip()  # Discard empty/whitespace-only segments
-    ]
+    segments: list[TranscriptionSegment] = []
+    for seg in raw_segments:
+        if not seg.text.strip():
+            continue
+        # Extract word-level timing when available
+        word_data: Optional[list[tuple[float, float, str]]] = None
+        if seg.words:
+            word_data = [
+                (w.start, w.end, w.word)
+                for w in seg.words
+                if w.word.strip()
+            ]
+        segments.append(
+            TranscriptionSegment(seg.start, seg.end, seg.text, word_data)
+        )
 
     logger.info("Transcription complete — %d segments extracted.", len(segments))
     return segments
@@ -143,34 +161,79 @@ def _escape_ass_text(text: str) -> str:
     return text
 
 
+def _build_karaoke_text(words: list[tuple[float, float, str]], seg_start: float) -> str:
+    """
+    Build an ASS karaoke text string with per-word {\\k} timing tags.
+
+    Each word is prefixed with {\\rHighlight\\k<centiseconds>} so it renders
+    in yellow while being spoken and returns to white afterwards.  Between
+    words, {\\rDefault} resets the style to white.
+
+    The {\\k} tag duration is the time the highlighted word is displayed
+    (in centiseconds, i.e. hundredths of a second).
+
+    Args:
+        words:     List of (word_start, word_end, word_text) tuples.
+        seg_start: Segment start time in seconds (used to compute relative offsets).
+
+    Returns:
+        ASS dialogue Text field string with inline karaoke override tags.
+    """
+    parts: list[str] = []
+    for w_start, w_end, w_text in words:
+        duration_cs = max(1, int(round((w_end - w_start) * 100)))
+        safe = _escape_ass_text(w_text)
+        # Switch to Highlight style for the active word, then reset to Default
+        parts.append(f"{{\\rHighlight\\k{duration_cs}}}{safe}{{\\rDefault}}")
+    return " ".join(parts)
+
+
 def segments_to_ass(
     segments: list[TranscriptionSegment],
     style_line: Optional[str] = None,
+    highlight_style_line: Optional[str] = None,
 ) -> str:
     """
     Render a full ASS subtitle file string from a list of segments.
 
+    When word-level timing is available on a segment, each word is wrapped
+    in karaoke {\\k} tags so the active word highlights yellow.
+    Segments without word data fall back to plain white text.
+
     Args:
-        segments:   Ordered list of TranscriptionSegment objects.
-        style_line: Override the default ASS style line. Defaults to
-                    ASS_STYLE_LINE from config (Greek-safe Arial styling).
+        segments:             Ordered list of TranscriptionSegment objects.
+        style_line:           Override the default ASS style line.
+        highlight_style_line: Override the highlight ASS style line.
 
     Returns:
         Complete ASS file content as a string, ready to be written to disk.
     """
     effective_style = style_line if style_line is not None else ASS_STYLE_LINE
+    effective_highlight = (
+        highlight_style_line
+        if highlight_style_line is not None
+        else ASS_HIGHLIGHT_STYLE_LINE
+    )
 
     dialogue_lines: list[str] = []
     for seg in segments:
         start = _seconds_to_ass_time(seg.start)
         end = _seconds_to_ass_time(seg.end)
-        safe_text = _escape_ass_text(seg.text)
+
+        if seg.words:
+            # Word-level karaoke highlight
+            text_field = _build_karaoke_text(seg.words, seg.start)
+        else:
+            # Fallback: plain text
+            text_field = _escape_ass_text(seg.text)
+
         dialogue_lines.append(
-            f"Dialogue: 0,{start},{end},Default,,0,0,0,,{safe_text}"
+            f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text_field}"
         )
 
     return ASS_HEADER_TEMPLATE.format(
         style_line=effective_style,
+        highlight_style_line=effective_highlight,
         dialogue_lines="\n".join(dialogue_lines),
     )
 
@@ -179,14 +242,16 @@ def write_ass_file(
     segments: list[TranscriptionSegment],
     output_path: Path,
     style_line: Optional[str] = None,
+    highlight_style_line: Optional[str] = None,
 ) -> Path:
     """
     Generate and write an ASS subtitle file for the given segments.
 
     Args:
-        segments:    Ordered list of TranscriptionSegment objects.
-        output_path: Destination path for the .ass file.
-        style_line:  Optional style override (see segments_to_ass).
+        segments:             Ordered list of TranscriptionSegment objects.
+        output_path:          Destination path for the .ass file.
+        style_line:           Optional style override (see segments_to_ass).
+        highlight_style_line: Optional highlight style override.
 
     Returns:
         The resolved, written output_path.
@@ -194,7 +259,7 @@ def write_ass_file(
     Raises:
         OSError: If the file cannot be written.
     """
-    ass_content = segments_to_ass(segments, style_line)
+    ass_content = segments_to_ass(segments, style_line, highlight_style_line)
 
     # ASS files must be UTF-8 encoded to preserve Greek glyphs
     output_path.write_text(ass_content, encoding="utf-8")

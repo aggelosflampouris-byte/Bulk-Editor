@@ -29,7 +29,9 @@ _PEXELS_VIDEO_SEARCH_URL = "https://api.pexels.com/videos/search"
 _REQUEST_TIMEOUT_SECONDS = 30
 _DOWNLOAD_CHUNK_SIZE = 65_536  # 64 KB streaming chunks
 _MIN_CLIP_DURATION_SECONDS = 5
-_PREFERRED_WIDTH = 1920  # Landscape HD for overlay compositing
+# Prefer portrait clips for vertical 9:16 B-roll overlays; 1080 px wide matches
+# the Shorts canvas width so cropping is minimal.
+_PREFERRED_WIDTH = 1080
 
 
 # ── Public Types ───────────────────────────────────────────────────────────────
@@ -57,28 +59,32 @@ def _build_headers(api_key: str) -> dict[str, str]:
 
 def _select_best_video_file(video_files: list[dict]) -> Optional[dict]:
     """
-    From the Pexels video_files list, select the best HD landscape variant.
+    From the Pexels video_files list, select the best portrait/vertical variant.
 
     Selection priority:
-      1. Width closest to 1920 (landscape HD)
-      2. Must be width > height (landscape orientation)
-      3. Link must not be empty
+      1. Portrait clips (height > width) preferred — matches 9:16 overlay canvas.
+      2. If no portrait clips exist, accept landscape clips as fallback.
+      3. Width closest to 1080 px (the target Shorts width).
+      4. Link must not be empty.
 
     Returns the chosen video_file dict, or None if no suitable file exists.
     """
-    landscape_files = [
-        vf for vf in video_files
-        if vf.get("width", 0) > vf.get("height", 0)
-        and vf.get("link")
-    ]
-    if not landscape_files:
+    valid_files = [vf for vf in video_files if vf.get("link")]
+    if not valid_files:
         return None
 
+    # Prefer portrait files; fall back to all valid files if none are portrait
+    portrait_files = [
+        vf for vf in valid_files
+        if vf.get("height", 0) >= vf.get("width", 0)
+    ]
+    candidates = portrait_files if portrait_files else valid_files
+
     # Sort by absolute deviation from preferred width, ascending
-    landscape_files.sort(
+    candidates.sort(
         key=lambda vf: abs(vf.get("width", 0) - _PREFERRED_WIDTH)
     )
-    return landscape_files[0]
+    return candidates[0]
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────
@@ -111,8 +117,8 @@ def search_broll(
     params = urlencode({
         "query": query,
         "per_page": min(per_page, 80),
-        "orientation": "landscape",
-        "size": "large",  # HD
+        "orientation": "portrait",
+        "size": "medium",  # Medium resolution adequate for B-roll overlay
     })
     url = f"{_PEXELS_VIDEO_SEARCH_URL}?{params}"
 

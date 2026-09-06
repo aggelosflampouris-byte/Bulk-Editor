@@ -52,6 +52,11 @@ Rules:
 - tags must be plain English words or short phrases (no # prefix).
 - tags list must contain exactly 10 items.
 - Do NOT include any text outside the JSON object.
+- CRITICAL — The title must NOT be a direct quote or close paraphrase of the \
+transcript. It must instead capture the TOPIC, HOOK, or VALUE PROPOSITION of \
+the video (e.g. what the viewer will learn, why they should care, or what \
+makes this clip interesting). Think of it as a clickable headline, not a \
+transcript excerpt.
 
 Transcript:
 {transcript}

@@ -96,6 +96,26 @@ st.markdown("""
         transform: translateY(-1px);
     }
 
+    /* 9:16 video preview container */
+    .video-container-916 {
+        width: 100%;
+        max-width: 340px;
+        margin: 0 auto 1rem auto;
+        aspect-ratio: 9 / 16;
+        border-radius: 16px;
+        overflow: hidden;
+        border: 1px solid rgba(139, 92, 246, 0.3);
+        background: #000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .video-container-916 video {
+        width: 100% !important;
+        height: 100% !important;
+        object-fit: contain;
+    }
+
     /* Result cards */
     .result-card {
         background: rgba(255,255,255,0.04);
@@ -191,6 +211,10 @@ def _render_sidebar() -> Settings:
     """
     Render the settings sidebar and return a populated Settings instance.
 
+    API keys are read exclusively from the .env file / environment — no
+    sidebar inputs are exposed for them.  A status row shows whether each
+    key was found.
+
     Returns:
         Settings object built from sidebar inputs.
     """
@@ -198,21 +222,20 @@ def _render_sidebar() -> Settings:
         st.markdown("## ⚙️ Settings")
         st.markdown("---")
 
+        # ── API Key Status (read-only) ─────────────────────────────────────
+        import os as _os
+        pexels_loaded = bool(_os.environ.get("PEXELS_API_KEY", "").strip())
+        gemini_loaded = bool(_os.environ.get("GEMINI_API_KEY", "").strip())
+
         st.markdown("### 🔑 API Keys")
-        pexels_key = st.text_input(
-            "Pexels API Key",
-            type="password",
-            placeholder="Enter your Pexels key...",
-            help="Free at pexels.com/api — 200 req/hour",
-            key="pexels_api_key_input",
+        pexels_icon = "✅" if pexels_loaded else "❌"
+        gemini_icon = "✅" if gemini_loaded else "❌"
+        st.markdown(
+            f"{pexels_icon} **Pexels** — {'loaded from .env' if pexels_loaded else 'not found'}  \n"
+            f"{gemini_icon} **Gemini** — {'loaded from .env' if gemini_loaded else 'not found'}"
         )
-        gemini_key = st.text_input(
-            "Gemini API Key",
-            type="password",
-            placeholder="Enter your Google Gemini key...",
-            help="Free at aistudio.google.com/app/apikey",
-            key="gemini_api_key_input",
-        )
+        if not pexels_loaded or not gemini_loaded:
+            st.caption("Add missing keys to `shorts_engine/.env` and restart.")
 
         st.markdown("---")
         st.markdown("### 🎙️ Transcription")
@@ -280,14 +303,12 @@ def _render_sidebar() -> Settings:
         st.markdown(
             "<div style='font-size:0.72rem;color:#555;text-align:center'>"
             "Greek Shorts Engine · CPU-only<br>"
-            "No data is sent to Pexels or Gemini<br>unless keys are provided."
+            "Keys loaded from <code>.env</code> — never exposed in UI."
             "</div>",
             unsafe_allow_html=True,
         )
 
     return Settings(
-        pexels_api_key=pexels_key or "",
-        gemini_api_key=gemini_key or "",
         whisper_model_size=str(model_size),
         broll_start_offset=float(broll_start),
         broll_overlay_duration=float(broll_duration),
@@ -314,9 +335,14 @@ def _render_result_card(result: ProcessingResult, index: int) -> None:
         st.markdown(status_badge, unsafe_allow_html=True)
 
     if result.success and result.output_file:
-        # Video preview
+        # 9:16 video preview container
         if result.output_file.is_file():
+            st.markdown(
+                '<div class="video-container-916">',
+                unsafe_allow_html=True,
+            )
             st.video(str(result.output_file))
+            st.markdown('</div>', unsafe_allow_html=True)
 
         col_out, col_seo = st.columns(2)
 
@@ -402,8 +428,6 @@ def _make_progress_callback(
     return callback
 
 
-# ── Main App ───────────────────────────────────────────────────────────────────
-
 def main() -> None:
     """Entry point for the Streamlit application."""
     _init_session_state()
@@ -424,7 +448,7 @@ def main() -> None:
             Greek Shorts Engine
         </h1>
         <p style="color:#888;margin-top:0.4rem;font-size:1rem;">
-            Bulk-convert raw Greek clips → 9:16 YouTube Shorts with subtitles, B-roll & SEO
+            Bulk-convert raw Greek clips → 9:16 YouTube Shorts with subtitles, B-roll &amp; SEO
         </p>
     </div>
     """, unsafe_allow_html=True)
@@ -438,78 +462,82 @@ def main() -> None:
         st.error(f"⛔ **System requirement not met:**\n\n{exc}")
         st.stop()
 
-    # ── File Uploader ──────────────────────────────────────────────────────────
-    st.markdown("### 📂 Upload Raw Video Clips")
-    uploaded_files = st.file_uploader(
-        "Drop your Greek-speech video clips here",
-        type=["mp4", "mov", "mkv", "avi", "webm"],
-        accept_multiple_files=True,
-        key="video_uploader",
-        help="Upload one or more video clips. They will be processed in order.",
-    )
+    # ── Centred Content Column ─────────────────────────────────────────────────
+    _, main_col, _ = st.columns([1, 6, 1])
+    with main_col:
 
-    # ── Metrics Row ───────────────────────────────────────────────────────────
-    if uploaded_files:
-        col1, col2, col3, col4 = st.columns(4)
-        total_size_mb = sum(f.size for f in uploaded_files) / (1024 * 1024)
-
-        with col1:
-            st.markdown(
-                f'<div class="metric-value">{len(uploaded_files)}</div>'
-                f'<div class="metric-label">Videos Queued</div>',
-                unsafe_allow_html=True,
-            )
-        with col2:
-            st.markdown(
-                f'<div class="metric-value">{total_size_mb:.0f} MB</div>'
-                f'<div class="metric-label">Total Upload Size</div>',
-                unsafe_allow_html=True,
-            )
-        with col3:
-            model_label = settings.whisper_model_size.capitalize()
-            st.markdown(
-                f'<div class="metric-value">{model_label}</div>'
-                f'<div class="metric-label">Whisper Model</div>',
-                unsafe_allow_html=True,
-            )
-        with col4:
-            outro_label = "✓ Yes" if settings.outro_path else "—"
-            st.markdown(
-                f'<div class="metric-value">{outro_label}</div>'
-                f'<div class="metric-label">Outro Loaded</div>',
-                unsafe_allow_html=True,
-            )
-
-        st.markdown("")
-
-    # ── Validate Settings Before Allowing Run ──────────────────────────────────
-    settings_errors = settings.validate()
-    if settings_errors:
-        for err in settings_errors:
-            st.warning(f"⚠️ {err}")
-
-    # ── Run Button ─────────────────────────────────────────────────────────────
-    run_disabled = (
-        not uploaded_files
-        or bool(settings_errors)
-        or st.session_state["is_processing"]
-    )
-
-    col_run, col_clear = st.columns([3, 1])
-    with col_run:
-        run_clicked = st.button(
-            "🚀 Process All Clips",
-            type="primary",
-            disabled=run_disabled,
-            use_container_width=True,
-            key="run_button",
+        # ── File Uploader ──────────────────────────────────────────────────────
+        st.markdown("### 📂 Upload Raw Video Clips")
+        uploaded_files = st.file_uploader(
+            "Drop your Greek-speech video clips here",
+            type=["mp4", "mov", "mkv", "avi", "webm"],
+            accept_multiple_files=True,
+            key="video_uploader",
+            help="Upload one or more video clips. They will be processed in order.",
         )
-    with col_clear:
-        if st.button("🗑 Clear Results", use_container_width=True, key="clear_button"):
-            st.session_state["results"] = []
-            st.rerun()
 
-    # ── Processing ─────────────────────────────────────────────────────────────
+        # ── Metrics Row ───────────────────────────────────────────────────────
+        if uploaded_files:
+            col1, col2, col3, col4 = st.columns(4)
+            total_size_mb = sum(f.size for f in uploaded_files) / (1024 * 1024)
+
+            with col1:
+                st.markdown(
+                    f'<div class="metric-value">{len(uploaded_files)}</div>'
+                    f'<div class="metric-label">Videos Queued</div>',
+                    unsafe_allow_html=True,
+                )
+            with col2:
+                st.markdown(
+                    f'<div class="metric-value">{total_size_mb:.0f} MB</div>'
+                    f'<div class="metric-label">Total Upload Size</div>',
+                    unsafe_allow_html=True,
+                )
+            with col3:
+                model_label = settings.whisper_model_size.capitalize()
+                st.markdown(
+                    f'<div class="metric-value">{model_label}</div>'
+                    f'<div class="metric-label">Whisper Model</div>',
+                    unsafe_allow_html=True,
+                )
+            with col4:
+                outro_label = "✓ Yes" if settings.outro_path else "—"
+                st.markdown(
+                    f'<div class="metric-value">{outro_label}</div>'
+                    f'<div class="metric-label">Outro Loaded</div>',
+                    unsafe_allow_html=True,
+                )
+
+            st.markdown("")
+
+        # ── Validate Settings Before Allowing Run ──────────────────────────────
+        settings_errors = settings.validate()
+        if settings_errors:
+            for err in settings_errors:
+                st.warning(f"⚠️ {err}")
+
+        # ── Run Button ─────────────────────────────────────────────────────────
+        run_disabled = (
+            not uploaded_files
+            or bool(settings_errors)
+            or st.session_state["is_processing"]
+        )
+
+        col_run, col_clear = st.columns([3, 1])
+        with col_run:
+            run_clicked = st.button(
+                "🚀 Process All Clips",
+                type="primary",
+                disabled=run_disabled,
+                use_container_width=True,
+                key="run_button",
+            )
+        with col_clear:
+            if st.button("🗑 Clear Results", use_container_width=True, key="clear_button"):
+                st.session_state["results"] = []
+                st.rerun()
+
+    # ── Processing (outside the column so progress spans full width) ───────────
     if run_clicked and uploaded_files and not settings_errors:
         st.session_state["is_processing"] = True
         st.session_state["results"] = []
@@ -595,3 +623,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
