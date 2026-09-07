@@ -228,33 +228,45 @@ def download_clip(clip: BRollClip, dest: Path) -> Path:
 
 def extract_broll_query(transcript_text: str, max_words: int = 6) -> str:
     """
-    Derive a short, search-friendly query from a full transcript string.
+    Derive a short, Pexels-optimised search query from transcript text.
 
-    Strategy: strip common Greek stop-words, take the first *max_words*
-    meaningful words, and return them joined. This is intentionally simple
-    to avoid adding an NLP dependency; the Pexels API is forgiving with
-    Greek + English mixed queries.
+    Pexels is an English-indexed database; sending raw Greek keywords produces
+    random or irrelevant stock footage. When Greek text is detected, this
+    helper maps core topical cues (work/team, tech, health, finance, relationships)
+    to concrete visual scene keywords in English.
 
     Args:
-        transcript_text: Raw concatenated transcript text (Greek).
-        max_words:       Maximum number of words to include in the query.
+        transcript_text: Raw transcript text.
+        max_words:       Maximum number of words for English text fallback.
 
     Returns:
-        A search query string (may be empty if transcript is empty).
+        A search query string suitable for the Pexels Videos API.
     """
-    # Pexels performs better with short, English-style keywords.
-    # We send the first few words of the Greek transcript — Pexels
-    # understands multilingual content to a reasonable degree.
+    if not transcript_text or not transcript_text.strip():
+        return "business colleagues meeting"
+
+    lower_text = transcript_text.lower()
+    has_greek = any("\u0370" <= c <= "\u03ff" for c in lower_text)
+
+    if has_greek:
+        if any(k in lower_text for k in ("ομάδ", "δουλειά", "εργασί", "συνάντησ", "ευχαριστ", "συνεργασ")):
+            return "office team meeting"
+        if any(k in lower_text for k in ("τεχνολογ", "κώδικ", "εφαρμογ", "υπολογιστ", "κινητ", "προγραμματ")):
+            return "software developer coding"
+        if any(k in lower_text for k in ("υγεία", "γιατρ", "νοσοκομ", "διατροφ", "άσκησ", "σώμα")):
+            return "doctor patient consultation"
+        if any(k in lower_text for k in ("χρήμα", "οικονομ", "επένδυσ", "πωλήσ", "αγορά", "επιχείρησ")):
+            return "business meeting office"
+        if any(k in lower_text for k in ("φίλ", "παρέα", "σχέση", "συζήτησ", "άνθρωπ")):
+            return "friends conversation meeting"
+        return "business colleagues meeting"
+
+    # For English transcripts, filter common stopwords
     words = transcript_text.split()
-
-    # Minimal Greek stopword filter (common filler words)
-    _GREEK_STOP_WORDS: frozenset[str] = frozenset({
-        "και", "το", "τα", "τη", "τον", "την", "της", "τους", "τις",
-        "ο", "η", "οι", "τα", "σε", "με", "από", "για", "που", "δεν",
-        "είναι", "να", "αλλά", "ότι", "αυτό", "αυτά", "μου", "μας",
-        "σας", "σου", "του", "τους", "κι", "ως", "πως", "κάθε",
+    _STOP_WORDS = frozenset({
+        "and", "the", "a", "an", "in", "on", "at", "to", "for", "of", "with",
+        "is", "it", "that", "this", "are", "was", "were", "be", "been",
     })
-
-    meaningful = [w for w in words if w.lower() not in _GREEK_STOP_WORDS]
+    meaningful = [w for w in words if w.lower() not in _STOP_WORDS]
     query_words = meaningful[:max_words] if meaningful else words[:max_words]
-    return " ".join(query_words)
+    return " ".join(query_words) or "business colleagues meeting"

@@ -350,16 +350,19 @@ def generate_broll_query(transcript_text: str, api_key: str) -> Optional[str]:
             client=client,
             contents=prompt,
             config=genai_types.GenerateContentConfig(
-                max_output_tokens=32,   # Only a few words needed
-                temperature=0.2,        # Low variance for consistency
+                max_output_tokens=1024,  # Adequate headroom for thinking tokens + query
+                temperature=0.2,         # Low variance for consistency
             ),
         ).strip()
     except Exception as exc:
         logger.warning("Gemini broll query call failed: %s — using fallback.", exc)
         return None
 
-    # Sanitise: keep only the first line, strip quotes/punctuation
-    query = raw.splitlines()[0].strip().strip('"\'.,')
+    # Sanitise: keep only the first non-empty line, strip quotes/punctuation
+    lines = [line.strip() for line in raw.splitlines() if line.strip()]
+    if not lines:
+        return None
+    query = lines[0].strip('"\'.,')
     if not query:
         return None
 
