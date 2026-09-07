@@ -29,9 +29,9 @@ _PEXELS_VIDEO_SEARCH_URL = "https://api.pexels.com/videos/search"
 _REQUEST_TIMEOUT_SECONDS = 30
 _DOWNLOAD_CHUNK_SIZE = 65_536  # 64 KB streaming chunks
 _MIN_CLIP_DURATION_SECONDS = 5
-# Prefer portrait clips for vertical 9:16 B-roll overlays; 1080 px wide matches
-# the Shorts canvas width so cropping is minimal.
-_PREFERRED_WIDTH = 1080
+# Prefer HD landscape clips — overlay_broll already scales them to the frame.
+# Portrait stock on Pexels is dominated by lifestyle/feet/beach content.
+_PREFERRED_WIDTH = 1920
 
 
 # ── Public Types ───────────────────────────────────────────────────────────────
@@ -59,13 +59,14 @@ def _build_headers(api_key: str) -> dict[str, str]:
 
 def _select_best_video_file(video_files: list[dict]) -> Optional[dict]:
     """
-    From the Pexels video_files list, select the best portrait/vertical variant.
+    From the Pexels video_files list, select the best HD landscape variant.
 
     Selection priority:
-      1. Portrait clips (height > width) preferred — matches 9:16 overlay canvas.
-      2. If no portrait clips exist, accept landscape clips as fallback.
-      3. Width closest to 1080 px (the target Shorts width).
-      4. Link must not be empty.
+      1. Must have a non-empty download link.
+      2. Landscape orientation preferred (width > height) — better topical
+         match availability and scales cleanly into the B-roll overlay area.
+      3. Width closest to 1920 px (HD landscape).
+      4. If no landscape files exist, accept any valid file as fallback.
 
     Returns the chosen video_file dict, or None if no suitable file exists.
     """
@@ -73,14 +74,14 @@ def _select_best_video_file(video_files: list[dict]) -> Optional[dict]:
     if not valid_files:
         return None
 
-    # Prefer portrait files; fall back to all valid files if none are portrait
-    portrait_files = [
+    # Prefer landscape files (best topical variety on Pexels)
+    landscape_files = [
         vf for vf in valid_files
-        if vf.get("height", 0) >= vf.get("width", 0)
+        if vf.get("width", 0) > vf.get("height", 0)
     ]
-    candidates = portrait_files if portrait_files else valid_files
+    candidates = landscape_files if landscape_files else valid_files
 
-    # Sort by absolute deviation from preferred width, ascending
+    # Sort by absolute deviation from preferred HD width, ascending
     candidates.sort(
         key=lambda vf: abs(vf.get("width", 0) - _PREFERRED_WIDTH)
     )
@@ -92,20 +93,21 @@ def _select_best_video_file(video_files: list[dict]) -> Optional[dict]:
 def search_broll(
     query: str,
     api_key: str,
-    per_page: int = 10,
+    per_page: int = 25,
 ) -> Optional[BRollClip]:
     """
     Search the Pexels Videos API for a relevant B-roll clip.
 
-    The function applies quality filters (landscape, HD, minimum duration)
-    and returns the single best candidate. Returns None on any failure so
-    that the pipeline can degrade gracefully.
+    No orientation filter is applied — Pexels portrait stock is dominated by
+    lifestyle/feet/beach content that is almost never topically relevant.
+    Searching all orientations and selecting the best HD landscape clip gives
+    far better topical matches across any subject matter.
 
     Args:
-        query:    Natural-language search query derived from transcript text.
+        query:    English search query (ideally from generate_broll_query).
         api_key:  Pexels API key (v1).
-        per_page: Number of results to request (max 80). More results
-                  increase the chance of finding a suitable clip.
+        per_page: Number of results to request (max 80). Higher values
+                  increase the chance of finding a quality topical clip.
 
     Returns:
         A BRollClip describing the best candidate, or None.
@@ -114,11 +116,12 @@ def search_broll(
         logger.warning("Pexels API key is empty — B-roll step will be skipped.")
         return None
 
+    # No orientation filter: searching all orientations yields the best topical
+    # match. The overlay_broll function scales the clip to fit regardless.
     params = urlencode({
         "query": query,
         "per_page": min(per_page, 80),
-        "orientation": "portrait",
-        "size": "medium",  # Medium resolution adequate for B-roll overlay
+        "size": "large",  # HD quality
     })
     url = f"{_PEXELS_VIDEO_SEARCH_URL}?{params}"
 
