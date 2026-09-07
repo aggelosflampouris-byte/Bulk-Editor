@@ -4,17 +4,28 @@
 
 ---
 
+## AI Model Stack & Roles
+
+| Model | Role | Exact Task |
+|---|---|---|
+| **faster-whisper-large-v3** | Audio transcription & word-level timestamping | Converts Greek speech into precise text with millisecond timestamps to pinpoint cut locations and power animated karaoke subtitles. |
+| **Qwen 2.5-32B-Instruct** (or **72B**) | Content analysis, highlight scoring & Greek SEO | Reads the Greek timestamped transcript, identifies high-retention/viral 30–60s hooks, and generates Greek search titles, descriptions, and hashtags. |
+| **YOLOv8n-face** (or **YOLOv11n-face**) | Active speaker tracking & dynamic 9:16 auto-framing | Detects face coordinates frame-by-frame to keep the speaker centered when cropping 16:9 widescreen video down to vertical YouTube Shorts. |
+
+---
+
 ## Features
 
 | Feature | Detail |
 |---|---|
-| **Greek Transcription** | `faster-whisper` (local, CPU, no cloud cost) — forced `el` language |
-| **B-Roll Cutaways** | Pexels API — one relevant HD clip per video, timed overlay |
-| **Subtitle Burn-in** | ASS format, Arial/Roboto, Greek-glyph-safe, styled captions |
+| **Greek Transcription** | `faster-whisper` (`large-v3` / `small`) — word-level karaoke timestamps with forced `el` language |
+| **Active Framing** | Dynamic center/speaker tracking for 9:16 conversion |
+| **B-Roll Cutaways** | Pexels API — topic-matched HD B-roll filling the 9:16 frame |
+| **Subtitle Burn-in** | ASS format, Greek-glyph-safe Arial with active-word highlight |
 | **Outro Concatenation** | Optional branded bumper appended to every Short |
-| **SEO Metadata** | Gemini 2.5 Flash generates Greek title + description + 10 hashtags |
-| **Batch Processing** | Upload N clips, process all with one click |
-| **Zero Config** | `run.bat` auto-installs FFmpeg, Python deps, and launches the app |
+| **SEO & Viral Hooks** | LLM content analysis (Greek titles, descriptions, tags, and hook scoring) |
+| **Batch Processing** | Bulk process multiple clips with single-click orchestration |
+| **Zero Config** | Cross-platform launcher (`run.bat` / `run.sh`) with auto-dependency setup |
 
 ---
 
