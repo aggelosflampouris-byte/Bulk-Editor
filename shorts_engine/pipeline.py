@@ -30,7 +30,7 @@ from services.broll_fetcher import (
     extract_broll_query,
     search_broll,
 )
-from services.seo_generator import SeoMetadata, generate_seo, seo_to_dict
+from services.seo_generator import SeoMetadata, generate_seo, generate_broll_query, seo_to_dict
 from services.transcriber import (
     TranscriptionSegment,
     full_transcript_text,
@@ -141,11 +141,20 @@ def process_single(
         # ── Stage 2: B-Roll Search ────────────────────────────────────────────
         broll_clip: Optional[BRollClip] = None
         if settings.pexels_api_key:
-            _report("Searching for B-roll clip...")
-            query = extract_broll_query(transcript_text)
+            _report("Generating B-roll search query...")
+
+            # Prefer a Gemini-generated query (semantically aware, English);
+            # fall back to the stopword-based extractor when Gemini is absent.
+            query: str = (
+                generate_broll_query(transcript_text, settings.gemini_api_key)
+                or extract_broll_query(transcript_text)
+            )
+            logger.info("B-roll search query: '%s'", query)
+
+            _report(f"Searching for B-roll: '{query}'...")
             broll_clip = search_broll(query, settings.pexels_api_key)
             if broll_clip is None:
-                msg = "No suitable B-roll found — skipping overlay."
+                msg = f"No suitable B-roll found for query '{query}' — skipping overlay."
                 logger.warning(msg)
                 warnings.append(msg)
         else:

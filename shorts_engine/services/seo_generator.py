@@ -247,3 +247,88 @@ def seo_to_dict(seo: SeoMetadata) -> dict[str, object]:
         "description": seo.description,
         "tags": list(seo.tags),
     }
+
+
+# ── B-Roll Query Generation ────────────────────────────────────────────────────
+
+# Prompt asking Gemini to produce a short, Pexels-optimised English query
+# that describes a visually compelling scene matching the transcript topic.
+_BROLL_QUERY_PROMPT = """\
+You are a video editor selecting B-roll footage for a Greek YouTube Short.
+
+Read the following Greek transcript and respond with a SHORT English search \
+query (2-4 words maximum) that describes the most visually compelling stock \
+video scene that would complement the topic being discussed.
+
+Requirements:
+- English only (Pexels works best with English queries).
+- 2-4 words maximum.
+- Describe a VISUAL SCENE, not an abstract concept \
+  (e.g. "busy stock market" not "economy", "doctor examining patient" not "health").
+- Focus on the MAIN TOPIC of the speech, not incidental words.
+- Output ONLY the search query — no quotes, no punctuation, no explanation.
+
+Transcript:
+{transcript}
+"""
+
+
+def generate_broll_query(transcript_text: str, api_key: str) -> Optional[str]:
+    """
+    Use Gemini to derive a visually-meaningful English B-roll search query
+    from a Greek transcript.
+
+    Gemini understands the semantic content of the transcript and maps it
+    to a concrete, Pexels-friendly visual scene description — far more
+    accurate than the stopword-based word-picking fallback.
+
+    Args:
+        transcript_text: Full Greek transcript text.
+        api_key:         Google Gemini API key.
+
+    Returns:
+        A 2-4 word English search query string, or None if the call fails
+        (the pipeline will then fall back to extract_broll_query).
+    """
+    if not api_key or not api_key.strip():
+        logger.debug("Gemini key absent — skipping AI broll query generation.")
+        return None
+
+    if not transcript_text.strip():
+        return None
+
+    prompt = _BROLL_QUERY_PROMPT.format(transcript=transcript_text[:2000])
+
+    logger.info("Calling Gemini to generate B-roll search query...")
+    try:
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(
+            model=_GEMINI_MODEL,
+            contents=prompt,
+            config=genai_types.GenerateContentConfig(
+                max_output_tokens=32,   # Only a few words needed
+                temperature=0.2,        # Low variance for consistency
+            ),
+        )
+        raw: str = (response.text or "").strip()
+    except Exception as exc:
+        logger.warning("Gemini broll query call failed: %s — using fallback.", exc)
+        return None
+
+    # Sanitise: keep only the first line, strip quotes/punctuation
+    query = raw.splitlines()[0].strip().strip('"\'.,')
+    if not query:
+        return None
+
+    # Reject responses that are obviously wrong (too long, non-English markers)
+    word_count = len(query.split())
+    if word_count > 8:
+        logger.warning(
+            "Gemini broll query too long (%d words): '%s' — using fallback.",
+            word_count, query,
+        )
+        return None
+
+    logger.info("Gemini broll query: '%s'", query)
+    return query
+
