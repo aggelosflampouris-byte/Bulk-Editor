@@ -254,19 +254,33 @@ def seo_to_dict(seo: SeoMetadata) -> dict[str, object]:
 # Prompt asking Gemini to produce a short, Pexels-optimised English query
 # that describes a visually compelling scene matching the transcript topic.
 _BROLL_QUERY_PROMPT = """\
-You are a video editor selecting B-roll footage for a Greek YouTube Short.
+You are a professional video editor choosing stock B-roll footage for a \
+Greek YouTube Short about the topic spoken in the transcript below.
 
-Read the following Greek transcript and respond with a SHORT English search \
-query (2-4 words maximum) that describes the most visually compelling stock \
-video scene that would complement the topic being discussed.
+Your task: output ONE short English search query (2–5 words) for Pexels \
+stock video that directly matches what the speaker is TALKING ABOUT.
 
-Requirements:
-- English only (Pexels works best with English queries).
-- 2-4 words maximum.
-- Describe a VISUAL SCENE, not an abstract concept \
-  (e.g. "busy stock market" not "economy", "doctor examining patient" not "health").
-- Focus on the MAIN TOPIC of the speech, not incidental words.
-- Output ONLY the search query — no quotes, no punctuation, no explanation.
+STRICT RULES:
+1. The query must describe a CONCRETE VISUAL SCENE, not an abstract concept.
+2. The query must match the SPECIFIC TOPIC of the speech — not a generic \
+   lifestyle or scenic shot.
+3. NEVER output: beach, nature, sunset, feet, travel, vacation, relaxation, \
+   or any scene unrelated to the speech topic.
+4. If the speech is about PEOPLE AND RELATIONSHIPS → use: "people talking", \
+   "friends reunion", "group conversation", "colleagues meeting"
+5. If the speech is about BUSINESS / ECONOMY → use: "business meeting", \
+   "stock market trading", "office team discussion"
+6. If the speech is about TECHNOLOGY → use: "person using smartphone", \
+   "software developer coding", "video call conference"
+7. If the speech is about HEALTH → use: "doctor patient consultation", \
+   "hospital corridor", "medical team"
+8. Always output English only. No quotes. No punctuation. No explanation. \
+   Output ONLY the search query on a single line.
+
+Examples of GOOD queries: "two people video call", "business handshake office", \
+"crowd protest street", "scientist laboratory experiment"
+Examples of BAD queries: "distance", "communication", "life", "connection", \
+"summer", "relaxation"
 
 Transcript:
 {transcript}

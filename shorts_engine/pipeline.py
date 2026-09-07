@@ -41,6 +41,7 @@ from services.video_engine import (
     burn_subtitles,
     concatenate_with_outro,
     crop_to_9_16,
+    is_already_9_16,
     overlay_broll,
     probe_duration,
 )
@@ -175,15 +176,27 @@ def process_single(
                 warnings.append(msg)
                 broll_path = None
 
-        # ── Stage 4: Crop to 9:16 ────────────────────────────────────────────
-        _report("Cropping to 9:16 (1080×1920)...")
+        # ── Stage 4: Crop to 9:16 (skipped if already correct ratio) ───────
         cropped_path: Path = tmp_dir / f"{stem}_cropped.mp4"
-        crop_to_9_16(
+
+        if is_already_9_16(
             video_path,
-            cropped_path,
             target_width=settings.target_width,
             target_height=settings.target_height,
-        )
+        ):
+            # Input is already 9:16 — skip the re-encode and symlink/copy
+            import shutil as _shutil
+            _shutil.copy2(str(video_path), str(cropped_path))
+            _report("Crop skipped — video is already 9:16.")
+            logger.info("Crop stage skipped for '%s' (already 9:16).", video_path.name)
+        else:
+            _report("Cropping to 9:16 (1080×1920)...")
+            crop_to_9_16(
+                video_path,
+                cropped_path,
+                target_width=settings.target_width,
+                target_height=settings.target_height,
+            )
 
         # ── Stage 5: B-Roll Overlay ───────────────────────────────────────────
         current_path = cropped_path

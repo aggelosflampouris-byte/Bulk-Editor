@@ -142,6 +142,90 @@ def probe_duration(video_path: Path) -> float:
         ) from exc
 
 
+def probe_resolution(video_path: Path) -> tuple[int, int]:
+    """
+    Query the width and height of the first video stream using ffprobe.
+
+    Args:
+        video_path: Path to the video file.
+
+    Returns:
+        (width, height) in pixels.
+
+    Raises:
+        FFmpegError: If ffprobe fails.
+        ValueError:  If dimensions cannot be parsed.
+    """
+    args = [
+        "ffprobe",
+        "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=width,height",
+        "-of", "csv=s=x:p=0",
+        str(video_path),
+    ]
+    result = subprocess.run(
+        args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if result.returncode != 0:
+        raise FFmpegError(args, result.returncode, result.stderr)
+
+    raw = result.stdout.strip()
+    # ffprobe outputs "WxH" with -of csv=s=x:p=0
+    try:
+        w_str, h_str = raw.split("x", 1)
+        return int(w_str), int(h_str)
+    except (ValueError, AttributeError) as exc:
+        raise ValueError(
+            f"Could not parse resolution from ffprobe output: '{raw}'"
+        ) from exc
+
+
+def is_already_9_16(
+    video_path: Path,
+    target_width: int = 1080,
+    target_height: int = 1920,
+    tolerance: float = 0.02,
+) -> bool:
+    """
+    Return True if *video_path* is already at the target 9:16 resolution
+    (within *tolerance* of the aspect ratio and within ±2 px of dimensions).
+
+    Used to skip the crop stage when the input clip is already correctly sized,
+    avoiding a re-encode that wastes time and slightly reduces quality.
+
+    Args:
+        video_path:    Video to inspect.
+        target_width:  Expected width (default 1080).
+        target_height: Expected height (default 1920).
+        tolerance:     Allowed fractional deviation from the ideal aspect ratio.
+
+    Returns:
+        True if the crop can safely be skipped.
+    """
+    try:
+        w, h = probe_resolution(video_path)
+    except (FFmpegError, ValueError):
+        # If probing fails we play it safe and let crop_to_9_16 run
+        return False
+
+    # Check exact match first (most common case for already-processed clips)
+    if abs(w - target_width) <= 2 and abs(h - target_height) <= 2:
+        return True
+
+    # Check aspect ratio match (handles e.g. 720×1280 → already 9:16)
+    if h == 0:
+        return False
+    actual_ratio = w / h
+    target_ratio = target_width / target_height
+    return abs(actual_ratio - target_ratio) / target_ratio <= tolerance
+
+
 def crop_to_9_16(
     input_path: Path,
     output_path: Path,
