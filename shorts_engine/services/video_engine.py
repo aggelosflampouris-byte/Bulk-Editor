@@ -294,9 +294,18 @@ def overlay_broll(
     """
     Overlay a B-roll clip on the upper half of the main video for a timed window.
 
-    The B-roll is scaled to fill the top half (target_width × target_height/2),
-    and composited over the main video using an `enable='between(t,...)'` gate
+    The B-roll is scaled and centre-cropped (CSS cover behaviour) to fill
+    target_width × (target_height / 2) with no black bars and no distortion,
+    then composited over the main video using an ``enable='between(t,...)'`` gate
     so it only appears during [start_time, start_time + overlay_duration].
+
+    Cover-fill filter chain:
+      1. scale=w=target_width:h=-2  — scale so width = target_width, height auto
+         (aspect ratio preserved, even number guaranteed by -2)
+      2. vflip/crop — if the scaled height is still less than overlay_height,
+         scale with h=overlay_height:w=-2 instead; then crop to exact size.
+      The ``scale2ref`` / iw/ih expressions handle both landscape and portrait
+      source clips cleanly.
 
     Args:
         main_path:        The 9:16 main video (already cropped).
@@ -319,16 +328,33 @@ def overlay_broll(
         if not path.is_file():
             raise FileNotFoundError(f"Input video not found: {path}")
 
-    overlay_height = target_height // 2  # Top 50% of the frame
+    overlay_height = target_height // 2  # Top 50 % of the 9:16 frame
     end_time = start_time + overlay_duration
 
-    # filter_complex breakdown:
-    #   [1:v] scale — resize B-roll to fill the top half of the frame
-    #   [0:v][broll_scaled] overlay — composite at (0, 0) with time gate
+    # Cover-fill: scale so the clip fills target_width × overlay_height
+    # with no black bars (like CSS object-fit: cover).
+    #
+    # FFmpeg expression:
+    #   scale w/h to ensure both dimensions are AT LEAST the target size,
+    #   then crop to exact target dimensions from the centre.
+    #
+    #   scale=w='if(gt(iw/ih,{tw}/{oh}),{tw},-2)':h='if(gt(iw/ih,{tw}/{oh}),-2,{oh})'
+    #   This picks the axis that needs to be enlarged to fill the box, then
+    #   the other axis scales proportionally (guaranteed to exceed the box).
+    #   A subsequent crop={tw}:{oh} trims the excess from the centre.
+    tw = target_width
+    oh = overlay_height
+    scale_expr = (
+        f"scale="
+        f"w='if(gt(iw/ih,{tw}/{oh}),{tw},-2)':"
+        f"h='if(gt(iw/ih,{tw}/{oh}),-2,{oh})',"
+        f"crop={tw}:{oh},"
+        f"setsar=1"
+    )
+
     filter_complex = (
-        f"[1:v]scale={target_width}:{overlay_height},"
-        f"setsar=1[broll_scaled];"
-        f"[0:v][broll_scaled]overlay=0:0:"
+        f"[1:v]{scale_expr}[broll_filled];"
+        f"[0:v][broll_filled]overlay=0:0:"
         f"enable='between(t,{start_time:.3f},{end_time:.3f})'[v_out]"
     )
 
@@ -353,6 +379,7 @@ def overlay_broll(
         start_time, end_time, main_path.name, output_path.name,
     )
     return output_path
+
 
 
 def burn_subtitles(
