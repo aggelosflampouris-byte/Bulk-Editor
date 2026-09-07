@@ -36,9 +36,10 @@ tmp/
 temp/
 *.tmp
 
-# Model cache (faster-whisper downloads large .bin files)
+# Model cache (faster-whisper downloads large .bin files, ultralytics downloads .pt)
 models/
 *.bin
+*.pt
 
 # Pexels / B-roll download cache
 broll_cache/

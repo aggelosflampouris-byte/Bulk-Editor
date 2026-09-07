@@ -30,13 +30,18 @@ from services.broll_fetcher import (
     extract_broll_query,
     search_broll,
 )
+from services.clip_selector import ClipCandidate, select_clips
+from services.downloader import UrlMetadata, download_video, probe_url_metadata
 from services.seo_generator import SeoMetadata, generate_seo, generate_broll_query, correct_transcript_greek, seo_to_dict
+from services.timeline_utils import snap_to_silence, slice_segments
 from services.transcriber import (
     TranscriptionSegment,
     full_transcript_text,
     transcribe,
     write_ass_file,
 )
+from services.face_tracker import calculate_active_speaker_crop_x
+from services.highlight_scorer import extract_clip_segment, score_highlight
 from services.video_engine import (
     burn_subtitles,
     concatenate_with_outro,
@@ -44,6 +49,8 @@ from services.video_engine import (
     is_already_9_16,
     overlay_broll,
     probe_duration,
+    probe_resolution,
+    slice_video,
 )
 
 logger = logging.getLogger(__name__)
@@ -73,6 +80,9 @@ class ProcessingResult:
     warnings: list[str] = field(default_factory=list)
     # The Pexels search query that was used for B-roll (for UI display)
     broll_query: Optional[str] = None
+    # Viral hook text and score detected by Qwen 2.5
+    hook_text: Optional[str] = None
+    virality_score: Optional[float] = None
 
 
 # ── Single-Video Pipeline ──────────────────────────────────────────────────────
@@ -127,7 +137,7 @@ def process_single(
 
     try:
         # ── Stage 1: Transcription ────────────────────────────────────────────
-        _report("Transcribing Greek speech...")
+        _report(f"Transcribing Greek speech (faster-whisper {settings.whisper_model_size})...")
         segments: list[TranscriptionSegment] = transcribe(
             video_path,
             model_size=settings.whisper_model_size,
@@ -137,7 +147,50 @@ def process_single(
         transcript_text: str = full_transcript_text(segments)
         logger.info("Transcript (%d chars): %s...", len(transcript_text), transcript_text[:80])
 
-        # ── Stage 1b: Gemini transcript correction ────────────────────────────
+        # ── Stage 1b: Highlight scoring & viral hook extraction (Qwen 2.5) ────
+        main_duration = probe_duration(video_path)
+        if settings.enable_highlight_scoring and main_duration > settings.clip_max_duration:
+            _report("Analyzing content & scoring viral 30–60s hooks (Qwen 2.5)...")
+            try:
+                highlight = score_highlight(
+                    segments=segments,
+                    total_duration=main_duration,
+                    api_base=settings.qwen_api_base,
+                    api_key=settings.qwen_api_key,
+                    model=settings.qwen_model,
+                    gemini_api_key=settings.gemini_api_key,
+                    min_duration=settings.clip_min_duration,
+                    max_duration=settings.clip_max_duration,
+                )
+                result.hook_text = highlight.hook_text
+                result.virality_score = highlight.virality_score
+                logger.info(
+                    "Viral hook cut [%.1fs - %.1fs] score=%.1f — %s",
+                    highlight.start_time, highlight.end_time, highlight.virality_score, highlight.reasoning,
+                )
+                cut_video = tmp_dir / f"{stem}_highlight.mp4"
+                extract_clip_segment(video_path, cut_video, highlight.start_time, highlight.end_time)
+                # Retime segments to the cut window
+                segments = [
+                    TranscriptionSegment(
+                        start=max(0.0, s.start - highlight.start_time),
+                        end=max(0.0, s.end - highlight.start_time),
+                        text=s.text,
+                        words=[
+                            (max(0.0, w[0] - highlight.start_time), max(0.0, w[1] - highlight.start_time), w[2])
+                            for w in s.words
+                        ] if s.words else [],
+                    )
+                    for s in segments
+                    if s.end > highlight.start_time and s.start < highlight.end_time
+                ]
+                video_path = cut_video
+                transcript_text = full_transcript_text(segments)
+            except Exception as exc:
+                logger.warning("Highlight scoring skipped: %s", exc)
+                warnings.append(f"Highlight scoring skipped: {exc}")
+
+        # ── Stage 1c: Gemini transcript correction ────────────────────────────
         # Fix Whisper transcription errors in the Greek text while keeping all
         # word-level timing intact (correction replaces text only, not timing).
         if settings.gemini_api_key:
@@ -188,7 +241,7 @@ def process_single(
                 warnings.append(msg)
                 broll_path = None
 
-        # ── Stage 4: Crop to 9:16 (skipped if already correct ratio) ───────
+        # ── Stage 4: Crop to 9:16 (active speaker tracking) ───────────────────
         cropped_path: Path = tmp_dir / f"{stem}_cropped.mp4"
 
         if is_already_9_16(
@@ -196,18 +249,34 @@ def process_single(
             target_width=settings.target_width,
             target_height=settings.target_height,
         ):
-            # Input is already 9:16 — skip the re-encode and symlink/copy
+            # Input is already 9:16 — skip the re-encode and copy
             import shutil as _shutil
             _shutil.copy2(str(video_path), str(cropped_path))
             _report("Crop skipped — video is already 9:16.")
             logger.info("Crop stage skipped for '%s' (already 9:16).", video_path.name)
         else:
-            _report("Cropping to 9:16 (1080×1920)...")
+            _report("Cropping to 9:16 (active speaker tracking)...")
+            crop_x_offset: Optional[int] = None
+            if settings.enable_face_tracking:
+                try:
+                    src_w, src_h = probe_resolution(video_path)
+                    crop_x_offset = calculate_active_speaker_crop_x(
+                        video_path=video_path,
+                        source_width=src_w,
+                        source_height=src_h,
+                        target_width=settings.target_width,
+                        target_height=settings.target_height,
+                    )
+                except Exception as exc:
+                    logger.warning("Active speaker tracking failed: %s — using center-crop.", exc)
+                    crop_x_offset = None
+
             crop_to_9_16(
                 video_path,
                 cropped_path,
                 target_width=settings.target_width,
                 target_height=settings.target_height,
+                crop_x_offset=crop_x_offset,
             )
 
         # ── Stage 5: B-Roll Overlay ───────────────────────────────────────────
@@ -360,3 +429,339 @@ def run_batch(
         successful, total, run_output_dir,
     )
     return results
+
+
+# ── URL Pipeline ───────────────────────────────────────────────────────────────
+
+
+def process_url_clip(
+    clip: ClipCandidate,
+    source_path: Path,
+    all_segments: list[TranscriptionSegment],
+    settings: Settings,
+    tmp_dir: Path,
+    run_output_dir: Path,
+    progress_cb: Optional[ProgressCallback] = None,
+    item_index: int = 0,
+    total_items: int = 1,
+) -> ProcessingResult:
+    """
+    Run the full assembly pipeline for a single AI-selected clip.
+
+    The source video is already downloaded and transcribed; this function
+    slices the specific [start, end] window, re-bases subtitles, and runs
+    the existing crop → B-roll → subtitle → outro chain.
+
+    Args:
+        clip:          The AI-selected clip (start/end times, SEO, B-roll query).
+        source_path:   Path to the downloaded source video.
+        all_segments:  Full transcription of the source (used for subtitle slicing).
+        settings:      Validated Settings instance.
+        tmp_dir:       Per-clip scratch directory for intermediate files.
+        run_output_dir: Final output directory for this batch run.
+        progress_cb:   Optional progress callback.
+        item_index:    0-based clip index (for callback display).
+        total_items:   Total clips being processed (for callback display).
+
+    Returns:
+        A ProcessingResult summarising the outcome.
+    """
+    # Use a deterministic stem so files don't collide across clips
+    stem = f"clip_{clip.index:02d}"
+    result = ProcessingResult(input_file=source_path)
+    warnings: list[str] = []
+
+    def _report(stage: str) -> None:
+        label = f"[Clip {clip.index}] {stage}"
+        logger.info("[%d/%d] %s", item_index + 1, total_items, label)
+        if progress_cb:
+            progress_cb(item_index, total_items, label)
+
+    try:
+        # ── Stage 1: Slice raw clip from source ────────────────────────────────
+        _report(f"Slicing [{clip.start_display} → {clip.end_display}]...")
+        raw_clip_path = tmp_dir / f"{stem}_raw.mp4"
+        slice_video(
+            source_path=source_path,
+            start_time=clip.start_time,
+            end_time=clip.end_time,
+            output_path=raw_clip_path,
+        )
+
+        # ── Stage 2: Build re-based subtitle file ──────────────────────────────
+        _report("Building subtitles...")
+        clip_segments = slice_segments(all_segments, clip.start_time, clip.end_time)
+        ass_path = tmp_dir / f"{stem}.ass"
+        if clip_segments:
+            write_ass_file(clip_segments, ass_path)
+        else:
+            warnings.append(f"Clip {clip.index}: no transcript segments in window — subtitles skipped.")
+            ass_path = None  # type: ignore[assignment]
+
+        # ── Stage 3: B-Roll Search (use per-clip query from AI) ────────────────
+        broll_clip: Optional[BRollClip] = None
+        if settings.pexels_api_key:
+            _report(f"Searching B-roll: '{clip.broll_query}'...")
+            result.broll_query = clip.broll_query
+            broll_clip = search_broll(clip.broll_query, settings.pexels_api_key)
+            if broll_clip is None:
+                msg = f"Clip {clip.index}: no B-roll found for '{clip.broll_query}' — skipping overlay."
+                logger.warning(msg)
+                warnings.append(msg)
+        else:
+            warnings.append(f"Clip {clip.index}: Pexels key absent — B-roll skipped.")
+
+        # ── Stage 4: B-Roll Download ───────────────────────────────────────────
+        broll_path: Optional[Path] = None
+        if broll_clip is not None:
+            _report("Downloading B-roll...")
+            broll_dest = tmp_dir / f"{stem}_broll.mp4"
+            try:
+                broll_path = download_clip(broll_clip, broll_dest)
+            except RuntimeError as exc:
+                msg = f"Clip {clip.index}: B-roll download failed: {exc}"
+                logger.warning(msg)
+                warnings.append(msg)
+
+        # ── Stage 5: Crop to 9:16 ─────────────────────────────────────────────
+        cropped_path = tmp_dir / f"{stem}_cropped.mp4"
+        if is_already_9_16(raw_clip_path, settings.target_width, settings.target_height):
+            import shutil as _shutil
+            _shutil.copy2(str(raw_clip_path), str(cropped_path))
+            _report("Crop skipped — already 9:16.")
+        else:
+            _report("Cropping to 9:16...")
+            crop_to_9_16(raw_clip_path, cropped_path, settings.target_width, settings.target_height)
+
+        # ── Stage 6: B-Roll Overlay ────────────────────────────────────────────
+        current_path = cropped_path
+        if broll_path is not None:
+            _report("Applying B-roll overlay...")
+            main_dur = probe_duration(cropped_path)
+            safe_start = min(
+                settings.broll_start_offset,
+                max(0.0, main_dur - settings.broll_overlay_duration),
+            )
+            overlaid_path = tmp_dir / f"{stem}_overlaid.mp4"
+            overlay_broll(
+                main_path=cropped_path,
+                broll_path=broll_path,
+                start_time=safe_start,
+                overlay_duration=settings.broll_overlay_duration,
+                output_path=overlaid_path,
+                target_width=settings.target_width,
+                target_height=settings.target_height,
+            )
+            current_path = overlaid_path
+
+        # ── Stage 7: Subtitle Burn-in ──────────────────────────────────────────
+        if ass_path is not None and ass_path.is_file():
+            _report("Burning subtitles...")
+            burned_path = tmp_dir / f"{stem}_burned.mp4"
+            burn_subtitles(current_path, ass_path, burned_path)
+            current_path = burned_path
+        else:
+            warnings.append(f"Clip {clip.index}: subtitle burn skipped (no .ass file).")
+
+        # ── Stage 8: Outro Concatenation ───────────────────────────────────────
+        if settings.outro_path is not None:
+            _report("Concatenating outro...")
+            final_tmp = tmp_dir / f"{stem}_with_outro.mp4"
+            concatenate_with_outro(
+                main_path=current_path,
+                outro_path=settings.outro_path,
+                output_path=final_tmp,
+                target_width=settings.target_width,
+                target_height=settings.target_height,
+            )
+            current_path = final_tmp
+        else:
+            warnings.append(f"Clip {clip.index}: no outro — concatenation skipped.")
+
+        # ── Stage 9: Write Final Output ────────────────────────────────────────
+        _report("Writing output files...")
+        run_output_dir.mkdir(parents=True, exist_ok=True)
+
+        final_output = run_output_dir / f"{stem}_short.mp4"
+        seo_json_path = run_output_dir / f"seo_{stem}.json"
+
+        import shutil
+        shutil.copy2(str(current_path), str(final_output))
+
+        seo_json_path.write_text(
+            json.dumps(seo_to_dict(clip.seo), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        result.output_file = final_output
+        result.seo = clip.seo
+        result.success = True
+        result.warnings = warnings
+        _report("Done ✓")
+
+    except Exception as exc:
+        error_msg = f"{type(exc).__name__}: {exc}"
+        logger.error(
+            "URL clip pipeline failed for clip %d: %s", clip.index, error_msg, exc_info=True
+        )
+        result.error = error_msg
+        result.success = False
+        result.warnings = warnings
+
+    return result
+
+
+def run_url_pipeline(
+    url: str,
+    settings: Settings,
+    clip_indices: Optional[list[int]] = None,
+    progress_cb: Optional[ProgressCallback] = None,
+) -> tuple[list[ClipCandidate], list[ProcessingResult]]:
+    """
+    Run the complete URL-driven pipeline: download → transcribe → select → assemble.
+
+    This is the primary entry point for the URL input mode. It differs from
+    run_batch in two key ways:
+      1. A single source URL (not a list of uploaded files) is the input.
+      2. The Gemini clip selector decides which moments to extract; the user
+         can pre-filter via *clip_indices* (from the review step in the UI).
+
+    Stage order:
+      1. Validate settings and assert system binaries.
+      2. Probe URL metadata (title, channel, duration).
+      3. Download source video into scratch directory.
+      4. Single-pass transcription (faster-whisper) of the source video.
+      5. Optional Gemini transcript correction.
+      6. Gemini clip selection → list[ClipCandidate].
+      7. Boundary snapping for each candidate.
+      8. For each selected (and user-approved) clip: full assembly pipeline.
+      9. Return (all_candidates, assembly_results).
+
+    Args:
+        url:           Source video URL (YouTube, Vimeo, direct MP4, etc.).
+        settings:      Validated Settings instance.
+        clip_indices:  If provided, only assemble clips at these 1-based indices.
+                       None = assemble all selected candidates.
+        progress_cb:   Optional callback called at each stage.
+
+    Returns:
+        A tuple of:
+          - all_candidates: list[ClipCandidate] (all AI-selected candidates,
+            regardless of clip_indices, for UI display purposes).
+          - results: list[ProcessingResult] (one per assembled clip).
+
+    Raises:
+        RuntimeError: If system binary assertions fail.
+        ValueError:   If the URL is empty or the source video is too long.
+    """
+    assert_system_binaries()
+
+    run_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_output_dir = settings.output_dir / run_ts
+    run_output_dir.mkdir(parents=True, exist_ok=True)
+    logger.info("URL pipeline output directory: '%s'", run_output_dir)
+
+    all_candidates: list[ClipCandidate] = []
+    results: list[ProcessingResult] = []
+
+    def _report(stage: str) -> None:
+        logger.info("[URL Pipeline] %s", stage)
+        if progress_cb:
+            progress_cb(0, 1, stage)
+
+    with tempfile.TemporaryDirectory(prefix="shorts_url_") as tmp_root:
+        tmp_dir = Path(tmp_root)
+
+        # ── Phase 1: Download ──────────────────────────────────────────────────
+        _report("Probing URL metadata...")
+        url_meta = probe_url_metadata(url, settings.max_source_duration_seconds)
+        logger.info(
+            "Source: '%s' by '%s' (%s)",
+            url_meta.title, url_meta.channel, url_meta.duration_display,
+        )
+
+        _report(f"Downloading '{url_meta.title}'...")
+        download_dir = tmp_dir / "source"
+        source_path = download_video(url, download_dir, settings.max_source_duration_seconds)
+
+        # ── Phase 2: Transcription ─────────────────────────────────────────────
+        _report("Transcribing audio (this may take a few minutes)...")
+        all_segments = transcribe(
+            source_path,
+            model_size=settings.whisper_model_size,
+            device=settings.whisper_device,
+            compute_type=settings.whisper_compute_type,
+        )
+
+        if settings.gemini_api_key:
+            _report("Correcting transcript with Gemini...")
+            all_segments = correct_transcript_greek(all_segments, settings.gemini_api_key)
+
+        # ── Phase 3: AI Clip Selection ─────────────────────────────────────────
+        _report("Selecting best clips with AI...")
+        raw_candidates = select_clips(
+            segments=all_segments,
+            gemini_api_key=settings.gemini_api_key,
+            max_clips=settings.max_clips,
+            min_dur=settings.clip_min_duration,
+            max_dur=settings.clip_max_duration,
+            source_title=url_meta.title,
+        )
+
+        # ── Phase 4: Boundary Snapping ─────────────────────────────────────────
+        from dataclasses import replace as _dc_replace
+        snapped: list[ClipCandidate] = []
+        for cand in raw_candidates:
+            snapped_start, snapped_end = snap_to_silence(
+                start_time=cand.start_time,
+                end_time=cand.end_time,
+                segments=all_segments,
+                min_dur=settings.clip_min_duration,
+                max_dur=settings.clip_max_duration,
+            )
+            snapped.append(
+                ClipCandidate(
+                    index=cand.index,
+                    start_time=snapped_start,
+                    end_time=snapped_end,
+                    hook_summary=cand.hook_summary,
+                    seo=cand.seo,
+                    broll_query=cand.broll_query,
+                )
+            )
+
+        all_candidates = snapped
+
+        # Filter to user-approved indices if provided
+        if clip_indices is not None:
+            to_process = [c for c in snapped if c.index in clip_indices]
+        else:
+            to_process = snapped
+
+        total_clips = len(to_process)
+        logger.info("Assembling %d/%d selected clips...", total_clips, len(snapped))
+
+        # ── Phase 5: Per-clip Assembly ─────────────────────────────────────────
+        for idx, clip in enumerate(to_process):
+            per_clip_tmp = tmp_dir / f"clip_{clip.index:02d}"
+            per_clip_tmp.mkdir(parents=True, exist_ok=True)
+
+            result = process_url_clip(
+                clip=clip,
+                source_path=source_path,
+                all_segments=all_segments,
+                settings=settings,
+                tmp_dir=per_clip_tmp,
+                run_output_dir=run_output_dir,
+                progress_cb=progress_cb,
+                item_index=idx,
+                total_items=total_clips,
+            )
+            results.append(result)
+
+    successful = sum(1 for r in results if r.success)
+    logger.info(
+        "URL pipeline complete: %d/%d clips succeeded. Output: '%s'",
+        successful, total_clips, run_output_dir,
+    )
+    return all_candidates, results

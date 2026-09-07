@@ -231,13 +231,17 @@ def crop_to_9_16(
     output_path: Path,
     target_width: int = 1080,
     target_height: int = 1920,
+    crop_x_offset: Optional[int] = None,
 ) -> Path:
     """
-    Center-crop and scale *input_path* to exactly *target_width* × *target_height* (9:16).
+    Scale and crop *input_path* to exactly *target_width* × *target_height* (9:16).
+
+    If *crop_x_offset* is provided, the horizontal crop is positioned at that
+    pixel offset (used for active speaker tracking). Otherwise, center-crop is applied.
 
     The filter chain:
       1. `scale` — scale so the shortest dimension fits, preserving aspect ratio.
-      2. `crop`  — center-crop to the exact target dimensions.
+      2. `crop`  — crop to the exact target dimensions.
       3. `setsar=1` — fix the Sample Aspect Ratio to 1:1 (square pixels).
 
     Args:
@@ -245,6 +249,7 @@ def crop_to_9_16(
         output_path:   Destination path for the cropped video.
         target_width:  Output width in pixels (default 1080).
         target_height: Output height in pixels (default 1920).
+        crop_x_offset: Optional horizontal pixel offset for dynamic speaker framing.
 
     Returns:
         The written *output_path*.
@@ -256,12 +261,11 @@ def crop_to_9_16(
     if not input_path.is_file():
         raise FileNotFoundError(f"Input video not found: {input_path}")
 
-    # Scale so the video covers the target rectangle, then center-crop.
-    # The scale formula: scale to w=target_w if width is the limiting axis,
-    # else scale to h=target_h, then crop. The -2 ensures even dimensions.
+    x_expr = str(crop_x_offset) if crop_x_offset is not None else f"(iw-{target_width})/2"
+
     vf = (
         f"scale=w={target_width}:h={target_height}:force_original_aspect_ratio=increase,"
-        f"crop={target_width}:{target_height}:(iw-{target_width})/2:(ih-{target_height})/2,"
+        f"crop={target_width}:{target_height}:{x_expr}:(ih-{target_height})/2,"
         f"setsar=1"
     )
 
@@ -516,3 +520,107 @@ def concatenate_with_outro(
         main_path.name, output_path.name,
     )
     return output_path
+
+
+def slice_video(
+    source_path: Path,
+    start_time: float,
+    end_time: float,
+    output_path: Path,
+) -> Path:
+    """
+    Extract a sub-clip from *source_path* between [start_time, end_time].
+
+    Strategy:
+      1. Attempt a fast stream-copy cut (-c copy). This is near-instant but
+         may produce slightly inaccurate in/out points due to keyframe alignment.
+      2. Verify the resulting duration. If it deviates from the expected duration
+         by more than 0.5 seconds, fall back to a full re-encode for a precise cut.
+
+    Args:
+        source_path: Path to the source video (any codec).
+        start_time:  Cut start time in seconds (relative to source origin).
+        end_time:    Cut end time in seconds (relative to source origin).
+        output_path: Destination path for the extracted clip.
+
+    Returns:
+        The written *output_path*.
+
+    Raises:
+        FileNotFoundError: If *source_path* does not exist.
+        FFmpegError:       If both the stream-copy and re-encode attempts fail.
+        ValueError:        If start_time >= end_time.
+    """
+    if not source_path.is_file():
+        raise FileNotFoundError(f"Source video not found: {source_path}")
+
+    if start_time >= end_time:
+        raise ValueError(
+            f"start_time ({start_time:.3f}) must be less than end_time ({end_time:.3f})"
+        )
+
+    expected_duration = end_time - start_time
+
+    # ── Attempt 1: Fast stream copy ───────────────────────────────────────────
+    logger.info(
+        "Slicing '%s' [%.2f → %.2f] (%.1fs) via stream copy...",
+        source_path.name, start_time, end_time, expected_duration,
+    )
+    try:
+        run_ffmpeg([
+            "ffmpeg", "-y",
+            "-ss", f"{start_time:.3f}",
+            "-to", f"{end_time:.3f}",
+            "-i", str(source_path),
+            "-c", "copy",
+            "-avoid_negative_ts", "make_zero",
+            "-movflags", "+faststart",
+            str(output_path),
+        ])
+
+        # Verify the resulting duration
+        actual_duration = probe_duration(output_path)
+        if abs(actual_duration - expected_duration) <= 0.5:
+            logger.info(
+                "Stream-copy slice successful: actual=%.2fs, expected=%.2fs.",
+                actual_duration, expected_duration,
+            )
+            return output_path
+
+        logger.warning(
+            "Stream-copy duration mismatch: actual=%.2fs vs expected=%.2fs — "
+            "falling back to re-encode for precise cut.",
+            actual_duration, expected_duration,
+        )
+
+    except FFmpegError as exc:
+        logger.warning(
+            "Stream-copy slice failed: %s — falling back to re-encode.", exc
+        )
+
+    # ── Attempt 2: Precise re-encode ──────────────────────────────────────────
+    logger.info(
+        "Re-encoding slice [%.2f → %.2f] with libx264 for precise cut...",
+        start_time, end_time,
+    )
+    run_ffmpeg([
+        "ffmpeg", "-y",
+        "-ss", f"{start_time:.3f}",
+        "-to", f"{end_time:.3f}",
+        "-i", str(source_path),
+        "-c:v", "libx264",
+        "-preset", "fast",
+        "-crf", "23",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-avoid_negative_ts", "make_zero",
+        "-movflags", "+faststart",
+        str(output_path),
+    ])
+
+    logger.info(
+        "Re-encode slice complete: '%s' → '%s'.",
+        source_path.name, output_path.name,
+    )
+    return output_path
+

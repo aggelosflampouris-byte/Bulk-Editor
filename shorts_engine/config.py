@@ -198,11 +198,27 @@ class Settings:
 
     # ── Transcription ──────────────────────────────────────────
     # Whisper model size: tiny | base | small | medium | large-v3
-    whisper_model_size: str = "base"
+    whisper_model_size: str = "large-v3"
     # Always CPU — no CUDA complexity
     whisper_device: str = "cpu"
     # Compute type appropriate for CPU
     whisper_compute_type: str = "int8"
+
+    # ── Content Analysis & SEO (Qwen 2.5) ──────────────────────
+    # OpenAI-compatible API base for Qwen (Ollama, vLLM, OpenRouter, etc.)
+    qwen_api_base: str = field(
+        default_factory=lambda: os.environ.get("QWEN_API_BASE", "http://localhost:11434/v1")
+    )
+    qwen_api_key: str = field(
+        default_factory=lambda: os.environ.get("QWEN_API_KEY", "")
+    )
+    qwen_model: str = field(
+        default_factory=lambda: os.environ.get("QWEN_MODEL", "qwen2.5:32b")
+    )
+    enable_highlight_scoring: bool = True
+
+    # ── Active Speaker Framing (YOLO-face) ─────────────────────
+    enable_face_tracking: bool = True
 
     # ── Output ────────────────────────────────────────────────
     output_dir: Path = field(default_factory=lambda: DEFAULT_OUTPUT_DIR)
@@ -216,6 +232,16 @@ class Settings:
     broll_overlay_duration: float = 5.0
     # Timestamp offset (seconds from start) at which B-roll starts
     broll_start_offset: float = 3.0
+
+    # ── URL / Clip Selection ───────────────────────────────────
+    # Maximum number of clips to extract per source video (1–10)
+    max_clips: int = 10
+    # Minimum clip duration in seconds
+    clip_min_duration: float = 20.0
+    # Maximum clip duration in seconds
+    clip_max_duration: float = 40.0
+    # Reject source videos longer than this many seconds (2 hours default)
+    max_source_duration_seconds: int = 7200
 
     # ── Target dimensions ─────────────────────────────────────
     target_width: int = 1080
@@ -244,5 +270,20 @@ class Settings:
 
         if self.broll_start_offset < 0:
             errors.append("broll_start_offset must be >= 0.")
+
+        if not (1 <= self.max_clips <= 10):
+            errors.append("max_clips must be between 1 and 10.")
+
+        if self.clip_min_duration < 5:
+            errors.append("clip_min_duration must be at least 5 seconds.")
+
+        if self.clip_max_duration > 60:
+            errors.append("clip_max_duration must be at most 60 seconds.")
+
+        if self.clip_min_duration >= self.clip_max_duration:
+            errors.append("clip_min_duration must be less than clip_max_duration.")
+
+        if self.max_source_duration_seconds <= 0:
+            errors.append("max_source_duration_seconds must be positive.")
 
         return errors
