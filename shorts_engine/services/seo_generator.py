@@ -346,3 +346,114 @@ def generate_broll_query(transcript_text: str, api_key: str) -> Optional[str]:
     logger.info("Gemini broll query: '%s'", query)
     return query
 
+
+# ── Greek Transcript Correction ────────────────────────────────────────────────
+
+# Each segment is corrected independently to preserve timing boundaries.
+# Gemini fixes spelling, diacritics, grammar, and filler words.
+_CORRECTION_PROMPT = """\
+You are a professional Greek language editor.
+
+The following lines are raw speech-to-text segments transcribed from Greek \
+audio by Whisper. They may contain spelling mistakes, missing/wrong diacritics, \
+incorrect words from mis-heard speech (e.g. "στρίβω" instead of "στρέφω"), or \
+grammatical errors.
+
+Correct EACH line so it reads as accurate, natural Greek. Follow these rules:
+1. Output the SAME number of lines as input — one corrected line per input line.
+2. Do NOT merge or split lines.
+3. Do NOT add punctuation beyond what is natural for subtitles (commas, periods).
+4. Do NOT change the meaning or content of what was said.
+5. If a line is already correct, output it unchanged.
+6. Output ONLY the corrected lines, nothing else.
+
+Lines to correct:
+{lines}
+"""
+
+
+def correct_transcript_greek(
+    segments: "list",
+    api_key: str,
+) -> "list":
+    """
+    Use Gemini to fix Whisper transcription errors in Greek segments.
+
+    Sends the text of each segment to Gemini for grammar/spelling correction,
+    then maps the corrected text back to the original segments while preserving
+    all word-level timing data (only the .text attribute is updated).
+
+    Args:
+        segments: List of TranscriptionSegment objects from transcribe().
+        api_key:  Google Gemini API key.
+
+    Returns:
+        List of corrected TranscriptionSegment objects (or original on failure).
+    """
+    # Lazy import to avoid circular dependency between seo_generator ↔ transcriber
+    from services.transcriber import TranscriptionSegment  # noqa: PLC0415
+
+    if not api_key or not api_key.strip():
+        logger.debug("Gemini key absent — skipping transcript correction.")
+        return segments
+
+    if not segments:
+        return segments
+
+    # Build numbered input lines (one per segment)
+    input_lines = [seg.text for seg in segments]
+    joined = "\n".join(input_lines)
+
+    # Limit prompt size — for very long transcripts batch in 60-line windows
+    if len(input_lines) > 60:
+        logger.info(
+            "Transcript has %d segments; correcting in one batch (first 60).",
+            len(input_lines),
+        )
+        input_lines_batch = input_lines[:60]
+        rest = segments[60:]
+    else:
+        input_lines_batch = input_lines
+        rest = []
+
+    prompt = _CORRECTION_PROMPT.format(lines="\n".join(input_lines_batch))
+
+    logger.info("Calling Gemini to correct %d transcript segments...", len(input_lines_batch))
+    try:
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(
+            model=_GEMINI_MODEL,
+            contents=prompt,
+            config=genai_types.GenerateContentConfig(
+                max_output_tokens=2048,
+                temperature=0.1,  # Very low — stay close to original
+            ),
+        )
+        raw: str = (response.text or "").strip()
+    except Exception as exc:
+        logger.warning("Gemini transcript correction failed: %s — using original.", exc)
+        return segments
+
+    corrected_lines = [line.strip() for line in raw.splitlines() if line.strip()]
+
+    # Validate: must have same count as input batch
+    if len(corrected_lines) != len(input_lines_batch):
+        logger.warning(
+            "Gemini returned %d corrected lines for %d segments — using original.",
+            len(corrected_lines), len(input_lines_batch),
+        )
+        return segments
+
+    # Rebuild segments with corrected text, preserving start/end/words
+    corrected_segments: list[TranscriptionSegment] = []
+    for seg, new_text in zip(segments[:len(input_lines_batch)], corrected_lines):
+        corrected_segments.append(
+            TranscriptionSegment(
+                start=seg.start,
+                end=seg.end,
+                text=new_text,
+                words=seg.words,  # Preserve word-level timing for karaoke
+            )
+        )
+
+    return corrected_segments + rest

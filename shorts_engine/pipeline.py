@@ -30,7 +30,7 @@ from services.broll_fetcher import (
     extract_broll_query,
     search_broll,
 )
-from services.seo_generator import SeoMetadata, generate_seo, generate_broll_query, seo_to_dict
+from services.seo_generator import SeoMetadata, generate_seo, generate_broll_query, correct_transcript_greek, seo_to_dict
 from services.transcriber import (
     TranscriptionSegment,
     full_transcript_text,
@@ -71,6 +71,8 @@ class ProcessingResult:
     error: Optional[str] = None
     # Individual stage warnings (non-fatal, e.g. B-roll skipped)
     warnings: list[str] = field(default_factory=list)
+    # The Pexels search query that was used for B-roll (for UI display)
+    broll_query: Optional[str] = None
 
 
 # ── Single-Video Pipeline ──────────────────────────────────────────────────────
@@ -135,6 +137,15 @@ def process_single(
         transcript_text: str = full_transcript_text(segments)
         logger.info("Transcript (%d chars): %s...", len(transcript_text), transcript_text[:80])
 
+        # ── Stage 1b: Gemini transcript correction ────────────────────────────
+        # Fix Whisper transcription errors in the Greek text while keeping all
+        # word-level timing intact (correction replaces text only, not timing).
+        if settings.gemini_api_key:
+            _report("Correcting transcript with Gemini...")
+            segments = correct_transcript_greek(segments, settings.gemini_api_key)
+            transcript_text = full_transcript_text(segments)
+            logger.info("Corrected transcript: %s...", transcript_text[:80])
+
         # Write ASS subtitle file to scratch dir
         ass_path: Path = tmp_dir / f"{stem}.ass"
         write_ass_file(segments, ass_path)
@@ -150,6 +161,7 @@ def process_single(
                 generate_broll_query(transcript_text, settings.gemini_api_key)
                 or extract_broll_query(transcript_text)
             )
+            result.broll_query = query
             logger.info("B-roll search query: '%s'", query)
 
             _report(f"Searching for B-roll: '{query}'...")

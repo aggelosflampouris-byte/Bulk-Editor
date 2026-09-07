@@ -235,10 +235,10 @@ def _render_sidebar() -> Settings:
         model_size = st.selectbox(
             "Whisper Model Size",
             options=["tiny", "base", "small", "medium", "large-v3"],
-            index=1,  # default: base
+            index=2,  # default: small (better Greek accuracy than base)
             help=(
                 "Larger models are more accurate but slower.\n"
-                "base ≈ 30s per minute of audio on CPU."
+                "small ≈ 60s per minute of audio on CPU — best balance for Greek."
             ),
             key="whisper_model_size_select",
         )
@@ -350,6 +350,14 @@ def _render_result_card(result: ProcessingResult, index: int) -> None:
         with meta_col:
             st.markdown("**📁 Output file**")
             st.code(str(result.output_file), language=None)
+
+            # Show what B-roll query was searched so the user can verify
+            if result.broll_query:
+                st.markdown(
+                    f'<span style="font-size:0.8rem;color:#888;">'
+                    f'🔍 B-roll query: <code>{result.broll_query}</code></span>',
+                    unsafe_allow_html=True,
+                )
 
             if result.seo:
                 st.markdown("**📝 SEO Metadata**")
