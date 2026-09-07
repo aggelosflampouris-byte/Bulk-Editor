@@ -336,13 +336,11 @@ def overlay_broll(
         main_w, main_h = target_width, target_height
 
     tw = main_w if main_w % 2 == 0 else main_w - 1
-    oh = main_h // 2
-    if oh % 2 != 0:
-        oh -= 1
+    oh = main_h if main_h % 2 == 0 else main_h - 1
 
     end_time = start_time + overlay_duration
 
-    # Cover-fill: scale so the clip fills tw × oh with no black bars
+    # Cover-fill: scale so the clip fills tw × oh (full 9:16 frame) with no black bars
     # (CSS object-fit: cover equivalent).
     # Using max(tw/iw, oh/ih) scales both axes by the larger factor,
     # guaranteeing that width >= tw and height >= oh without distortion.

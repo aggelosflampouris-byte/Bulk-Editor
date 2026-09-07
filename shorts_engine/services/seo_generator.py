@@ -26,8 +26,39 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
-_GEMINI_MODEL = "gemini-2.5-flash"
-_MAX_OUTPUT_TOKENS = 1024
+_GEMINI_MODELS = (
+    "gemini-3.5-flash",
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-flash-latest",
+)
+_MAX_OUTPUT_TOKENS = 4096
+
+
+def _call_gemini_with_fallback(
+    client: genai.Client,
+    contents: str,
+    config: genai_types.GenerateContentConfig,
+) -> str:
+    """
+    Attempt content generation across known Flash models in fallback order.
+    Catches 404 (model deprecated) and 503 (high demand) to ensure resilience.
+    """
+    last_err: Optional[Exception] = None
+    for model in _GEMINI_MODELS:
+        try:
+            response = client.models.generate_content(
+                model=model,
+                contents=contents,
+                config=config,
+            )
+            return response.text or ""
+        except Exception as exc:
+            logger.warning("Gemini model '%s' failed: %s — trying fallback...", model, exc)
+            last_err = exc
+    if last_err is not None:
+        raise last_err
+    raise RuntimeError("No Gemini models available.")
 
 # Strict prompt requesting JSON so we can parse deterministically
 _PROMPT_TEMPLATE = """\
@@ -204,11 +235,11 @@ def generate_seo(transcript_text: str, api_key: str) -> SeoMetadata:
 
     prompt = _PROMPT_TEMPLATE.format(transcript=transcript_text)
 
-    logger.info("Calling Gemini (%s) for SEO metadata...", _GEMINI_MODEL)
+    logger.info("Calling Gemini for SEO metadata...")
     try:
         client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(
-            model=_GEMINI_MODEL,
+        raw_text = _call_gemini_with_fallback(
+            client=client,
             contents=prompt,
             config=genai_types.GenerateContentConfig(
                 max_output_tokens=_MAX_OUTPUT_TOKENS,
@@ -216,7 +247,6 @@ def generate_seo(transcript_text: str, api_key: str) -> SeoMetadata:
                 response_mime_type="application/json",
             ),
         )
-        raw_text: str = response.text or ""
     except Exception as exc:
         logger.error("Gemini API call failed: %s — using fallback SEO.", exc)
         return SeoMetadata.fallback(transcript_text)
@@ -316,15 +346,14 @@ def generate_broll_query(transcript_text: str, api_key: str) -> Optional[str]:
     logger.info("Calling Gemini to generate B-roll search query...")
     try:
         client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(
-            model=_GEMINI_MODEL,
+        raw = _call_gemini_with_fallback(
+            client=client,
             contents=prompt,
             config=genai_types.GenerateContentConfig(
                 max_output_tokens=32,   # Only a few words needed
                 temperature=0.2,        # Low variance for consistency
             ),
-        )
-        raw: str = (response.text or "").strip()
+        ).strip()
     except Exception as exc:
         logger.warning("Gemini broll query call failed: %s — using fallback.", exc)
         return None
@@ -349,27 +378,69 @@ def generate_broll_query(transcript_text: str, api_key: str) -> Optional[str]:
 
 # ── Greek Transcript Correction ────────────────────────────────────────────────
 
-# Each segment is corrected independently to preserve timing boundaries.
-# Gemini fixes spelling, diacritics, grammar, and filler words.
 _CORRECTION_PROMPT = """\
-You are a professional Greek language editor.
+You are a professional Greek language editor and proofreader.
 
-The following lines are raw speech-to-text segments transcribed from Greek \
-audio by Whisper. They may contain spelling mistakes, missing/wrong diacritics, \
-incorrect words from mis-heard speech (e.g. "στρίβω" instead of "στρέφω"), or \
-grammatical errors.
+The following lines are raw speech-to-text transcript segments from Greek \
+audio transcribed by Whisper. They often contain speech-to-text phonetic \
+errors, wrong word boundaries, missing/wrong diacritics (τόνοι), or grammar mistakes.
 
-Correct EACH line so it reads as accurate, natural Greek. Follow these rules:
-1. Output the SAME number of lines as input — one corrected line per input line.
+Common Whisper Greek errors to ALWAYS correct:
+- Passive verb endings misheard as separate words (e.g. "Χαίρο με" / "χαίρο με" -> "Χαίρομαι" / "χαίρομαι", "σκέφτο με" -> "σκέφτομαι")
+- Verb forms: "είσαστε" -> "είστε", "βλέπωμε" -> "βλέπουμε"
+- "ό,τι" vs "ότι", "πως" vs "πώς", "που" vs "πού"
+- Missing accent marks (τόνοι) and spelling errors
+
+Correct EACH line so it reads as accurate, natural, grammatically correct Greek. Follow these rules:
+1. Output the EXACT SAME number of lines as input — one corrected line per input line.
 2. Do NOT merge or split lines.
-3. Do NOT add punctuation beyond what is natural for subtitles (commas, periods).
-4. Do NOT change the meaning or content of what was said.
+3. Do NOT add unnecessary punctuation; keep subtitles clean and natural.
+4. Do NOT change the speaker's intended meaning.
 5. If a line is already correct, output it unchanged.
 6. Output ONLY the corrected lines, nothing else.
 
 Lines to correct:
 {lines}
 """
+
+
+def align_words_with_corrected_text(
+    original_words: list[tuple[float, float, str]],
+    corrected_text: str,
+    seg_start: float,
+    seg_end: float,
+) -> list[tuple[float, float, str]]:
+    """
+    Synchronise word-level timestamps with Gemini-corrected Greek text.
+
+    If the word count matches the original Whisper segment, the original
+    precise timestamps are preserved and only the word text is updated.
+    If the word count changed (e.g. 'Χαίρο' + 'με' merged into 'Χαίρομαι',
+    or words split/joined), the segment duration is proportionally distributed
+    across the new words weighted by character length.
+    """
+    new_words = corrected_text.strip().split()
+    if not new_words:
+        return original_words
+
+    if original_words and len(original_words) == len(new_words):
+        return [(w[0], w[1], nw) for w, nw in zip(original_words, new_words)]
+
+    total_chars = max(1, sum(len(w) for w in new_words))
+    total_duration = max(0.1, seg_end - seg_start)
+
+    aligned: list[tuple[float, float, str]] = []
+    current_time = seg_start
+    for i, nw in enumerate(new_words):
+        if i == len(new_words) - 1:
+            w_end = seg_end
+        else:
+            w_dur = (len(nw) / total_chars) * total_duration
+            w_end = current_time + w_dur
+        aligned.append((round(current_time, 3), round(w_end, 3), nw))
+        current_time = w_end
+
+    return aligned
 
 
 def correct_transcript_greek(
@@ -402,7 +473,6 @@ def correct_transcript_greek(
 
     # Build numbered input lines (one per segment)
     input_lines = [seg.text for seg in segments]
-    joined = "\n".join(input_lines)
 
     # Limit prompt size — for very long transcripts batch in 60-line windows
     if len(input_lines) > 60:
@@ -421,15 +491,14 @@ def correct_transcript_greek(
     logger.info("Calling Gemini to correct %d transcript segments...", len(input_lines_batch))
     try:
         client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(
-            model=_GEMINI_MODEL,
+        raw = _call_gemini_with_fallback(
+            client=client,
             contents=prompt,
             config=genai_types.GenerateContentConfig(
                 max_output_tokens=2048,
                 temperature=0.1,  # Very low — stay close to original
             ),
-        )
-        raw: str = (response.text or "").strip()
+        ).strip()
     except Exception as exc:
         logger.warning("Gemini transcript correction failed: %s — using original.", exc)
         return segments
@@ -444,15 +513,21 @@ def correct_transcript_greek(
         )
         return segments
 
-    # Rebuild segments with corrected text, preserving start/end/words
+    # Rebuild segments with corrected text and synchronised word timings
     corrected_segments: list[TranscriptionSegment] = []
     for seg, new_text in zip(segments[:len(input_lines_batch)], corrected_lines):
+        aligned_words = align_words_with_corrected_text(
+            original_words=seg.words,
+            corrected_text=new_text,
+            seg_start=seg.start,
+            seg_end=seg.end,
+        )
         corrected_segments.append(
             TranscriptionSegment(
                 start=seg.start,
                 end=seg.end,
                 text=new_text,
-                words=seg.words,  # Preserve word-level timing for karaoke
+                words=aligned_words,
             )
         )
 
