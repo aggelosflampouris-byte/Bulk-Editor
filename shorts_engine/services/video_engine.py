@@ -328,33 +328,36 @@ def overlay_broll(
         if not path.is_file():
             raise FileNotFoundError(f"Input video not found: {path}")
 
-    overlay_height = target_height // 2  # Top 50 % of the 9:16 frame
+    # Determine canvas dimensions from main_path so the B-roll overlay matches
+    # the exact resolution of the main video (e.g. 720×1280 or 1080×1920)
+    try:
+        main_w, main_h = probe_resolution(main_path)
+    except (FFmpegError, ValueError):
+        main_w, main_h = target_width, target_height
+
+    tw = main_w if main_w % 2 == 0 else main_w - 1
+    oh = main_h // 2
+    if oh % 2 != 0:
+        oh -= 1
+
     end_time = start_time + overlay_duration
 
-    # Cover-fill: scale so the clip fills target_width × overlay_height
-    # with no black bars (like CSS object-fit: cover).
-    #
-    # FFmpeg expression:
-    #   scale w/h to ensure both dimensions are AT LEAST the target size,
-    #   then crop to exact target dimensions from the centre.
-    #
-    #   scale=w='if(gt(iw/ih,{tw}/{oh}),{tw},-2)':h='if(gt(iw/ih,{tw}/{oh}),-2,{oh})'
-    #   This picks the axis that needs to be enlarged to fill the box, then
-    #   the other axis scales proportionally (guaranteed to exceed the box).
-    #   A subsequent crop={tw}:{oh} trims the excess from the centre.
-    tw = target_width
-    oh = overlay_height
+    # Cover-fill: scale so the clip fills tw × oh with no black bars
+    # (CSS object-fit: cover equivalent).
+    # Using max(tw/iw, oh/ih) scales both axes by the larger factor,
+    # guaranteeing that width >= tw and height >= oh without distortion.
+    # crop={tw}:{oh} trims the excess from the center.
     scale_expr = (
         f"scale="
-        f"w='if(gt(iw/ih,{tw}/{oh}),{tw},-2)':"
-        f"h='if(gt(iw/ih,{tw}/{oh}),-2,{oh})',"
+        fr"w=iw*max({tw}/iw\,{oh}/ih):"
+        fr"h=ih*max({tw}/iw\,{oh}/ih),"
         f"crop={tw}:{oh},"
         f"setsar=1"
     )
 
     filter_complex = (
         f"[1:v]{scale_expr}[broll_filled];"
-        f"[0:v][broll_filled]overlay=0:0:"
+        f"[0:v][broll_filled]overlay=0:0:eof_action=repeat:"
         f"enable='between(t,{start_time:.3f},{end_time:.3f})'[v_out]"
     )
 
