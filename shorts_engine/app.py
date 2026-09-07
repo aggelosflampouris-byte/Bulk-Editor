@@ -251,9 +251,19 @@ def _render_sidebar() -> Settings:
             index=4,  # default: large-v3 for maximum Greek accuracy & millisecond timestamps
             help=(
                 "faster-whisper-large-v3 delivers highest Greek accuracy and millisecond timestamps.\n"
-                "Use small or base for faster CPU-only previews if needed."
+                "Use small or base for fast 1–2 minute previews on CPU for long YouTube videos."
             ),
             key="whisper_model_size_select",
+        )
+        whisper_beam_size = st.select_slider(
+            "Whisper Beam Size",
+            options=[1, 2, 5],
+            value=1,
+            help=(
+                "1 = greedy search (3x faster on CPU, highly recommended).\n"
+                "5 = full beam search (highest accuracy, slowest on CPU)."
+            ),
+            key="whisper_beam_size_select",
         )
 
         st.markdown("---")
@@ -375,6 +385,7 @@ def _render_sidebar() -> Settings:
 
     return Settings(
         whisper_model_size=str(model_size),
+        whisper_beam_size=int(whisper_beam_size),
         enable_highlight_scoring=bool(enable_highlight_scoring),
         qwen_api_base=str(qwen_api_base).strip(),
         qwen_model=str(qwen_model).strip(),
@@ -509,7 +520,13 @@ def _make_progress_callback(
     """
     def callback(current: int, _total: int, stage: str) -> None:
         fraction = current / max(total, 1)
-        progress_bar.progress(fraction)
+        if "Transcribing audio:" in stage:
+            import re as _re
+            m = _re.search(r"\((\d+)%\)", stage)
+            if m:
+                sub_pct = int(m.group(1)) / 100.0
+                fraction = (current + sub_pct * 0.5) / max(total, 1)
+        progress_bar.progress(min(1.0, fraction))
         stage_text.markdown(
             f"**[{current + 1}/{total}]** {stage}",
             unsafe_allow_html=False,
@@ -939,12 +956,20 @@ def main() -> None:
                     url_progress_bar.progress(0.05)
                 elif "Downloading" in stage:
                     url_progress_bar.progress(0.15)
+                elif "Transcribing audio:" in stage:
+                    import re as _re
+                    m = _re.search(r"\((\d+)%\)", stage)
+                    if m:
+                        pct_val = int(m.group(1)) / 100.0
+                        url_progress_bar.progress(min(0.70, 0.20 + 0.50 * pct_val))
+                    else:
+                        url_progress_bar.progress(0.20)
                 elif "Transcribing" in stage:
-                    url_progress_bar.progress(0.40)
+                    url_progress_bar.progress(0.20)
                 elif "Correcting" in stage:
-                    url_progress_bar.progress(0.60)
+                    url_progress_bar.progress(0.75)
                 elif "Selecting" in stage:
-                    url_progress_bar.progress(0.80)
+                    url_progress_bar.progress(0.85)
 
             try:
                 with st.spinner("Analyzing video (this may take several minutes)..."):

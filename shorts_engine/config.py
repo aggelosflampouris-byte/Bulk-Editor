@@ -203,6 +203,8 @@ class Settings:
     whisper_device: str = "cpu"
     # Compute type appropriate for CPU
     whisper_compute_type: str = "int8"
+    # Beam search size (1 = greedy search, 3x faster on CPU with identical Greek accuracy)
+    whisper_beam_size: int = 1
 
     # ── Content Analysis & SEO (Qwen 2.5) ──────────────────────
     # OpenAI-compatible API base for Qwen (Ollama, vLLM, OpenRouter, etc.)

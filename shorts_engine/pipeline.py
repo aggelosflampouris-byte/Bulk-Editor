@@ -138,11 +138,17 @@ def process_single(
     try:
         # ── Stage 1: Transcription ────────────────────────────────────────────
         _report(f"Transcribing Greek speech (faster-whisper {settings.whisper_model_size})...")
+
+        def _item_transcribe_cb(pct: float, msg: str) -> None:
+            _report(msg)
+
         segments: list[TranscriptionSegment] = transcribe(
             video_path,
             model_size=settings.whisper_model_size,
             device=settings.whisper_device,
             compute_type=settings.whisper_compute_type,
+            beam_size=settings.whisper_beam_size,
+            progress_cb=_item_transcribe_cb,
         )
         transcript_text: str = full_transcript_text(segments)
         logger.info("Transcript (%d chars): %s...", len(transcript_text), transcript_text[:80])
@@ -685,12 +691,18 @@ def run_url_pipeline(
         source_path = download_video(url, download_dir, settings.max_source_duration_seconds)
 
         # ── Phase 2: Transcription ─────────────────────────────────────────────
-        _report("Transcribing audio (this may take a few minutes)...")
+        _report("Transcribing audio (loading Whisper model)...")
+
+        def _url_transcribe_cb(pct: float, msg: str) -> None:
+            _report(msg)
+
         all_segments = transcribe(
             source_path,
             model_size=settings.whisper_model_size,
             device=settings.whisper_device,
             compute_type=settings.whisper_compute_type,
+            beam_size=settings.whisper_beam_size,
+            progress_cb=_url_transcribe_cb,
         )
 
         if settings.gemini_api_key:

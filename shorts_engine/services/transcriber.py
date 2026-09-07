@@ -13,11 +13,14 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from faster_whisper import WhisperModel
 
-from config import ASS_HEADER_TEMPLATE, ASS_HIGHLIGHT_STYLE_LINE, ASS_STYLE_LINE
+try:
+    from config import ASS_HEADER_TEMPLATE, ASS_HIGHLIGHT_STYLE_LINE, ASS_STYLE_LINE
+except ImportError:
+    from shorts_engine.config import ASS_HEADER_TEMPLATE, ASS_HIGHLIGHT_STYLE_LINE, ASS_STYLE_LINE
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +59,8 @@ def transcribe(
     model_size: str = "base",
     device: str = "cpu",
     compute_type: str = "int8",
+    beam_size: int = 1,
+    progress_cb: Optional[Callable[[float, str], None]] = None,
 ) -> list[TranscriptionSegment]:
     """
     Transcribe Greek speech from *video_path* using faster-whisper.
@@ -68,6 +73,8 @@ def transcribe(
         model_size:    Whisper model variant (tiny/base/small/medium/large-v3).
         device:        Compute device — always "cpu" for this deployment.
         compute_type:  Quantisation level — "int8" is optimal for CPU.
+        beam_size:     Beam search size (1 = greedy search, 3x faster on CPU).
+        progress_cb:   Optional callback invoked per decoded segment: (fraction, msg).
 
     Returns:
         Ordered list of TranscriptionSegment objects.
@@ -87,12 +94,12 @@ def transcribe(
             f"Failed to load WhisperModel '{model_size}': {exc}"
         ) from exc
 
-    logger.info("Transcribing '%s' (language=el)...", video_path.name)
+    logger.info("Transcribing '%s' (language=el, beam_size=%d)...", video_path.name, beam_size)
     try:
         raw_segments, _info = model.transcribe(
             str(video_path),
             language="el",
-            beam_size=5,
+            beam_size=beam_size,
             word_timestamps=True,
             vad_filter=True,
             vad_parameters={"min_silence_duration_ms": 300},
@@ -101,6 +108,8 @@ def transcribe(
         raise RuntimeError(
             f"Transcription failed for '{video_path.name}': {exc}"
         ) from exc
+
+    total_duration = getattr(_info, "duration", 0.0) or 0.0
 
     segments: list[TranscriptionSegment] = []
     for seg in raw_segments:
@@ -117,6 +126,21 @@ def transcribe(
         segments.append(
             TranscriptionSegment(seg.start, seg.end, seg.text, word_data)
         )
+
+        # Stream real-time progress per decoded segment
+        if total_duration > 0:
+            pct = min(1.0, seg.end / total_duration)
+            cur_m, cur_s = int(seg.end // 60), int(seg.end % 60)
+            tot_m, tot_s = int(total_duration // 60), int(total_duration % 60)
+            status_msg = (
+                f"Transcribing audio: {cur_m:02d}:{cur_s:02d} / {tot_m:02d}:{tot_s:02d} ({int(pct * 100)}%)"
+            )
+            if progress_cb:
+                progress_cb(pct, status_msg)
+            logger.info(
+                "[%02d:%02d / %02d:%02d] (%2d%%): %s",
+                cur_m, cur_s, tot_m, tot_s, int(pct * 100), seg.text.strip()[:60],
+            )
 
     logger.info("Transcription complete — %d segments extracted.", len(segments))
     return segments
