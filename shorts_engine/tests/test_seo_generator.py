@@ -112,3 +112,93 @@ def test_validate_seo_dict_tag_normalization():
     assert seo.youtube_tags_display.startswith("Τσίπρας, πολιτική, Ελλάδα, shorts")
 
 
+def test_sanitize_filename_greek_and_separators():
+    from shorts_engine.services.seo_generator import sanitize_filename
+
+    title = "Αλέξης Τσίπρας: Η νέα εποχή για την Ελλάδα"
+    assert sanitize_filename(title) == "Αλέξης Τσίπρας - Η νέα εποχή για την Ελλάδα"
+
+
+def test_sanitize_filename_prohibited_characters():
+    from shorts_engine.services.seo_generator import sanitize_filename
+
+    title = 'Shorts/Reels: "Πώς λειτουργεί" ο αλγόριθμος; <2025> *viral* | νέα'
+    expected = "Shorts - Reels - Πώς λειτουργεί ο αλγόριθμος; 2025 viral - νέα"
+    assert sanitize_filename(title) == expected
+
+
+def test_sanitize_filename_whitespace_and_dots():
+    from shorts_engine.services.seo_generator import sanitize_filename
+
+    title = "  ...Το μυστικό της επιτυχίας...   "
+    assert sanitize_filename(title) == "Το μυστικό της επιτυχίας"
+
+
+def test_sanitize_filename_empty_or_special():
+    from shorts_engine.services.seo_generator import sanitize_filename
+
+    assert sanitize_filename("") == ""
+    assert sanitize_filename("???***///") == ""
+
+
+def test_sanitize_filename_max_length():
+    from shorts_engine.services.seo_generator import sanitize_filename
+
+    long_title = "Αυτό είναι ένα πάρα πολύ μεγάλο κείμενο που ξεπερνάει κατά πολύ το όριο των χαρακτήρων"
+    sanitized = sanitize_filename(long_title, max_length=30)
+    assert len(sanitized) <= 30
+    assert not sanitized.endswith(" ")
+    assert not sanitized.endswith("-")
+
+
+def test_seo_metadata_safe_filename():
+    from shorts_engine.services.seo_generator import SeoMetadata
+
+    seo = SeoMetadata(
+        title="Shorts: Το μεγάλο κόλπο!",
+        description="Περιγραφή",
+        tags=("shorts",),
+    )
+    assert seo.safe_filename == "Shorts - Το μεγάλο κόλπο!"
+
+
+def test_get_download_filename():
+    from shorts_engine.services.seo_generator import get_download_filename
+
+    # 1. With title
+    assert (
+        get_download_filename(
+            title="Αλέξης Τσίπρας: Η νέα εποχή",
+            fallback_filename="clip_01_short.mp4",
+            extension="mp4",
+        )
+        == "Αλέξης Τσίπρας - Η νέα εποχή.mp4"
+    )
+    assert (
+        get_download_filename(
+            title="Αλέξης Τσίπρας: Η νέα εποχή",
+            fallback_filename="seo_clip_01.json",
+            extension="json",
+        )
+        == "Αλέξης Τσίπρας - Η νέα εποχή.json"
+    )
+
+    # 2. Without title (fallback)
+    assert (
+        get_download_filename(
+            title=None,
+            fallback_filename="clip_02_short.mp4",
+            extension="mp4",
+        )
+        == "clip_02_short.mp4"
+    )
+    assert (
+        get_download_filename(
+            title="",
+            fallback_filename="clip_02_short.mp4",
+            extension="json",
+        )
+        == "clip_02_short.json"
+    )
+
+

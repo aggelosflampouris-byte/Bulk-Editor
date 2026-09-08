@@ -117,6 +117,15 @@ class SeoMetadata:
         """Comma-separated tag list formatted for direct copy-paste into YouTube Studio."""
         return ", ".join(self.tags)
 
+    @property
+    def safe_filename(self) -> str:
+        """
+        Filesystem-safe filename derived from the title (without extension).
+        Removes characters prohibited across operating systems (< > : " / \\ | ? *)
+        and normalises whitespace.
+        """
+        return sanitize_filename(self.title)
+
     @classmethod
     def fallback(cls, transcript_excerpt: str) -> "SeoMetadata":
         """
@@ -135,6 +144,72 @@ class SeoMetadata:
                 "video", "fyp", "explore", "content", "greece",
             ]),
         )
+
+
+def sanitize_filename(title: str, max_length: int = 100) -> str:
+    """
+    Sanitize a title into a safe, cross-platform filename stem without extension.
+
+    Removes or converts characters prohibited on Windows, macOS, and Linux
+    (< > : " / \\ | ? * and ASCII control characters) while preserving
+    Greek and international unicode characters.
+
+    Args:
+        title: The source string (e.g. SEO title).
+        max_length: Maximum character length for the resulting filename stem.
+
+    Returns:
+        Cleaned, filesystem-safe filename string.
+    """
+    if not title:
+        return ""
+
+    # Replace colons, vertical pipes, and slashes with clean ' - ' separators
+    cleaned = re.sub(r"[\s]*[/\\:|][\s]*", " - ", title)
+    # Remove prohibited filename characters and control characters
+    cleaned = re.sub(r'[<>"?*\x00-\x1f]', "", cleaned)
+    # Collapse multiple spaces or dashes
+    cleaned = re.sub(r"\s*-\s*-+\s*", " - ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    # Strip leading/trailing spaces, dots, and dashes
+    cleaned = cleaned.strip(" .-\t\r\n")
+
+    if len(cleaned) > max_length:
+        cleaned = cleaned[:max_length].rstrip(" .-\t\r\n")
+
+    return cleaned
+
+
+def get_download_filename(
+    title: Optional[str] = None,
+    fallback_filename: str = "clip.mp4",
+    extension: str = "mp4",
+) -> str:
+    """
+    Compute a safe, user-friendly download filename.
+    Uses title (e.g. SEO title) if non-empty and valid; otherwise falls back to fallback_filename.
+
+    Args:
+        title: The desired title string (e.g. SEO title).
+        fallback_filename: Fallback filename if title is missing or invalid.
+        extension: Desired file extension (e.g. 'mp4' or 'json').
+
+    Returns:
+        Safe filename string including extension.
+    """
+    from pathlib import Path
+
+    ext = extension.lstrip(".")
+    if title:
+        safe = sanitize_filename(title)
+        if safe:
+            return f"{safe}.{ext}"
+    if fallback_filename:
+        p = Path(fallback_filename)
+        if p.suffix.lstrip(".").lower() == ext.lower():
+            return p.name
+        return f"{p.stem}.{ext}"
+    return f"clip.{ext}"
 
 
 # ── Internal Helpers ───────────────────────────────────────────────────────────

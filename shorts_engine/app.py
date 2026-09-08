@@ -23,6 +23,7 @@ from config import Settings, assert_system_binaries, inject_ffmpeg_path
 from pipeline import ProcessingResult, run_batch, run_url_pipeline
 from services.clip_selector import ClipCandidate
 from services.downloader import probe_url_metadata
+from services.seo_generator import get_download_filename
 
 # ── Logging Setup ──────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -402,6 +403,21 @@ def _render_sidebar() -> Settings:
 
 # ── Result Card Renderer ───────────────────────────────────────────────────────
 
+def _get_download_filename(result: ProcessingResult, extension: str = "mp4") -> str:
+    """
+    Determine the download filename for a processed result.
+    Uses the SEO title if present, sanitized for safe cross-platform file saving.
+    Falls back to the original output file name.
+    """
+    seo_title = result.seo.title if (result.seo and result.seo.title) else None
+    fallback_name = result.output_file.name if result.output_file else "clip.mp4"
+    return get_download_filename(
+        title=seo_title,
+        fallback_filename=fallback_name,
+        extension=extension,
+    )
+
+
 def _render_result_card(result: ProcessingResult, index: int) -> None:
     """Render a single ProcessingResult as a styled card."""
     card_class = "result-card success" if result.success else "result-card failure"
@@ -414,7 +430,12 @@ def _render_result_card(result: ProcessingResult, index: int) -> None:
 
     col_title, col_status = st.columns([5, 1])
     with col_title:
-        st.markdown(f"**{index + 1}. {result.input_file.name}**")
+        card_title = (
+            result.seo.title
+            if (result.seo and result.seo.title)
+            else result.input_file.name
+        )
+        st.markdown(f"**{index + 1}. {card_title}**")
     with col_status:
         st.markdown(status_badge, unsafe_allow_html=True)
 
@@ -428,10 +449,11 @@ def _render_result_card(result: ProcessingResult, index: int) -> None:
             st.markdown('<div class="video-col">', unsafe_allow_html=True)
             if result.output_file.is_file():
                 st.video(str(result.output_file))
+                dl_filename = _get_download_filename(result, extension="mp4")
                 st.download_button(
                     label="⬇ Download Short (.mp4)",
                     data=result.output_file.read_bytes(),
-                    file_name=result.output_file.name,
+                    file_name=dl_filename,
                     mime="video/mp4",
                     key=f"video_download_{index}",
                     use_container_width=True,
@@ -482,10 +504,11 @@ def _render_result_card(result: ProcessingResult, index: int) -> None:
                 # Download SEO JSON
                 seo_json_path = result.output_file.parent / f"seo_{result.output_file.stem.replace('_short','')}.json"
                 if seo_json_path.is_file():
+                    seo_dl_filename = _get_download_filename(result, extension="json")
                     st.download_button(
                         label="⬇ Download SEO JSON",
                         data=seo_json_path.read_bytes(),
-                        file_name=seo_json_path.name,
+                        file_name=seo_dl_filename,
                         mime="application/json",
                         key=f"seo_download_{index}",
                     )
