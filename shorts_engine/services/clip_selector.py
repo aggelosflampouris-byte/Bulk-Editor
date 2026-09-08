@@ -74,7 +74,7 @@ will perform well on YouTube Shorts>",
       "seo": {{
         "title":       "<Greek title, max 60 chars, compelling & keyword-rich \
 — NOT a direct transcript quote>",
-        "description": "<Greek description, max 5000 chars, hook in first 2 \
+        "description": "<Greek description, concise max 500 chars, hook in first 2 \
 lines, value in the rest, CTA at the end>",
         "tags":        ["<English tag 1>", ..., "<English tag 10>"]
       }},
@@ -370,6 +370,7 @@ def select_clips(
                 max_output_tokens=_MAX_OUTPUT_TOKENS,
                 temperature=0.3,  # Deterministic clip selection
                 response_mime_type="application/json",
+                thinking_config=genai_types.ThinkingConfig(thinking_budget=0),
             ),
         )
     except Exception as exc:

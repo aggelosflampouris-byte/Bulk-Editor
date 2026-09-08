@@ -66,3 +66,20 @@ def test_call_gemini_with_fallback():
     mock_client.models.generate_content.side_effect = side_effect
     res = _call_gemini_with_fallback(mock_client, "test", MagicMock())
     assert res == "Success from fallback"
+
+
+def test_call_gemini_with_fallback_sets_thinking_budget_zero():
+    mock_client = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.text = "Success"
+    mock_client.models.generate_content.return_value = mock_resp
+
+    from google.genai import types as genai_types
+
+    config = genai_types.GenerateContentConfig(max_output_tokens=1000)
+    assert config.thinking_config is None
+
+    _call_gemini_with_fallback(mock_client, "test", config)
+    assert config.thinking_config is not None
+    assert config.thinking_config.thinking_budget == 0
+

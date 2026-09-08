@@ -44,6 +44,13 @@ def _call_gemini_with_fallback(
     Attempt content generation across known Flash models in fallback order.
     Catches 404 (model deprecated) and 503 (high demand) to ensure resilience.
     """
+    # Disable thinking tokens if unconfigured so output tokens aren't consumed by thought mode
+    if getattr(config, "thinking_config", None) is None:
+        try:
+            config.thinking_config = genai_types.ThinkingConfig(thinking_budget=0)
+        except Exception:
+            pass
+
     last_err: Optional[Exception] = None
     for model in _GEMINI_MODELS:
         try:
