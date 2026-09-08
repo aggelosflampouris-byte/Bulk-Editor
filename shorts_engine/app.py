@@ -143,16 +143,24 @@ st.markdown("""
         border-bottom-color: #f4f4f5 !important;
     }
 
-    /* Constrain st.video() player to 9:16 portrait shape */
-    [data-testid="stVideo"],
-    [data-testid="stVideo"] video {
+    /* Constrain st.video() player to true 9:16 portrait dimensions */
+    [data-testid="stVideo"] {
+        max-width: 280px !important;
         width: 100% !important;
         aspect-ratio: 9 / 16 !important;
-        max-height: 520px !important;
-        border-radius: 6px;
-        border: 1px solid #27272a;
-        overflow: hidden;
-        object-fit: cover;
+        margin: 0 auto !important;
+    }
+    [data-testid="stVideo"] video {
+        width: 100% !important;
+        height: 100% !important;
+        aspect-ratio: 9 / 16 !important;
+        max-height: 498px !important;
+        border-radius: 8px !important;
+        border: 1px solid #27272a !important;
+        overflow: hidden !important;
+        object-fit: contain !important;
+        background: #09090b !important;
+        display: block !important;
     }
 
     /* Container cards */
@@ -373,6 +381,30 @@ def _render_sidebar() -> Settings:
         )
 
         st.markdown("---")
+        st.markdown("### Transitions")
+        transition_style = st.selectbox(
+            "Transition Style",
+            options=["fade", "flash", "none"],
+            format_func=lambda x: {
+                "fade": "Soft Fade (Crossfade)",
+                "flash": "White Flash",
+                "none": "Cut (None)",
+            }.get(x, x),
+            index=0,
+            help="Soft transition applied between the main clip and B-roll, and into the Outro.",
+            key="transition_style_select",
+        )
+        transition_duration = st.slider(
+            "Transition Duration (s)",
+            min_value=0.15,
+            max_value=0.80,
+            value=0.35,
+            step=0.05,
+            help="Duration of the fade or flash transition.",
+            key="transition_duration_slider",
+        )
+
+        st.markdown("---")
         st.markdown("### Clip Selection (URL Mode)")
         max_clips = st.slider(
             "Max Clips per Video",
@@ -430,6 +462,78 @@ def _render_sidebar() -> Settings:
                 del st.session_state["outro_tmp_path"]
 
         st.markdown("---")
+        st.markdown("### Background Music")
+        enable_bg_music = st.checkbox(
+            "Enable Background Music",
+            value=True,
+            help="Layers subtle ambient background music under speech with automatic ducking.",
+            key="enable_bg_music_check",
+        )
+
+        bg_music_track = "ambient_calm"
+        custom_music_path: Optional[Path] = None
+        bg_music_vol = 0.10
+        bg_music_duck = True
+
+        if enable_bg_music:
+            bg_music_track = st.selectbox(
+                "Sound Bed Preset",
+                options=["ambient_calm", "dramatic_pulse", "upbeat_groove", "custom", "none"],
+                format_func=lambda x: {
+                    "ambient_calm": "Ambient Calm (Warm Acoustic Pad)",
+                    "dramatic_pulse": "Dramatic Pulse (Tension Drone)",
+                    "upbeat_groove": "Upbeat Groove (Modern Light)",
+                    "custom": "Upload Custom Track",
+                    "none": "None",
+                }.get(x, x),
+                index=0,
+                help="Select a bundled royalty-free sound bed or upload your own audio.",
+                key="bg_music_track_select",
+            )
+
+            if bg_music_track == "custom":
+                custom_music_file = st.file_uploader(
+                    "Upload Music Track (.mp3, .wav, .m4a)",
+                    type=["mp3", "wav", "m4a", "aac"],
+                    help="Custom audio file to use as background music.",
+                    key="custom_music_uploader",
+                )
+                if custom_music_file is not None:
+                    if "custom_music_tmp_path" not in st.session_state:
+                        import tempfile as _tf
+                        suffix = Path(custom_music_file.name).suffix
+                        tmp_music = _tf.NamedTemporaryFile(
+                            delete=False, suffix=suffix, prefix="bgm_"
+                        )
+                        tmp_music.write(custom_music_file.read())
+                        tmp_music.flush()
+                        tmp_music.close()
+                        st.session_state["custom_music_tmp_path"] = tmp_music.name
+                    custom_music_path = Path(st.session_state["custom_music_tmp_path"])
+                    st.success(f"Track loaded: {custom_music_file.name}")
+                else:
+                    if "custom_music_tmp_path" in st.session_state:
+                        del st.session_state["custom_music_tmp_path"]
+
+            bg_music_vol = st.slider(
+                "Music Volume",
+                min_value=0.02,
+                max_value=0.25,
+                value=0.10,
+                step=0.01,
+                format="%.2f",
+                help="Volume of background music relative to speech (10% recommended).",
+                key="bg_music_vol_slider",
+            )
+
+            bg_music_duck = st.checkbox(
+                "Speech Ducking",
+                value=True,
+                help="Automatically lowers background music when the speaker is talking so words remain 100% intelligible.",
+                key="bg_music_ducking_check",
+            )
+
+        st.markdown("---")
         st.markdown(
             "<div style='font-size:0.72rem;color:#555;text-align:center'>"
             "Greek Shorts Engine · CPU-only<br>"
@@ -447,6 +551,13 @@ def _render_sidebar() -> Settings:
         enable_face_tracking=bool(enable_face_tracking),
         broll_start_offset=float(broll_start),
         broll_overlay_duration=float(broll_duration),
+        transition_type=str(transition_style),
+        transition_duration=float(transition_duration),
+        enable_bg_music=bool(enable_bg_music),
+        bg_music_track=str(bg_music_track),
+        bg_music_path=custom_music_path,
+        bg_music_volume=float(bg_music_vol),
+        bg_music_ducking=bool(bg_music_duck),
         min_clips=3,
         max_clips=int(max_clips),
         clip_min_duration=float(clip_min_dur),
@@ -492,10 +603,8 @@ def _render_result_card(result: ProcessingResult, index: int) -> None:
             st.markdown(status_badge, unsafe_allow_html=True)
 
         if result.success and result.output_file:
-            # Two-column layout: video player left, metadata right.
-            # Using st.columns() to constrain width — st.video() cannot be
-            # nested inside an HTML <div> injected via unsafe_allow_html.
-            vid_col, meta_col = st.columns([2, 3])
+            # Two-column layout: 9:16 vertical video player left, metadata right.
+            vid_col, meta_col = st.columns([1, 2.2])
 
             with vid_col:
                 if result.output_file.is_file():

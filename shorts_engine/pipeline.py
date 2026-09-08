@@ -47,6 +47,7 @@ from services.video_engine import (
     concatenate_with_outro,
     crop_to_9_16,
     is_already_9_16,
+    mix_background_music,
     overlay_broll,
     probe_duration,
     probe_resolution,
@@ -290,20 +291,26 @@ def process_single(
         if broll_path is not None:
             _report("Applying B-roll overlay...")
             main_duration = probe_duration(cropped_path)
-            # Clamp start offset so overlay fits within the video
+            # Clamp overlay duration and start offset so overlay cleanly fits within clip length
+            actual_broll_dur = min(
+                settings.broll_overlay_duration,
+                max(1.0, main_duration - 1.0),
+            )
             safe_start = min(
                 settings.broll_start_offset,
-                max(0.0, main_duration - settings.broll_overlay_duration),
+                max(0.0, main_duration - actual_broll_dur),
             )
             overlaid_path: Path = tmp_dir / f"{stem}_overlaid.mp4"
             overlay_broll(
                 main_path=cropped_path,
                 broll_path=broll_path,
                 start_time=safe_start,
-                overlay_duration=settings.broll_overlay_duration,
+                overlay_duration=actual_broll_dur,
                 output_path=overlaid_path,
                 target_width=settings.target_width,
                 target_height=settings.target_height,
+                transition=settings.transition_type,
+                transition_duration=settings.transition_duration,
             )
             current_path = overlaid_path
 
@@ -312,6 +319,20 @@ def process_single(
         burned_path: Path = tmp_dir / f"{stem}_burned.mp4"
         burn_subtitles(current_path, ass_path, burned_path)
         current_path = burned_path
+
+        # ── Stage 6b: Background Music ────────────────────────────────────────
+        bg_music_path = settings.resolve_bg_music_path()
+        if bg_music_path is not None:
+            _report("Mixing background music...")
+            bgm_path: Path = tmp_dir / f"{stem}_bgm.mp4"
+            mix_background_music(
+                video_path=current_path,
+                music_path=bg_music_path,
+                output_path=bgm_path,
+                volume=settings.bg_music_volume,
+                ducking=settings.bg_music_ducking,
+            )
+            current_path = bgm_path
 
         # ── Stage 7: Outro Concatenation ──────────────────────────────────────
         if settings.outro_path is not None:
@@ -323,6 +344,8 @@ def process_single(
                 output_path=final_tmp,
                 target_width=settings.target_width,
                 target_height=settings.target_height,
+                transition=settings.transition_type,
+                transition_duration=settings.transition_duration,
             )
             current_path = final_tmp
         else:
@@ -529,34 +552,62 @@ def process_url_clip(
                 logger.warning(msg)
                 warnings.append(msg)
 
-        # ── Stage 5: Crop to 9:16 ─────────────────────────────────────────────
+        # ── Stage 5: Crop to 9:16 (active speaker tracking) ───────────────────
         cropped_path = tmp_dir / f"{stem}_cropped.mp4"
         if is_already_9_16(raw_clip_path, settings.target_width, settings.target_height):
             import shutil as _shutil
             _shutil.copy2(str(raw_clip_path), str(cropped_path))
             _report("Crop skipped — already 9:16.")
         else:
-            _report("Cropping to 9:16...")
-            crop_to_9_16(raw_clip_path, cropped_path, settings.target_width, settings.target_height)
+            _report("Cropping to 9:16 (active speaker tracking)...")
+            crop_x_offset: Optional[int] = None
+            if settings.enable_face_tracking:
+                try:
+                    src_w, src_h = probe_resolution(raw_clip_path)
+                    crop_x_offset = calculate_active_speaker_crop_x(
+                        video_path=raw_clip_path,
+                        source_width=src_w,
+                        source_height=src_h,
+                        target_width=settings.target_width,
+                        target_height=settings.target_height,
+                    )
+                except Exception as exc:
+                    logger.warning("Active speaker tracking failed: %s — using center-crop.", exc)
+                    crop_x_offset = None
+
+            crop_to_9_16(
+                raw_clip_path,
+                cropped_path,
+                target_width=settings.target_width,
+                target_height=settings.target_height,
+                crop_x_offset=crop_x_offset,
+            )
 
         # ── Stage 6: B-Roll Overlay ────────────────────────────────────────────
         current_path = cropped_path
         if broll_path is not None:
             _report("Applying B-roll overlay...")
             main_dur = probe_duration(cropped_path)
+            # Clamp overlay duration and start offset so overlay cleanly fits within clip length
+            actual_broll_dur = min(
+                settings.broll_overlay_duration,
+                max(1.0, main_dur - 1.0),
+            )
             safe_start = min(
                 settings.broll_start_offset,
-                max(0.0, main_dur - settings.broll_overlay_duration),
+                max(0.0, main_dur - actual_broll_dur),
             )
             overlaid_path = tmp_dir / f"{stem}_overlaid.mp4"
             overlay_broll(
                 main_path=cropped_path,
                 broll_path=broll_path,
                 start_time=safe_start,
-                overlay_duration=settings.broll_overlay_duration,
+                overlay_duration=actual_broll_dur,
                 output_path=overlaid_path,
                 target_width=settings.target_width,
                 target_height=settings.target_height,
+                transition=settings.transition_type,
+                transition_duration=settings.transition_duration,
             )
             current_path = overlaid_path
 
@@ -569,6 +620,20 @@ def process_url_clip(
         else:
             warnings.append(f"Clip {clip.index}: subtitle burn skipped (no .ass file).")
 
+        # ── Stage 7b: Background Music ─────────────────────────────────────────
+        bg_music_path = settings.resolve_bg_music_path()
+        if bg_music_path is not None:
+            _report("Mixing background music...")
+            bgm_path = tmp_dir / f"{stem}_bgm.mp4"
+            mix_background_music(
+                video_path=current_path,
+                music_path=bg_music_path,
+                output_path=bgm_path,
+                volume=settings.bg_music_volume,
+                ducking=settings.bg_music_ducking,
+            )
+            current_path = bgm_path
+
         # ── Stage 8: Outro Concatenation ───────────────────────────────────────
         if settings.outro_path is not None:
             _report("Concatenating outro...")
@@ -579,6 +644,8 @@ def process_url_clip(
                 output_path=final_tmp,
                 target_width=settings.target_width,
                 target_height=settings.target_height,
+                transition=settings.transition_type,
+                transition_duration=settings.transition_duration,
             )
             current_path = final_tmp
         else:

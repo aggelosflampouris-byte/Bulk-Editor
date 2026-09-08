@@ -71,6 +71,9 @@ BUNDLED_BIN_DIR: Path = APP_ROOT / "bin"
 # Default output directory
 DEFAULT_OUTPUT_DIR: Path = APP_ROOT / "output"
 
+# Default bundled music directory
+DEFAULT_MUSIC_DIR: Path = APP_ROOT / "assets" / "music"
+
 
 # ── Runtime PATH Injection ─────────────────────────────────────────────────────
 
@@ -229,11 +232,15 @@ class Settings:
     # Path to an optional outro bumper video. None = skip concatenation.
     outro_path: Optional[Path] = None
 
-    # ── B-Roll ────────────────────────────────────────────────
+    # ── B-Roll & Transitions ──────────────────────────────────
     # Target duration (seconds) for each B-roll overlay
     broll_overlay_duration: float = 5.0
     # Timestamp offset (seconds from start) at which B-roll starts
     broll_start_offset: float = 3.0
+    # Transition style between main clip, B-roll, and outro: "fade" | "flash" | "none"
+    transition_type: str = "fade"
+    # Transition duration in seconds (default 0.35s for snappy short-form pacing)
+    transition_duration: float = 0.35
 
     # ── URL / Clip Selection ───────────────────────────────────
     # Minimum number of clips to extract per source video (default: 3)
@@ -247,9 +254,41 @@ class Settings:
     # Reject source videos longer than this many seconds (2 hours default)
     max_source_duration_seconds: int = 7200
 
+    # ── Background Music ──────────────────────────────────────
+    # Enable subtle background audio bed
+    enable_bg_music: bool = True
+    # Track preset: "ambient_calm" | "dramatic_pulse" | "upbeat_groove" | "custom" | "none"
+    bg_music_track: str = "ambient_calm"
+    # Optional path to custom uploaded audio file (used when bg_music_track == "custom")
+    bg_music_path: Optional[Path] = None
+    # Music volume level (0.01 to 0.50, default 0.10 = 10% volume)
+    bg_music_volume: float = 0.10
+    # Dynamic speech ducking (sidechain compression to dip music during speech)
+    bg_music_ducking: bool = True
+
     # ── Target dimensions ─────────────────────────────────────
     target_width: int = 1080
     target_height: int = 1920
+
+    def resolve_bg_music_path(self) -> Optional[Path]:
+        """
+        Resolve the Path to the active background music file, or None if disabled.
+        """
+        if not self.enable_bg_music or self.bg_music_track in ("none", ""):
+            return None
+
+        if self.bg_music_track == "custom":
+            if self.bg_music_path and self.bg_music_path.is_file():
+                return self.bg_music_path
+            return None
+
+        # Check default music directory for preset files
+        for ext in (".m4a", ".mp3", ".wav", ".aac"):
+            preset_file = DEFAULT_MUSIC_DIR / f"{self.bg_music_track}{ext}"
+            if preset_file.is_file():
+                return preset_file
+
+        return None
 
     def validate(self) -> list[str]:
         """
@@ -274,6 +313,31 @@ class Settings:
 
         if self.broll_start_offset < 0:
             errors.append("broll_start_offset must be >= 0.")
+
+        if self.transition_type not in {"fade", "flash", "none"}:
+            errors.append(
+                f"Invalid transition_type '{self.transition_type}'. "
+                "Choose from: fade, flash, none."
+            )
+
+        if not (0.0 <= self.transition_duration <= 2.0):
+            errors.append("transition_duration must be between 0.0 and 2.0 seconds.")
+
+        if self.enable_bg_music:
+            if self.bg_music_track not in {
+                "ambient_calm", "dramatic_pulse", "upbeat_groove", "custom", "none"
+            }:
+                errors.append(
+                    f"Invalid bg_music_track '{self.bg_music_track}'. "
+                    "Choose from: ambient_calm, dramatic_pulse, upbeat_groove, custom, none."
+                )
+
+            if not (0.01 <= self.bg_music_volume <= 0.50):
+                errors.append("bg_music_volume must be between 0.01 and 0.50.")
+
+            if self.bg_music_track == "custom":
+                if self.bg_music_path is None or not self.bg_music_path.is_file():
+                    errors.append(f"Custom background music file not found: {self.bg_music_path}")
 
         if not (1 <= self.min_clips <= 10):
             errors.append("min_clips must be between 1 and 10.")

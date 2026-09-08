@@ -305,6 +305,7 @@ def crop_to_9_16(
         "-i", str(input_path),
         "-vf", vf,
         "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
         "-preset", "fast",
         "-crf", "23",
         "-c:a", "aac",
@@ -325,32 +326,30 @@ def overlay_broll(
     output_path: Path,
     target_width: int = 1080,
     target_height: int = 1920,
+    transition: str = "fade",
+    transition_duration: float = 0.35,
 ) -> Path:
     """
-    Overlay a B-roll clip on the upper half of the main video for a timed window.
+    Overlay a B-roll clip on the main video for a timed window with an optional transition.
 
     The B-roll is scaled and centre-cropped (CSS cover behaviour) to fill
-    target_width × (target_height / 2) with no black bars and no distortion,
-    then composited over the main video using an ``enable='between(t,...)'`` gate
-    so it only appears during [start_time, start_time + overlay_duration].
-
-    Cover-fill filter chain:
-      1. scale=w=target_width:h=-2  — scale so width = target_width, height auto
-         (aspect ratio preserved, even number guaranteed by -2)
-      2. vflip/crop — if the scaled height is still less than overlay_height,
-         scale with h=overlay_height:w=-2 instead; then crop to exact size.
-      The ``scale2ref`` / iw/ih expressions handle both landscape and portrait
-      source clips cleanly.
+    target_width × target_height with no black bars and no distortion.
+    Transitions supported:
+      - "fade": Smooth alpha crossfade in and out over the main video.
+      - "flash": Punchy white flash transition in and out.
+      - "none": Clean hard cut.
 
     Args:
-        main_path:        The 9:16 main video (already cropped).
-        broll_path:       The downloaded B-roll clip.
-        start_time:       Seconds from the beginning of the main video at
-                          which the B-roll overlay begins.
-        overlay_duration: Duration (seconds) the B-roll is visible.
-        output_path:      Destination path for the composited video.
-        target_width:     Width of the main video (default 1080).
-        target_height:    Height of the main video (default 1920).
+        main_path:           The 9:16 main video (already cropped).
+        broll_path:          The downloaded B-roll clip.
+        start_time:          Seconds from the beginning of the main video at
+                             which the B-roll overlay begins.
+        overlay_duration:    Duration (seconds) the B-roll is visible.
+        output_path:         Destination path for the composited video.
+        target_width:        Width of the main video (default 1080).
+        target_height:       Height of the main video (default 1920).
+        transition:          Transition type: "fade", "flash", or "none".
+        transition_duration: Duration of fade/flash in seconds (default 0.35s).
 
     Returns:
         The written *output_path*.
@@ -377,9 +376,6 @@ def overlay_broll(
 
     # Cover-fill: scale so the clip fills tw × oh (full 9:16 frame) with no black bars
     # (CSS object-fit: cover equivalent).
-    # Using max(tw/iw, oh/ih) scales both axes by the larger factor,
-    # guaranteeing that width >= tw and height >= oh without distortion.
-    # crop={tw}:{oh} trims the excess from the center.
     scale_expr = (
         f"scale="
         fr"w=iw*max({tw}/iw\,{oh}/ih):"
@@ -388,20 +384,77 @@ def overlay_broll(
         f"setsar=1"
     )
 
-    filter_complex = (
-        f"[1:v]{scale_expr}[broll_filled];"
-        f"[0:v][broll_filled]overlay=0:0:eof_action=repeat:"
-        f"enable='between(t,{start_time:.3f},{end_time:.3f})'[v_out]"
-    )
+    td = min(transition_duration, overlay_duration / 2.0) if transition_duration > 0.0 else 0.0
 
-    run_ffmpeg([
-        "ffmpeg", "-y",
-        "-i", str(main_path),
-        "-i", str(broll_path),
+    if transition == "fade" and td > 0.0:
+        broll_filter = (
+            f"{scale_expr},"
+            f"trim=duration={overlay_duration:.3f},"
+            f"setpts=PTS-STARTPTS+{start_time:.3f}/TB,"
+            f"format=yuva420p,"
+            f"fade=t=in:st={start_time:.3f}:d={td:.3f}:alpha=1,"
+            f"fade=t=out:st={(end_time - td):.3f}:d={td:.3f}:alpha=1"
+        )
+        filter_complex = (
+            f"[1:v]{broll_filter}[broll_trans];"
+            f"[0:v][broll_trans]overlay=0:0:eof_action=pass[v_out]"
+        )
+        ffmpeg_input_args = [
+            "-i", str(main_path),
+            "-stream_loop", "-1", "-i", str(broll_path),
+        ]
+    elif transition == "flash" and td > 0.0:
+        broll_filter = (
+            f"{scale_expr},"
+            f"trim=duration={overlay_duration:.3f},"
+            f"setpts=PTS-STARTPTS+{start_time:.3f}/TB,"
+            f"format=yuva420p,"
+            f"fade=t=in:st={start_time:.3f}:d={td:.3f}:alpha=1,"
+            f"fade=t=out:st={(end_time - td):.3f}:d={td:.3f}:alpha=1"
+        )
+        half_td = max(0.05, td / 2.0)
+        flash_in = (
+            f"color=c=white:s={tw}x{oh}:d={td:.3f},format=yuva420p,"
+            f"fade=t=in:st=0:d={half_td:.3f}:alpha=1,"
+            f"fade=t=out:st={half_td:.3f}:d={half_td:.3f}:alpha=1,"
+            f"setpts=PTS-STARTPTS+{start_time:.3f}/TB[w_in]"
+        )
+        flash_out = (
+            f"color=c=white:s={tw}x{oh}:d={td:.3f},format=yuva420p,"
+            f"fade=t=in:st=0:d={half_td:.3f}:alpha=1,"
+            f"fade=t=out:st={half_td:.3f}:d={half_td:.3f}:alpha=1,"
+            f"setpts=PTS-STARTPTS+{(end_time - td):.3f}/TB[w_out]"
+        )
+        filter_complex = (
+            f"[1:v]{broll_filter}[broll_trans];"
+            f"{flash_in};{flash_out};"
+            f"[0:v][broll_trans]overlay=0:0:eof_action=pass[v1];"
+            f"[v1][w_in]overlay=0:0:eof_action=pass[v2];"
+            f"[v2][w_out]overlay=0:0:eof_action=pass[v_out]"
+        )
+        ffmpeg_input_args = [
+            "-i", str(main_path),
+            "-stream_loop", "-1", "-i", str(broll_path),
+        ]
+    else:
+        filter_complex = (
+            f"[1:v]{scale_expr}[broll_filled];"
+            f"[0:v][broll_filled]overlay=0:0:eof_action=repeat:"
+            f"enable='between(t,{start_time:.3f},{end_time:.3f})'[v_out]"
+        )
+        ffmpeg_input_args = [
+            "-i", str(main_path),
+            "-i", str(broll_path),
+        ]
+
+    cmd = ["ffmpeg", "-y"]
+    cmd.extend(ffmpeg_input_args)
+    cmd.extend([
         "-filter_complex", filter_complex,
         "-map", "[v_out]",
         "-map", "0:a?",  # Preserve original audio; '?' = optional (no audio = skip)
         "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
         "-preset", "fast",
         "-crf", "23",
         "-c:a", "aac",
@@ -410,9 +463,11 @@ def overlay_broll(
         str(output_path),
     ])
 
+    run_ffmpeg(cmd)
+
     logger.info(
-        "B-roll overlay applied: %.1fs–%.1fs on '%s' → '%s'.",
-        start_time, end_time, main_path.name, output_path.name,
+        "B-roll overlay applied (%s transition): %.1fs–%.1fs on '%s' → '%s'.",
+        transition, start_time, end_time, main_path.name, output_path.name,
     )
     return output_path
 
@@ -469,6 +524,7 @@ def burn_subtitles(
         "-i", str(input_path),
         "-vf", vf,
         "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
         "-preset", "fast",
         "-crf", "23",
         "-c:a", "copy",  # Audio is already encoded; avoid re-encoding
@@ -486,21 +542,26 @@ def concatenate_with_outro(
     output_path: Path,
     target_width: int = 1080,
     target_height: int = 1920,
+    transition: str = "fade",
+    transition_duration: float = 0.0,
 ) -> Path:
     """
-    Concatenate *main_path* and *outro_path* into a single output video.
+    Concatenate *main_path* and *outro_path* into a single output video with an optional transition.
 
     Both clips are normalised to *target_width* × *target_height* with
     consistent pixel format (yuv420p), frame rate (30fps), sample rate
-    (44100 Hz), and stereo channels before concatenation, so that the
-    `concat` demuxer never encounters mismatched stream parameters.
+    (44100 Hz), and stereo channels before concatenation.
+    When transition_duration > 0 and transition is 'fade' or 'flash', uses
+    FFmpeg's xfade and acrossfade for smooth video and audio cross-fading.
 
     Args:
-        main_path:     The subtitle-burned Short video.
-        outro_path:    The outro bumper clip (any resolution/codec accepted).
-        output_path:   Destination path for the final concatenated video.
-        target_width:  Normalisation width (default 1080).
-        target_height: Normalisation height (default 1920).
+        main_path:           The subtitle-burned Short video.
+        outro_path:          The outro bumper clip (any resolution/codec accepted).
+        output_path:         Destination path for the final concatenated video.
+        target_width:        Normalisation width (default 1080).
+        target_height:       Normalisation height (default 1920).
+        transition:          Transition type: "fade", "flash", or "none".
+        transition_duration: Duration of transition in seconds (default 0.0s = hard concat).
 
     Returns:
         The written *output_path*.
@@ -515,6 +576,8 @@ def concatenate_with_outro(
 
     main_has_audio = probe_has_audio(main_path)
     outro_has_audio = probe_has_audio(outro_path)
+    main_dur = probe_duration(main_path)
+    outro_dur = probe_duration(outro_path)
 
     # Normalise video streams to identical parameters, then concat.
     norm_vf = (
@@ -533,21 +596,28 @@ def concatenate_with_outro(
     if main_has_audio:
         filter_chains.append(f"[0:a]{norm_af}[a0]")
     else:
-        main_dur = probe_duration(main_path)
         filter_chains.append(
-            f"anullsrc=channel_layout=stereo:sample_rate=44100,atrim=duration={main_dur}[a0]"
+            f"anullsrc=channel_layout=stereo:sample_rate=44100,atrim=duration={main_dur:.3f}[a0]"
         )
 
     # Handle audio for outro bumper (many outros have video only)
     if outro_has_audio:
         filter_chains.append(f"[1:a]{norm_af}[a1]")
     else:
-        outro_dur = probe_duration(outro_path)
         filter_chains.append(
-            f"anullsrc=channel_layout=stereo:sample_rate=44100,atrim=duration={outro_dur}[a1]"
+            f"anullsrc=channel_layout=stereo:sample_rate=44100,atrim=duration={outro_dur:.3f}[a1]"
         )
 
-    filter_chains.append("[v0][a0][v1][a1]concat=n=2:v=1:a=1[v_out][a_out]")
+    td = min(transition_duration, main_dur / 2.0, outro_dur / 2.0) if transition_duration > 0.0 else 0.0
+
+    if transition in ("fade", "flash") and td >= 0.08:
+        offset = max(0.0, main_dur - td)
+        xfade_type = "fadewhite" if transition == "flash" else "fade"
+        filter_chains.append(f"[v0][v1]xfade=transition={xfade_type}:duration={td:.3f}:offset={offset:.3f}[v_out]")
+        filter_chains.append(f"[a0][a1]acrossfade=d={td:.3f}[a_out]")
+    else:
+        filter_chains.append("[v0][a0][v1][a1]concat=n=2:v=1:a=1[v_out][a_out]")
+
     filter_complex = ";".join(filter_chains)
 
     run_ffmpeg([
@@ -558,6 +628,7 @@ def concatenate_with_outro(
         "-map", "[v_out]",
         "-map", "[a_out]",
         "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
         "-preset", "fast",
         "-crf", "23",
         "-c:a", "aac",
@@ -567,8 +638,8 @@ def concatenate_with_outro(
     ])
 
     logger.info(
-        "Concatenated '%s' + outro → '%s'.",
-        main_path.name, output_path.name,
+        "Concatenated '%s' + outro (%s transition, %.2fs) → '%s'.",
+        main_path.name, transition if td >= 0.08 else "cut", td, output_path.name,
     )
     return output_path
 
@@ -672,6 +743,109 @@ def slice_video(
     logger.info(
         "Re-encode slice complete: '%s' → '%s'.",
         source_path.name, output_path.name,
+    )
+    return output_path
+
+
+def mix_background_music(
+    video_path: Path,
+    music_path: Path,
+    output_path: Path,
+    volume: float = 0.10,
+    ducking: bool = True,
+    fade_in: float = 0.5,
+    fade_out: float = 1.0,
+) -> Path:
+    """
+    Layer subtle background music under the primary video track with optional speech ducking.
+
+    Video is stream-copied (-c:v copy) without re-encoding, ensuring instant,
+    lossless visual quality. Audio is dynamically mixed with:
+      - Continuous loop (-stream_loop -1) to support clips longer than the music track.
+      - Fixed attenuation (volume) with smooth intro/outro fades.
+      - Optional sidechain compression ducking so music gently ducks under voice.
+
+    Args:
+        video_path:  The input video (with dialogue).
+        music_path:  The audio track to mix in.
+        output_path: Destination path for the mixed video.
+        volume:      Volume attenuation multiplier for background music (default 0.10 = 10%).
+        ducking:     If True, sidechain-compresses music when speech is present.
+        fade_in:     Duration (seconds) of initial music fade-in.
+        fade_out:    Duration (seconds) of ending music fade-out.
+
+    Returns:
+        The written *output_path*.
+
+    Raises:
+        FileNotFoundError: If video_path or music_path does not exist.
+        FFmpegError:       If FFmpeg fails.
+    """
+    for path in (video_path, music_path):
+        if not path.is_file():
+            raise FileNotFoundError(f"Input file not found: {path}")
+
+    vid_dur = probe_duration(video_path)
+    if vid_dur <= 0.0:
+        logger.warning("Could not determine duration of '%s' — skipping background music.", video_path.name)
+        import shutil as _shutil
+        _shutil.copy2(str(video_path), str(output_path))
+        return output_path
+
+    has_audio = probe_has_audio(video_path)
+    clamped_vol = max(0.01, min(0.50, volume))
+    fade_out_start = max(0.0, vid_dur - fade_out)
+
+    norm_af = "aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo"
+
+    if has_audio:
+        bgm_filter = (
+            f"[1:a]{norm_af},volume={clamped_vol:.3f},"
+            f"afade=t=in:st=0:d={fade_in:.2f},"
+            f"afade=t=out:st={fade_out_start:.2f}:d={fade_out:.2f}[bgm]"
+        )
+        if ducking:
+            fc = (
+                f"{bgm_filter};"
+                f"[0:a]{norm_af},asplit=2[speech_main][speech_sc];"
+                f"[bgm][speech_sc]sidechaincompress=threshold=0.08:ratio=3:attack=20:release=250:level_sc=2.0[ducked_bgm];"
+                f"[speech_main][ducked_bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,atrim=0:{vid_dur:.3f}[a_out]"
+            )
+        else:
+            fc = (
+                f"{bgm_filter};"
+                f"[0:a]{norm_af}[speech_main];"
+                f"[speech_main][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,atrim=0:{vid_dur:.3f}[a_out]"
+            )
+    else:
+        # Video has no audio track: music plays as sole audio track
+        fc = (
+            f"[1:a]{norm_af},volume={clamped_vol:.3f},"
+            f"afade=t=in:st=0:d={fade_in:.2f},"
+            f"afade=t=out:st={fade_out_start:.2f}:d={fade_out:.2f},"
+            f"atrim=0:{vid_dur:.3f}[a_out]"
+        )
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", str(video_path),
+        "-stream_loop", "-1", "-i", str(music_path),
+        "-filter_complex", fc,
+        "-map", "0:v",
+        "-map", "[a_out]",
+        "-c:v", "copy",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-shortest",
+        "-movflags", "+faststart",
+        str(output_path),
+    ]
+
+    run_ffmpeg(cmd)
+
+    logger.info(
+        "Background music layered into '%s' (vol=%.2f, ducking=%s) → '%s'.",
+        video_path.name, clamped_vol, ducking, output_path.name,
     )
     return output_path
 
