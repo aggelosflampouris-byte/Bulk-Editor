@@ -715,6 +715,7 @@ def run_url_pipeline(
             segments=all_segments,
             gemini_api_key=settings.gemini_api_key,
             max_clips=settings.max_clips,
+            min_clips=settings.min_clips,
             min_dur=settings.clip_min_duration,
             max_dur=settings.clip_max_duration,
             source_title=url_meta.title,

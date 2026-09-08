@@ -81,14 +81,15 @@ explanation. The JSON must have exactly these keys:
   "title": "<Greek title, max 60 characters, compelling & keyword-rich>",
   "description": "<Greek description, max 5000 characters, first 2 lines \
 are the hook, rest expands value, ends with a CTA>",
-  "tags": ["<English hashtag 1>", "<English hashtag 2>", ..., \
-"<English hashtag 10>"]
+  "tags": ["<tag 1>", "<tag 2>", ..., "<tag 15>"]
 }}
 
 Rules:
 - title and description must be in Greek.
-- tags must be plain English words or short phrases (no # prefix).
-- tags list must contain exactly 10 items.
+- tags must be a list of 12 to 18 high-performing keywords and search phrases \
+optimized for the YouTube search algorithm (mix of Greek specific search queries, \
+entities/names mentioned, topic keywords, and 1-2 broad category/shorts terms).
+- tags must NOT contain the '#' prefix (e.g. use "ελληνική πολιτική" instead of "#ελληνική_πολιτική").
 - Do NOT include any text outside the JSON object.
 - CRITICAL — The title must NOT be a direct quote or close paraphrase of the \
 transcript. It must instead capture the TOPIC, HOOK, or VALUE PROPOSITION of \
@@ -109,7 +110,12 @@ class SeoMetadata:
 
     title: str
     description: str
-    tags: tuple[str, ...]  # Immutable sequence, exactly 10 items
+    tags: tuple[str, ...]  # Immutable sequence of SEO tags
+
+    @property
+    def youtube_tags_display(self) -> str:
+        """Comma-separated tag list formatted for direct copy-paste into YouTube Studio."""
+        return ", ".join(self.tags)
 
     @classmethod
     def fallback(cls, transcript_excerpt: str) -> "SeoMetadata":
@@ -195,24 +201,28 @@ def _validate_seo_dict(data: dict) -> SeoMetadata:
     if not isinstance(raw_tags, list):
         raw_tags = []
 
-    # Normalise: strip '#', strip whitespace, coerce to strings
-    tags: list[str] = [str(t).lstrip("#").strip() for t in raw_tags]
+    # Normalise: strip '#', strip whitespace, remove empty, deduplicate preserving order
+    tags: list[str] = []
+    for t in raw_tags:
+        cleaned = str(t).lstrip("#").strip().strip(",")
+        if cleaned and cleaned not in tags:
+            tags.append(cleaned)
 
-    # Enforce exactly 10 tags: truncate if over, pad with generic terms if under
+    # Pad with essential category tags if fewer than 10 tags provided
     _PADDING_TAGS = [
         "shorts", "greek", "viral", "trending", "reels",
         "video", "fyp", "explore", "content", "greece",
     ]
-    if len(tags) > 10:
-        tags = tags[:10]
+    if len(tags) > 20:
+        tags = tags[:20]
     while len(tags) < 10:
         for pad in _PADDING_TAGS:
             if pad not in tags:
                 tags.append(pad)
-            if len(tags) == 10:
+            if len(tags) >= 10:
                 break
 
-    return SeoMetadata(title=title, description=description, tags=tuple(tags[:10]))
+    return SeoMetadata(title=title, description=description, tags=tuple(tags))
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────

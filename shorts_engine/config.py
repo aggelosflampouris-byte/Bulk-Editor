@@ -236,12 +236,14 @@ class Settings:
     broll_start_offset: float = 3.0
 
     # ── URL / Clip Selection ───────────────────────────────────
+    # Minimum number of clips to extract per source video (default: 3)
+    min_clips: int = 3
     # Maximum number of clips to extract per source video (1–10)
     max_clips: int = 10
     # Minimum clip duration in seconds
-    clip_min_duration: float = 20.0
+    clip_min_duration: float = 35.0
     # Maximum clip duration in seconds
-    clip_max_duration: float = 40.0
+    clip_max_duration: float = 50.0
     # Reject source videos longer than this many seconds (2 hours default)
     max_source_duration_seconds: int = 7200
 
@@ -273,8 +275,14 @@ class Settings:
         if self.broll_start_offset < 0:
             errors.append("broll_start_offset must be >= 0.")
 
+        if not (1 <= self.min_clips <= 10):
+            errors.append("min_clips must be between 1 and 10.")
+
         if not (1 <= self.max_clips <= 10):
             errors.append("max_clips must be between 1 and 10.")
+
+        if self.min_clips > self.max_clips:
+            errors.append("min_clips must be less than or equal to max_clips.")
 
         if self.clip_min_duration < 5:
             errors.append("clip_min_duration must be at least 5 seconds.")

@@ -321,26 +321,26 @@ def _render_sidebar() -> Settings:
         st.markdown("### ✂️ Clip Selection (URL Mode)")
         max_clips = st.slider(
             "Max Clips per Video",
-            min_value=1,
+            min_value=3,
             max_value=10,
             value=10,
             step=1,
-            help="Maximum number of clips Gemini will select from the source video.",
+            help="Maximum number of clips Gemini will select from the source video (at least 3).",
             key="max_clips_slider",
         )
         clip_min_dur = st.slider(
             "Min Clip Duration (s)",
-            min_value=10,
-            max_value=35,
-            value=20,
+            min_value=20,
+            max_value=45,
+            value=35,
             step=5,
             key="clip_min_dur_slider",
         )
         clip_max_dur = st.slider(
             "Max Clip Duration (s)",
-            min_value=20,
+            min_value=35,
             max_value=60,
-            value=40,
+            value=50,
             step=5,
             key="clip_max_dur_slider",
         )
@@ -392,6 +392,7 @@ def _render_sidebar() -> Settings:
         enable_face_tracking=bool(enable_face_tracking),
         broll_start_offset=float(broll_start),
         broll_overlay_duration=float(broll_duration),
+        min_clips=3,
         max_clips=int(max_clips),
         clip_min_duration=float(clip_min_dur),
         clip_max_duration=float(max(clip_max_dur, clip_min_dur + 5)),
@@ -467,10 +468,13 @@ def _render_result_card(result: ProcessingResult, index: int) -> None:
 
                 # Tags as coloured badges
                 tags_html = "".join(
-                    f'<span class="badge badge-tag">#{tag}</span>'
+                    f'<span class="badge badge-tag">{tag}</span>'
                     for tag in result.seo.tags
                 )
                 st.markdown(tags_html, unsafe_allow_html=True)
+
+                st.markdown("**📋 YouTube Tags (Comma-separated for YouTube Studio):**")
+                st.code(result.seo.youtube_tags_display, language=None)
 
                 with st.expander("Full Description"):
                     st.text(result.seo.description)
@@ -613,12 +617,14 @@ def _render_url_candidate_table(candidates: list[ClipCandidate]) -> list[int]:
                 unsafe_allow_html=True,
             )
 
-        # Hook summary in an expander below the row
-        with st.expander(f"↳ Hook & B-Roll — Clip #{clip.index}", expanded=False):
-            st.markdown(
-                f"**Hook:** {clip.hook_summary}  \n"
-                f"**B-Roll query:** `{clip.broll_query}`"
-            )
+        # Hook, SEO & tags in an expander below the row
+        with st.expander(f"↳ Hook, SEO & Tags — Clip #{clip.index}", expanded=False):
+            st.markdown(f"**Hook:** {clip.hook_summary}")
+            st.markdown(f"**B-Roll query:** `{clip.broll_query}`")
+            st.markdown(f"**AI Title:** {clip.seo.title}")
+            st.markdown(f"**Description:** {clip.seo.description}")
+            st.markdown("**📋 YouTube Tags (Copy & Paste directly into YouTube Studio Tags box):**")
+            st.code(clip.seo.youtube_tags_display, language=None)
 
         if checked:
             selected_indices.append(clip.index)

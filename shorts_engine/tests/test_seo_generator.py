@@ -83,3 +83,32 @@ def test_call_gemini_with_fallback_sets_thinking_budget_zero():
     assert config.thinking_config is not None
     assert config.thinking_config.thinking_budget == 0
 
+
+def test_seo_metadata_youtube_tags_display():
+    from shorts_engine.services.seo_generator import SeoMetadata
+
+    seo = SeoMetadata(
+        title="Τίτλος",
+        description="Περιγραφή",
+        tags=("Τσίπρας", "πολιτική", "Ελλάδα", "shorts"),
+    )
+    assert seo.youtube_tags_display == "Τσίπρας, πολιτική, Ελλάδα, shorts"
+
+
+def test_validate_seo_dict_tag_normalization():
+    from shorts_engine.services.seo_generator import _validate_seo_dict
+
+    data = {
+        "title": "Δοκιμαστικός τίτλος",
+        "description": "Περιγραφή",
+        "tags": ["#Τσίπρας", "πολιτική,", "Ελλάδα", "#shorts", "Τσίπρας"],
+    }
+    seo = _validate_seo_dict(data)
+    assert "Τσίπρας" in seo.tags
+    assert "#Τσίπρας" not in seo.tags
+    assert "πολιτική" in seo.tags
+    assert seo.tags.count("Τσίπρας") == 1
+    # Check comma-separated output
+    assert seo.youtube_tags_display.startswith("Τσίπρας, πολιτική, Ελλάδα, shorts")
+
+
