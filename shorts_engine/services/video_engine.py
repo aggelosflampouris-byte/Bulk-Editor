@@ -186,6 +186,37 @@ def probe_resolution(video_path: Path) -> tuple[int, int]:
         ) from exc
 
 
+def probe_has_audio(video_path: Path) -> bool:
+    """
+    Check if a video file contains at least one audio stream using ffprobe.
+
+    Args:
+        video_path: Path to the media file.
+
+    Returns:
+        True if an audio stream is detected, False otherwise.
+    """
+    args = [
+        "ffprobe",
+        "-v", "error",
+        "-select_streams", "a",
+        "-show_entries", "stream=codec_type",
+        "-of", "csv=p=0",
+        str(video_path),
+    ]
+    result = subprocess.run(
+        args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if result.returncode != 0:
+        return False
+    return bool(result.stdout.strip())
+
+
 def is_already_9_16(
     video_path: Path,
     target_width: int = 1080,
@@ -482,10 +513,10 @@ def concatenate_with_outro(
         if not path.is_file():
             raise FileNotFoundError(f"Input video not found: {path}")
 
-    # Normalise both streams to identical parameters, then concat.
-    # The scale2ref approach is not needed here because we have a fixed
-    # target resolution. We use a filter_complex with two normalisation
-    # chains followed by a [v][a]concat.
+    main_has_audio = probe_has_audio(main_path)
+    outro_has_audio = probe_has_audio(outro_path)
+
+    # Normalise video streams to identical parameters, then concat.
     norm_vf = (
         f"scale={target_width}:{target_height}:force_original_aspect_ratio=decrease,"
         f"pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2,"
@@ -493,11 +524,31 @@ def concatenate_with_outro(
     )
     norm_af = "aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo"
 
-    filter_complex = (
-        f"[0:v]{norm_vf}[v0];[0:a]{norm_af}[a0];"
-        f"[1:v]{norm_vf}[v1];[1:a]{norm_af}[a1];"
-        f"[v0][a0][v1][a1]concat=n=2:v=1:a=1[v_out][a_out]"
-    )
+    filter_chains = [
+        f"[0:v]{norm_vf}[v0]",
+        f"[1:v]{norm_vf}[v1]",
+    ]
+
+    # Handle audio for main video
+    if main_has_audio:
+        filter_chains.append(f"[0:a]{norm_af}[a0]")
+    else:
+        main_dur = probe_duration(main_path)
+        filter_chains.append(
+            f"anullsrc=channel_layout=stereo:sample_rate=44100,atrim=duration={main_dur}[a0]"
+        )
+
+    # Handle audio for outro bumper (many outros have video only)
+    if outro_has_audio:
+        filter_chains.append(f"[1:a]{norm_af}[a1]")
+    else:
+        outro_dur = probe_duration(outro_path)
+        filter_chains.append(
+            f"anullsrc=channel_layout=stereo:sample_rate=44100,atrim=duration={outro_dur}[a1]"
+        )
+
+    filter_chains.append("[v0][a0][v1][a1]concat=n=2:v=1:a=1[v_out][a_out]")
+    filter_complex = ";".join(filter_chains)
 
     run_ffmpeg([
         "ffmpeg", "-y",

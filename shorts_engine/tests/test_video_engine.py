@@ -11,9 +11,11 @@ from pathlib import Path
 import pytest
 
 from shorts_engine.services.video_engine import (
+    concatenate_with_outro,
     is_already_9_16,
     overlay_broll,
     probe_duration,
+    probe_has_audio,
     probe_resolution,
 )
 
@@ -115,4 +117,38 @@ def test_overlay_broll_short_broll_eof_repeat(test_videos, tmp_path):
     assert (w, h) == (720, 1280)
     dur = probe_duration(res_path)
     assert 2.9 <= dur <= 3.1
+
+
+def test_probe_has_audio_and_concatenate_silent_outro(test_videos, tmp_path):
+    # 1. Create a silent synthetic video without audio track
+    silent_outro = tmp_path / "silent_outro.mp4"
+    cmd = [
+        "ffmpeg", "-y",
+        "-f", "lavfi",
+        "-i", "color=c=red:s=1080x1920:d=1.5",
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        str(silent_outro),
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    assert res.returncode == 0
+
+    assert probe_has_audio(test_videos["main_1080"]) is True
+    assert probe_has_audio(silent_outro) is False
+
+    # 2. Concat main (with audio) + silent outro (no audio)
+    out_path = tmp_path / "final_with_silent_outro.mp4"
+    concat_result = concatenate_with_outro(
+        main_path=test_videos["main_1080"],
+        outro_path=silent_outro,
+        output_path=out_path,
+        target_width=1080,
+        target_height=1920,
+    )
+    assert concat_result.is_file()
+    assert probe_has_audio(concat_result) is True
+    dur = probe_duration(concat_result)
+    # 3.0s main + 1.5s outro = ~4.5s
+    assert 4.3 <= dur <= 4.7
+
 
