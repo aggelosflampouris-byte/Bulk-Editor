@@ -36,7 +36,6 @@ logger = logging.getLogger(__name__)
 # ── Page Configuration ─────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Greek Shorts Engine",
-    page_icon="🎬",
     layout="wide",
     initial_sidebar_state="expanded",
     menu_items={
@@ -51,137 +50,191 @@ st.markdown("""
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
     html, body, [class*="css"] {
-        font-family: 'Inter', sans-serif;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     }
 
-    /* Dark premium background */
+    /* Minimal neutral dark background */
     .stApp {
-        background: linear-gradient(135deg, #0d0d1a 0%, #12102a 50%, #0a1628 100%);
-        color: #e8e8f0;
+        background: #09090b;
+        color: #f4f4f5;
     }
 
     /* Sidebar */
     [data-testid="stSidebar"] {
-        background: rgba(18, 16, 42, 0.95);
-        border-right: 1px solid rgba(139, 92, 246, 0.2);
+        background: #111113;
+        border-right: 1px solid #27272a;
     }
 
     /* Input labels */
     .stTextInput label, .stSelectbox label, .stFileUploader label,
     .stSlider label, .stCheckbox label {
-        color: #c4b5fd !important;
+        color: #a1a1aa !important;
         font-weight: 500;
-        font-size: 0.85rem;
-        letter-spacing: 0.03em;
+        font-size: 0.8rem;
+        letter-spacing: 0.01em;
     }
 
-    /* Text inputs */
+    /* Text inputs and selects */
     .stTextInput input, .stSelectbox select {
-        background: rgba(255,255,255,0.05) !important;
-        border: 1px solid rgba(139, 92, 246, 0.3) !important;
-        border-radius: 8px !important;
-        color: #e8e8f0 !important;
+        background: #18181b !important;
+        border: 1px solid #27272a !important;
+        border-radius: 6px !important;
+        color: #f4f4f5 !important;
+    }
+    .stTextInput input:focus, .stSelectbox select:focus {
+        border-color: #52525b !important;
+        box-shadow: none !important;
     }
 
     /* Primary buttons */
     .stButton > button[kind="primary"] {
-        background: linear-gradient(135deg, #7c3aed, #4f46e5);
-        border: none;
-        border-radius: 10px;
-        color: white;
-        font-weight: 600;
-        padding: 0.6rem 2rem;
-        transition: all 0.2s ease;
-        box-shadow: 0 4px 15px rgba(124, 58, 237, 0.3);
+        background: #f4f4f5;
+        border: 1px solid #f4f4f5;
+        border-radius: 6px;
+        color: #09090b;
+        font-weight: 500;
+        font-size: 0.85rem;
+        padding: 0.5rem 1.25rem;
+        transition: opacity 0.15s ease, background 0.15s ease;
+        box-shadow: none;
     }
     .stButton > button[kind="primary"]:hover {
-        background: linear-gradient(135deg, #6d28d9, #4338ca);
-        box-shadow: 0 6px 20px rgba(124, 58, 237, 0.5);
-        transform: translateY(-1px);
+        background: #e4e4e7;
+        border-color: #e4e4e7;
+        color: #09090b;
+        box-shadow: none;
+        transform: none;
     }
 
-    /* Constrain st.video() player to a 9:16 portrait shape.
-       Streamlit renders video as an <iframe> inside [data-testid=stVideo].
-       We target it inside .video-col to avoid affecting other players. */
-    .video-col [data-testid="stVideo"],
-    .video-col [data-testid="stVideo"] > div,
-    .video-col [data-testid="stVideo"] iframe {
+    /* Secondary / outline buttons */
+    .stButton > button[kind="secondary"],
+    .stButton > button:not([kind="primary"]) {
+        background: #18181b;
+        border: 1px solid #27272a;
+        border-radius: 6px;
+        color: #e4e4e7;
+        font-weight: 500;
+        font-size: 0.85rem;
+        box-shadow: none;
+        transition: background 0.15s ease, border-color 0.15s ease;
+    }
+    .stButton > button[kind="secondary"]:hover,
+    .stButton > button:not([kind="primary"]):hover {
+        background: #27272a;
+        border-color: #3f3f46;
+        color: #ffffff;
+        box-shadow: none;
+        transform: none;
+    }
+
+    /* Tabs styling */
+    .stTabs [data-baseweb="tab-list"] {
+        border-bottom: 1px solid #27272a;
+        gap: 1.5rem;
+    }
+    .stTabs [data-baseweb="tab"] {
+        color: #71717a;
+        font-weight: 500;
+        font-size: 0.88rem;
+        padding-bottom: 0.6rem;
+    }
+    .stTabs [aria-selected="true"] {
+        color: #f4f4f5 !important;
+        border-bottom-color: #f4f4f5 !important;
+    }
+
+    /* Constrain st.video() player to 9:16 portrait shape */
+    [data-testid="stVideo"],
+    [data-testid="stVideo"] video {
         width: 100% !important;
         aspect-ratio: 9 / 16 !important;
-        height: auto !important;
-        border-radius: 12px;
+        max-height: 520px !important;
+        border-radius: 6px;
+        border: 1px solid #27272a;
         overflow: hidden;
+        object-fit: cover;
     }
 
-    /* Result cards */
-    .result-card {
-        background: rgba(255,255,255,0.04);
-        border: 1px solid rgba(139, 92, 246, 0.2);
-        border-radius: 14px;
-        padding: 1.5rem;
-        margin-bottom: 1.2rem;
-        transition: border-color 0.2s ease;
+    /* Container cards */
+    [data-testid="stVerticalBlockBorderWrapper"] {
+        border: 1px solid #27272a !important;
+        border-radius: 6px !important;
+        background: #121214 !important;
+        margin-bottom: 1rem !important;
     }
-    .result-card:hover {
-        border-color: rgba(139, 92, 246, 0.5);
-    }
-    .result-card.success {
-        border-left: 3px solid #10b981;
-    }
-    .result-card.failure {
-        border-left: 3px solid #ef4444;
+    [data-testid="stVerticalBlockBorderWrapper"] > div {
+        background: #121214 !important;
     }
 
     /* Badges */
     .badge {
         display: inline-block;
-        padding: 0.2rem 0.65rem;
-        border-radius: 20px;
-        font-size: 0.75rem;
-        font-weight: 600;
-        margin-right: 0.4rem;
-        margin-bottom: 0.3rem;
+        padding: 0.15rem 0.5rem;
+        border-radius: 4px;
+        font-size: 0.72rem;
+        font-weight: 500;
+        margin-right: 0.35rem;
+        margin-bottom: 0.25rem;
     }
-    .badge-success { background: rgba(16,185,129,0.15); color: #10b981; border: 1px solid rgba(16,185,129,0.3); }
-    .badge-error   { background: rgba(239,68,68,0.15);  color: #ef4444;  border: 1px solid rgba(239,68,68,0.3);  }
-    .badge-warn    { background: rgba(245,158,11,0.15); color: #f59e0b;  border: 1px solid rgba(245,158,11,0.3); }
-    .badge-tag     { background: rgba(139,92,246,0.15); color: #a78bfa;  border: 1px solid rgba(139,92,246,0.3); }
+    .badge-success { background: #052e16; color: #4ade80; border: 1px solid #14532d; }
+    .badge-error   { background: #450a0a; color: #f87171; border: 1px solid #7f1d1d; }
+    .badge-warn    { background: #451a03; color: #fbbf24; border: 1px solid #78350f; }
+    .badge-tag     { background: #18181b; color: #d4d4d8; border: 1px solid #27272a; }
 
     /* Metric value */
     .metric-value {
-        font-size: 2.2rem;
-        font-weight: 700;
-        color: #a78bfa;
+        font-size: 1.75rem;
+        font-weight: 600;
+        color: #f4f4f5;
+        letter-spacing: -0.02em;
     }
     .metric-label {
-        font-size: 0.78rem;
-        color: #888;
+        font-size: 0.72rem;
+        color: #71717a;
         text-transform: uppercase;
-        letter-spacing: 0.07em;
+        letter-spacing: 0.05em;
     }
 
     /* Code blocks */
     pre, code {
-        background: rgba(0,0,0,0.3) !important;
-        border: 1px solid rgba(139, 92, 246, 0.15) !important;
-        border-radius: 6px !important;
-        color: #c4b5fd !important;
-        font-size: 0.82rem !important;
+        background: #141416 !important;
+        border: 1px solid #27272a !important;
+        border-radius: 4px !important;
+        color: #d4d4d8 !important;
+        font-size: 0.8rem !important;
     }
 
     /* Divider */
     hr {
-        border-color: rgba(139, 92, 246, 0.15) !important;
+        border-color: #27272a !important;
     }
 
     /* Progress bar */
-    .stProgress > div > div {
-        background: linear-gradient(90deg, #7c3aed, #4f46e5) !important;
+    [data-testid="stProgress"] {
+        margin: 0.5rem 0 1rem 0;
+    }
+    [data-testid="stProgressBarTrack"],
+    [data-testid="stProgress"] [role="progressbar"] {
+        background-color: #18181b !important;
+        border: 1px solid #27272a !important;
+        border-radius: 4px !important;
+        overflow: hidden !important;
+    }
+    [data-testid="stProgressBarTrack"] > div,
+    [data-testid="stProgress"] [role="progressbar"] > div > div {
+        background-color: #22c55e !important;
+        background: #22c55e !important;
+    }
+    [data-testid="stProgress"] p,
+    [data-testid="stProgress"] span {
+        color: #a1a1aa !important;
+        font-size: 0.8rem !important;
+        font-weight: 500 !important;
     }
 
-    /* Warning / info boxes */
+    /* Alerts */
     .stAlert {
-        border-radius: 10px !important;
+        border-radius: 6px !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -226,7 +279,7 @@ def _render_sidebar() -> Settings:
         Settings object built from sidebar inputs.
     """
     with st.sidebar:
-        st.markdown("## ⚙️ Settings")
+        st.markdown("## Settings")
         st.markdown("---")
 
         # ── API Key Status (read-only) ─────────────────────────────────────
@@ -234,18 +287,19 @@ def _render_sidebar() -> Settings:
         pexels_loaded = bool(_os.environ.get("PEXELS_API_KEY", "").strip())
         gemini_loaded = bool(_os.environ.get("GEMINI_API_KEY", "").strip())
 
-        st.markdown("### 🔑 API Keys")
-        pexels_icon = "✅" if pexels_loaded else "❌"
-        gemini_icon = "✅" if gemini_loaded else "❌"
+        st.markdown("### API Keys")
+        pexels_status = '<span style="color:#22c55e;font-size:0.8rem;">Connected</span>' if pexels_loaded else '<span style="color:#ef4444;font-size:0.8rem;">Missing</span>'
+        gemini_status = '<span style="color:#22c55e;font-size:0.8rem;">Connected</span>' if gemini_loaded else '<span style="color:#ef4444;font-size:0.8rem;">Missing</span>'
         st.markdown(
-            f"{pexels_icon} **Pexels** — {'loaded from .env' if pexels_loaded else 'not found'}  \n"
-            f"{gemini_icon} **Gemini** — {'loaded from .env' if gemini_loaded else 'not found'}"
+            f"**Pexels** — {pexels_status}  \n"
+            f"**Gemini** — {gemini_status}",
+            unsafe_allow_html=True,
         )
         if not pexels_loaded or not gemini_loaded:
             st.caption("Add missing keys to `shorts_engine/.env` and restart.")
 
         st.markdown("---")
-        st.markdown("### 🎙️ Transcription")
+        st.markdown("### Transcription")
         model_size = st.selectbox(
             "Whisper Model Size",
             options=["tiny", "base", "small", "medium", "large-v3"],
@@ -268,7 +322,7 @@ def _render_sidebar() -> Settings:
         )
 
         st.markdown("---")
-        st.markdown("### 🧠 Content Analysis & Viral Hooks")
+        st.markdown("### Content Analysis & Hooks")
         enable_highlight_scoring = st.checkbox(
             "Qwen 2.5 Highlight Scoring",
             value=True,
@@ -290,7 +344,7 @@ def _render_sidebar() -> Settings:
             )
 
         st.markdown("---")
-        st.markdown("### 🎯 Dynamic 9:16 Auto-Framing")
+        st.markdown("### Auto-Framing")
         enable_face_tracking = st.checkbox(
             "YOLO Face Speaker Tracking",
             value=True,
@@ -299,7 +353,7 @@ def _render_sidebar() -> Settings:
         )
 
         st.markdown("---")
-        st.markdown("### 🎬 B-Roll Overlay")
+        st.markdown("### B-Roll Overlay")
         broll_start = st.slider(
             "Overlay Start (seconds)",
             min_value=0.0,
@@ -319,7 +373,7 @@ def _render_sidebar() -> Settings:
         )
 
         st.markdown("---")
-        st.markdown("### ✂️ Clip Selection (URL Mode)")
+        st.markdown("### Clip Selection (URL Mode)")
         max_clips = st.slider(
             "Max Clips per Video",
             min_value=3,
@@ -347,7 +401,7 @@ def _render_sidebar() -> Settings:
         )
 
         st.markdown("---")
-        st.markdown("### 🎞️ Outro Bumper")
+        st.markdown("### Outro Bumper")
         outro_file = st.file_uploader(
             "Upload Outro (optional)",
             type=["mp4", "mov", "mkv", "avi"],
@@ -369,7 +423,7 @@ def _render_sidebar() -> Settings:
                 tmp.close()
                 st.session_state["outro_tmp_path"] = tmp.name
             outro_path = Path(st.session_state["outro_tmp_path"])
-            st.success(f"✓ Outro loaded: {outro_file.name}")
+            st.success(f"Outro loaded: {outro_file.name}")
         else:
             # Clear stale temp path if user removed the file
             if "outro_tmp_path" in st.session_state:
@@ -420,110 +474,104 @@ def _get_download_filename(result: ProcessingResult, extension: str = "mp4") -> 
 
 def _render_result_card(result: ProcessingResult, index: int) -> None:
     """Render a single ProcessingResult as a styled card."""
-    card_class = "result-card success" if result.success else "result-card failure"
-    status_badge = (
-        '<span class="badge badge-success">✓ Success</span>'
-        if result.success
-        else '<span class="badge badge-error">✗ Failed</span>'
-    )
-    st.markdown(f'<div class="{card_class}">', unsafe_allow_html=True)
+    with st.container(border=True):
+        col_title, col_status = st.columns([5, 1])
+        with col_title:
+            card_title = (
+                result.seo.title
+                if (result.seo and result.seo.title)
+                else result.input_file.name
+            )
+            st.markdown(f"**{index + 1}. {card_title}**")
+        with col_status:
+            status_badge = (
+                '<span class="badge badge-success">Success</span>'
+                if result.success
+                else '<span class="badge badge-error">Failed</span>'
+            )
+            st.markdown(status_badge, unsafe_allow_html=True)
 
-    col_title, col_status = st.columns([5, 1])
-    with col_title:
-        card_title = (
-            result.seo.title
-            if (result.seo and result.seo.title)
-            else result.input_file.name
-        )
-        st.markdown(f"**{index + 1}. {card_title}**")
-    with col_status:
-        st.markdown(status_badge, unsafe_allow_html=True)
+        if result.success and result.output_file:
+            # Two-column layout: video player left, metadata right.
+            # Using st.columns() to constrain width — st.video() cannot be
+            # nested inside an HTML <div> injected via unsafe_allow_html.
+            vid_col, meta_col = st.columns([2, 3])
 
-    if result.success and result.output_file:
-        # Two-column layout: video player left, metadata right.
-        # Using st.columns() to constrain width — st.video() cannot be
-        # nested inside an HTML <div> injected via unsafe_allow_html.
-        vid_col, meta_col = st.columns([2, 3])
-
-        with vid_col:
-            st.markdown('<div class="video-col">', unsafe_allow_html=True)
-            if result.output_file.is_file():
-                st.video(str(result.output_file))
-                dl_filename = _get_download_filename(result, extension="mp4")
-                st.download_button(
-                    label="⬇ Download Short (.mp4)",
-                    data=result.output_file.read_bytes(),
-                    file_name=dl_filename,
-                    mime="video/mp4",
-                    key=f"video_download_{index}",
-                    use_container_width=True,
-                )
-            st.markdown('</div>', unsafe_allow_html=True)
-
-        with meta_col:
-            st.markdown("**📁 Output file**")
-            st.code(str(result.output_file), language=None)
-
-            # Show viral hook if detected
-            if result.hook_text:
-                st.markdown(
-                    f'<div style="margin:0.4rem 0 0.6rem 0;padding:0.4rem 0.7rem;'
-                    f'background:rgba(124,58,237,0.12);border-left:3px solid #7c3aed;border-radius:6px;">'
-                    f'<span style="font-size:0.75rem;font-weight:600;color:#c4b5fd;">🎯 VIRAL HOOK '
-                    f'(Virality: {result.virality_score:.1f}/10)</span><br>'
-                    f'<span style="font-size:0.83rem;color:#e8e8f0;font-style:italic;">"{result.hook_text}"</span>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
-
-            # Show what B-roll query was searched so the user can verify
-            if result.broll_query:
-                st.markdown(
-                    f'<span style="font-size:0.8rem;color:#888;">'
-                    f'🔍 B-roll query: <code>{result.broll_query}</code></span>',
-                    unsafe_allow_html=True,
-                )
-
-            if result.seo:
-                st.markdown("**📝 SEO Metadata**")
-                st.markdown(f"**Title:** {result.seo.title}")
-
-                # Tags as coloured badges
-                tags_html = "".join(
-                    f'<span class="badge badge-tag">{tag}</span>'
-                    for tag in result.seo.tags
-                )
-                st.markdown(tags_html, unsafe_allow_html=True)
-
-                st.markdown("**📋 YouTube Tags (Comma-separated for YouTube Studio):**")
-                st.code(result.seo.youtube_tags_display, language=None)
-
-                with st.expander("Full Description"):
-                    st.text(result.seo.description)
-
-                # Download SEO JSON
-                seo_json_path = result.output_file.parent / f"seo_{result.output_file.stem.replace('_short','')}.json"
-                if seo_json_path.is_file():
-                    seo_dl_filename = _get_download_filename(result, extension="json")
+            with vid_col:
+                if result.output_file.is_file():
+                    st.video(str(result.output_file))
+                    dl_filename = _get_download_filename(result, extension="mp4")
                     st.download_button(
-                        label="⬇ Download SEO JSON",
-                        data=seo_json_path.read_bytes(),
-                        file_name=seo_dl_filename,
-                        mime="application/json",
-                        key=f"seo_download_{index}",
+                        label="Download Short (.mp4)",
+                        data=result.output_file.read_bytes(),
+                        file_name=dl_filename,
+                        mime="video/mp4",
+                        key=f"video_download_{index}",
+                        use_container_width=True,
                     )
 
-    if result.error:
-        st.error(f"**Error:** {result.error}")
+            with meta_col:
+                st.markdown("**Output File**")
+                st.code(str(result.output_file), language=None)
 
-    if result.warnings:
-        for w in result.warnings:
-            st.markdown(
-                f'<span class="badge badge-warn">⚠ {w}</span>',
-                unsafe_allow_html=True,
-            )
+                # Show viral hook if detected
+                if result.hook_text:
+                    st.markdown(
+                        f'<div style="margin:0.5rem 0;padding:0.5rem 0.75rem;'
+                        f'background:#18181b;border-left:2px solid #52525b;border-radius:4px;">'
+                        f'<span style="font-size:0.72rem;font-weight:600;color:#a1a1aa;text-transform:uppercase;letter-spacing:0.04em;">Viral Hook '
+                        f'(Score: {result.virality_score:.1f}/10)</span><br>'
+                        f'<span style="font-size:0.82rem;color:#d4d4d8;font-style:italic;">"{result.hook_text}"</span>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
 
-    st.markdown("</div>", unsafe_allow_html=True)
+                # Show what B-roll query was searched so the user can verify
+                if result.broll_query:
+                    st.markdown(
+                        f'<span style="font-size:0.8rem;color:#71717a;">'
+                        f'B-Roll query: <code>{result.broll_query}</code></span>',
+                        unsafe_allow_html=True,
+                    )
+
+                if result.seo:
+                    st.markdown("**SEO Metadata**")
+                    st.markdown(f"**Title:** {result.seo.title}")
+
+                    # Tags as technical badges
+                    tags_html = "".join(
+                        f'<span class="badge badge-tag">{tag}</span>'
+                        for tag in result.seo.tags
+                    )
+                    st.markdown(tags_html, unsafe_allow_html=True)
+
+                    st.markdown("**YouTube Tags (Comma-separated for YouTube Studio):**")
+                    st.code(result.seo.youtube_tags_display, language=None)
+
+                    with st.expander("Full Description"):
+                        st.text(result.seo.description)
+
+                    # Download SEO JSON
+                    seo_json_path = result.output_file.parent / f"seo_{result.output_file.stem.replace('_short','')}.json"
+                    if seo_json_path.is_file():
+                        seo_dl_filename = _get_download_filename(result, extension="json")
+                        st.download_button(
+                            label="Download SEO JSON",
+                            data=seo_json_path.read_bytes(),
+                            file_name=seo_dl_filename,
+                            mime="application/json",
+                            key=f"seo_download_{index}",
+                        )
+
+        if result.error:
+            st.error(f"**Error:** {result.error}")
+
+        if result.warnings:
+            for w in result.warnings:
+                st.markdown(
+                    f'<span class="badge badge-warn">{w}</span>',
+                    unsafe_allow_html=True,
+                )
 
 
 # ── Progress Callback ──────────────────────────────────────────────────────────
@@ -553,7 +601,11 @@ def _make_progress_callback(
             if m:
                 sub_pct = int(m.group(1)) / 100.0
                 fraction = (current + sub_pct * 0.5) / max(total, 1)
-        progress_bar.progress(min(1.0, fraction))
+        pct = int(min(1.0, fraction) * 100)
+        progress_bar.progress(
+            min(1.0, fraction),
+            text=f"Processing ({pct}%): [{current + 1}/{total}] {stage}",
+        )
         stage_text.markdown(
             f"**[{current + 1}/{total}]** {stage}",
             unsafe_allow_html=False,
@@ -582,8 +634,8 @@ def _render_url_candidate_table(candidates: list[ClipCandidate]) -> list[int]:
     selected_indices: list[int] = []
 
     st.markdown(
-        "<div style='font-size:0.85rem;color:#888;margin-bottom:0.8rem;'>"
-        "Review the AI-selected clips below. Uncheck any you don't want to render."
+        "<div style='font-size:0.85rem;color:#71717a;margin-bottom:0.8rem;'>"
+        "Review the AI-selected clips below. Uncheck any you do not want to render."
         "</div>",
         unsafe_allow_html=True,
     )
@@ -592,11 +644,11 @@ def _render_url_candidate_table(candidates: list[ClipCandidate]) -> list[int]:
     hdr_cols = st.columns([0.5, 0.5, 1.5, 2.5, 3])
     headers = ["", "#", "Duration", "Time Range", "AI SEO Title"]
     for col, hdr in zip(hdr_cols, headers):
-        col.markdown(f"<span style='font-size:0.75rem;color:#888;font-weight:600;"
+        col.markdown(f"<span style='font-size:0.75rem;color:#71717a;font-weight:600;"
                      f"text-transform:uppercase;letter-spacing:0.05em'>{hdr}</span>",
                      unsafe_allow_html=True)
 
-    st.markdown("<hr style='margin:0.4rem 0;border-color:rgba(139,92,246,0.15)'>",
+    st.markdown("<hr style='margin:0.4rem 0;border-color:#27272a'>",
                 unsafe_allow_html=True)
 
     for clip in candidates:
@@ -612,21 +664,21 @@ def _render_url_candidate_table(candidates: list[ClipCandidate]) -> list[int]:
 
         with row_cols[1]:
             st.markdown(
-                f"<span style='font-size:0.9rem;font-weight:600;color:#a78bfa'>"
+                f"<span style='font-size:0.88rem;font-weight:600;color:#d4d4d8'>"
                 f"#{clip.index}</span>",
                 unsafe_allow_html=True,
             )
 
         with row_cols[2]:
             st.markdown(
-                f"<span style='font-size:0.88rem;color:#e8e8f0'>"
+                f"<span style='font-size:0.88rem;color:#f4f4f5'>"
                 f"{clip.duration_display}</span>",
                 unsafe_allow_html=True,
             )
 
         with row_cols[3]:
             st.markdown(
-                f"<span style='font-size:0.8rem;color:#888'>"
+                f"<span style='font-size:0.8rem;color:#71717a'>"
                 f"{clip.start_display} → {clip.end_display}</span>",
                 unsafe_allow_html=True,
             )
@@ -635,18 +687,18 @@ def _render_url_candidate_table(candidates: list[ClipCandidate]) -> list[int]:
             # Truncate title for display
             display_title = clip.seo.title[:55] + "…" if len(clip.seo.title) > 55 else clip.seo.title
             st.markdown(
-                f"<span style='font-size:0.88rem;color:#e8e8f0'>"
+                f"<span style='font-size:0.88rem;color:#f4f4f5'>"
                 f"<strong>{display_title}</strong></span>",
                 unsafe_allow_html=True,
             )
 
         # Hook, SEO & tags in an expander below the row
-        with st.expander(f"↳ Hook, SEO & Tags — Clip #{clip.index}", expanded=False):
+        with st.expander(f"Hook, SEO & Tags — Clip #{clip.index}", expanded=False):
             st.markdown(f"**Hook:** {clip.hook_summary}")
             st.markdown(f"**B-Roll query:** `{clip.broll_query}`")
             st.markdown(f"**AI Title:** {clip.seo.title}")
             st.markdown(f"**Description:** {clip.seo.description}")
-            st.markdown("**📋 YouTube Tags (Copy & Paste directly into YouTube Studio Tags box):**")
+            st.markdown("**YouTube Tags (Copy & Paste directly into YouTube Studio Tags box):**")
             st.code(clip.seo.youtube_tags_display, language=None)
 
         if checked:
@@ -673,16 +725,16 @@ def _render_url_results(results: list[ProcessingResult], candidates: list[ClipCa
     n_success = sum(1 for r in results if r.success)
     n_fail = len(results) - n_success
 
-    st.markdown("### 📊 Shorts Generated")
+    st.markdown("### Shorts Generated")
     summary_cols = st.columns(3)
     with summary_cols[0]:
         st.markdown(
-            f'<div class="metric-value" style="color:#10b981">{n_success}</div>'
+            f'<div class="metric-value" style="color:#22c55e">{n_success}</div>'
             f'<div class="metric-label">Succeeded</div>',
             unsafe_allow_html=True,
         )
     with summary_cols[1]:
-        color = "#ef4444" if n_fail > 0 else "#10b981"
+        color = "#ef4444" if n_fail > 0 else "#71717a"
         st.markdown(
             f'<div class="metric-value" style="color:{color}">{n_fail}</div>'
             f'<div class="metric-label">Failed</div>',
@@ -693,6 +745,13 @@ def _render_url_results(results: list[ProcessingResult], candidates: list[ClipCa
             f'<div class="metric-value">{len(results)}</div>'
             f'<div class="metric-label">Total Clips</div>',
             unsafe_allow_html=True,
+        )
+
+    if results:
+        completion_ratio = n_success / max(len(results), 1)
+        st.progress(
+            value=completion_ratio,
+            text=f"Batch Completion: {n_success}/{len(results)} clips generated ({int(completion_ratio * 100)}%)",
         )
 
     st.markdown("")
@@ -707,10 +766,10 @@ def _render_url_results(results: list[ProcessingResult], candidates: list[ClipCa
         # Show hook summary below the card if we have it
         if matched_clip and result.success:
             st.markdown(
-                f'<div style="margin:-0.6rem 0 1rem 0;padding:0.5rem 0.8rem;'
-                f'background:rgba(139,92,246,0.06);border-radius:6px;'
-                f'font-size:0.8rem;color:#888;">'
-                f'💡 <em>{matched_clip.hook_summary}</em>'
+                f'<div style="margin:-0.4rem 0 0.8rem 0;padding:0.4rem 0.6rem;'
+                f'background:#141416;border-radius:4px;'
+                f'font-size:0.78rem;color:#71717a;">'
+                f'<em>{matched_clip.hook_summary}</em>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
@@ -726,17 +785,14 @@ def main() -> None:
     # ── Sidebar ────────────────────────────────────────────────────────────────
     settings = _render_sidebar()
 
-    # ── Hero Header ────────────────────────────────────────────────────────────
+    # ── Header ────────────────────────────────────────────────────────────────
     st.markdown("""
-    <div style="text-align:center;padding:2rem 0 1rem;">
-        <div style="font-size:3rem;margin-bottom:0.5rem;">🎬</div>
-        <h1 style="font-size:2.2rem;font-weight:700;margin:0;
-                   background:linear-gradient(135deg,#a78bfa,#60a5fa);
-                   -webkit-background-clip:text;-webkit-text-fill-color:transparent;">
+    <div style="padding:1.5rem 0 1rem;">
+        <h1 style="font-size:1.75rem;font-weight:600;margin:0;color:#f4f4f5;letter-spacing:-0.02em;">
             Greek Shorts Engine
         </h1>
-        <p style="color:#888;margin-top:0.4rem;font-size:1rem;">
-            Bulk-convert raw Greek clips → 9:16 YouTube Shorts with subtitles, B-roll &amp; SEO
+        <p style="color:#71717a;margin-top:0.35rem;font-size:0.9rem;">
+            Batch convert Greek clips into 9:16 vertical Shorts with subtitles, B-roll, and SEO metadata.
         </p>
     </div>
     """, unsafe_allow_html=True)
@@ -747,11 +803,11 @@ def main() -> None:
     try:
         assert_system_binaries()
     except RuntimeError as exc:
-        st.error(f"⛔ **System requirement not met:**\n\n{exc}")
+        st.error(f"**System requirement not met:**\n\n{exc}")
         st.stop()
 
     # ── Tabs ───────────────────────────────────────────────────────────────────
-    tab_upload, tab_url = st.tabs(["📂 File Upload", "🔗 Video URL"])
+    tab_upload, tab_url = st.tabs(["File Upload", "Video URL"])
 
     # ══════════════════════════════════════════════════════════════════════════
     # TAB 1 — FILE UPLOAD (existing behaviour, untouched)
@@ -760,7 +816,7 @@ def main() -> None:
         _, main_col, _ = st.columns([1, 6, 1])
         with main_col:
 
-            st.markdown("### 📂 Upload Raw Video Clips")
+            st.markdown("### Upload Video Clips")
             uploaded_files = st.file_uploader(
                 "Drop your Greek-speech video clips here",
                 type=["mp4", "mov", "mkv", "avi", "webm"],
@@ -793,7 +849,7 @@ def main() -> None:
                         unsafe_allow_html=True,
                     )
                 with col4:
-                    outro_label = "✓ Yes" if settings.outro_path else "—"
+                    outro_label = "Yes" if settings.outro_path else "No"
                     st.markdown(
                         f'<div class="metric-value">{outro_label}</div>'
                         f'<div class="metric-label">Outro Loaded</div>',
@@ -805,7 +861,7 @@ def main() -> None:
             settings_errors = settings.validate()
             if settings_errors:
                 for err in settings_errors:
-                    st.warning(f"⚠️ {err}")
+                    st.warning(err)
 
             run_disabled = (
                 not uploaded_files
@@ -816,14 +872,14 @@ def main() -> None:
             col_run, col_clear = st.columns([3, 1])
             with col_run:
                 run_clicked = st.button(
-                    "🚀 Process All Clips",
+                    "Process All Clips",
                     type="primary",
                     disabled=run_disabled,
                     use_container_width=True,
                     key="run_button",
                 )
             with col_clear:
-                if st.button("🗑 Clear Results", use_container_width=True, key="clear_button"):
+                if st.button("Clear Results", use_container_width=True, key="clear_button"):
                     st.session_state["results"] = []
                     st.rerun()
 
@@ -840,7 +896,7 @@ def main() -> None:
                     dest.write_bytes(uf.read())
                     saved_paths.append(dest)
 
-            st.markdown("### ⏳ Processing...")
+            st.markdown("### Processing...")
             progress_bar = st.progress(0.0)
             stage_text = st.empty()
 
@@ -854,7 +910,7 @@ def main() -> None:
                 )
 
             progress_bar.progress(1.0)
-            stage_text.markdown("**✓ Batch complete!**")
+            stage_text.markdown("**Batch complete.**")
             st.session_state["results"] = results
             st.session_state["is_processing"] = False
 
@@ -869,16 +925,16 @@ def main() -> None:
             n_success = sum(1 for r in results if r.success)
             n_fail = len(results) - n_success
 
-            st.markdown("### 📊 Results")
+            st.markdown("### Results")
             cols = st.columns(3)
             with cols[0]:
                 st.markdown(
-                    f'<div class="metric-value" style="color:#10b981">{n_success}</div>'
+                    f'<div class="metric-value" style="color:#22c55e">{n_success}</div>'
                     f'<div class="metric-label">Succeeded</div>',
                     unsafe_allow_html=True,
                 )
             with cols[1]:
-                color = "#ef4444" if n_fail > 0 else "#10b981"
+                color = "#ef4444" if n_fail > 0 else "#71717a"
                 st.markdown(
                     f'<div class="metric-value" style="color:{color}">{n_fail}</div>'
                     f'<div class="metric-label">Failed</div>',
@@ -891,33 +947,37 @@ def main() -> None:
                     unsafe_allow_html=True,
                 )
 
+            completion_ratio = n_success / max(len(results), 1)
+            st.progress(
+                value=completion_ratio,
+                text=f"Batch Completion: {n_success}/{len(results)} clips processed ({int(completion_ratio * 100)}%)",
+            )
+
             st.markdown("")
             for idx, result in enumerate(results):
                 _render_result_card(result, idx)
 
         elif not uploaded_files:
             st.markdown("""
-            <div style="text-align:center;padding:4rem 0;opacity:0.4;">
-                <div style="font-size:5rem;">🎥</div>
-                <p style="font-size:1.1rem;margin-top:1rem;">
-                    Upload Greek video clips to get started
+            <div style="text-align:center;padding:3rem 0;border:1px dashed #27272a;border-radius:6px;margin-top:1rem;">
+                <p style="font-size:0.88rem;color:#71717a;margin:0;">
+                    Upload Greek video clips above to get started
                 </p>
             </div>
             """, unsafe_allow_html=True)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # TAB 2 — VIDEO URL (new two-stage Analyze → Render flow)
+    # TAB 2 — VIDEO URL
     # ══════════════════════════════════════════════════════════════════════════
     with tab_url:
         _, url_col, _ = st.columns([1, 6, 1])
         with url_col:
 
-            st.markdown("### 🔗 Paste a Video URL")
+            st.markdown("### Video URL")
             st.markdown(
-                "<div style='font-size:0.85rem;color:#888;margin-bottom:0.8rem;'>"
-                "Supports YouTube, Vimeo, and direct MP4/video links. "
-                "The engine will transcribe the full video once, then Gemini will "
-                "select the best moments as clips."
+                "<div style='font-size:0.85rem;color:#71717a;margin-bottom:0.8rem;'>"
+                "Supports YouTube, Vimeo, and direct MP4 links. "
+                "The engine transcribes the video and detects the most engaging clips."
                 "</div>",
                 unsafe_allow_html=True,
             )
@@ -932,13 +992,13 @@ def main() -> None:
             settings_errors_url = settings.validate()
             if settings_errors_url:
                 for err in settings_errors_url:
-                    st.warning(f"⚠️ {err}")
+                    st.warning(err)
 
             # ── Stage 1: Analyze Button ────────────────────────────────────────
             col_analyze, col_url_clear = st.columns([3, 1])
             with col_analyze:
                 analyze_clicked = st.button(
-                    "🔍 Analyze Video",
+                    "Analyze Video",
                     type="primary",
                     disabled=(
                         not url_input.strip()
@@ -950,7 +1010,7 @@ def main() -> None:
                     key="analyze_button",
                 )
             with col_url_clear:
-                if st.button("🗑 Clear", use_container_width=True, key="url_clear_button"):
+                if st.button("Clear", use_container_width=True, key="url_clear_button"):
                     for key in [
                         "url_candidates", "url_results", "url_is_analyzing",
                         "url_is_rendering", "url_meta_title", "url_meta_channel",
@@ -965,7 +1025,7 @@ def main() -> None:
             st.session_state["url_candidates"] = []
             st.session_state["url_results"] = []
 
-            st.markdown("### ⏳ Analyzing...")
+            st.markdown("### Analyzing Video...")
             url_progress_bar = st.progress(0.0)
             url_stage_text = st.empty()
 
@@ -979,26 +1039,28 @@ def main() -> None:
             stage_idx = [0]
 
             def _url_analysis_cb(current: int, total: int, stage: str) -> None:
-                url_stage_text.markdown(f"**{stage}**")
-                # Advance simulated progress based on stage keywords
+                val = 0.10
                 if "Probing" in stage:
-                    url_progress_bar.progress(0.05)
+                    val = 0.05
                 elif "Downloading" in stage:
-                    url_progress_bar.progress(0.15)
+                    val = 0.15
                 elif "Transcribing audio:" in stage:
                     import re as _re
                     m = _re.search(r"\((\d+)%\)", stage)
                     if m:
                         pct_val = int(m.group(1)) / 100.0
-                        url_progress_bar.progress(min(0.70, 0.20 + 0.50 * pct_val))
+                        val = min(0.70, 0.20 + 0.50 * pct_val)
                     else:
-                        url_progress_bar.progress(0.20)
+                        val = 0.20
                 elif "Transcribing" in stage:
-                    url_progress_bar.progress(0.20)
+                    val = 0.20
                 elif "Correcting" in stage:
-                    url_progress_bar.progress(0.75)
+                    val = 0.75
                 elif "Selecting" in stage:
-                    url_progress_bar.progress(0.85)
+                    val = 0.85
+                pct = int(val * 100)
+                url_progress_bar.progress(val, text=f"Analyzing video ({pct}%): {stage}")
+                url_stage_text.markdown(f"**{stage}**")
 
             try:
                 with st.spinner("Analyzing video (this may take several minutes)..."):
@@ -1009,8 +1071,8 @@ def main() -> None:
                         progress_cb=_url_analysis_cb,
                     )
 
-                url_progress_bar.progress(1.0)
-                url_stage_text.markdown("**✓ Analysis complete! Review clips below.**")
+                url_progress_bar.progress(1.0, text="100% — Analysis complete.")
+                url_stage_text.markdown("**Analysis complete. Review clips below.**")
                 st.session_state["url_candidates"] = candidates
                 st.session_state["url_is_analyzing"] = False
 
@@ -1031,7 +1093,7 @@ def main() -> None:
         candidates: list[ClipCandidate] = st.session_state.get("url_candidates", [])
         if candidates:
             st.markdown("---")
-            st.markdown(f"### 🎯 {len(candidates)} Clip Candidates Found")
+            st.markdown(f"### {len(candidates)} Clip Candidates Found")
 
             selected_indices = _render_url_candidate_table(candidates)
 
@@ -1045,7 +1107,7 @@ def main() -> None:
             col_render, _ = st.columns([3, 1])
             with col_render:
                 render_clicked = st.button(
-                    f"🚀 Generate {n_selected} Short{'s' if n_selected != 1 else ''}",
+                    f"Generate {n_selected} Short{'s' if n_selected != 1 else ''}",
                     type="primary",
                     disabled=(
                         n_selected == 0
@@ -1064,14 +1126,35 @@ def main() -> None:
                 st.session_state["url_is_rendering"] = True
                 st.session_state["url_results"] = []
 
-                st.markdown("### ⏳ Rendering clips...")
+                st.markdown("### Rendering Clips...")
                 render_progress = st.progress(0.0)
                 render_stage_text = st.empty()
 
                 def _render_cb(current: int, total: int, stage: str) -> None:
-                    fraction = (current + 0.5) / max(total, 1)
-                    render_progress.progress(min(fraction, 0.99))
-                    render_stage_text.markdown(f"**{stage}**")
+                    sub_stage = 0.50
+                    stage_lower = stage.lower()
+                    if "slicing" in stage_lower:
+                        sub_stage = 0.10
+                    elif "building subtitles" in stage_lower:
+                        sub_stage = 0.25
+                    elif "searching b-roll" in stage_lower:
+                        sub_stage = 0.40
+                    elif "downloading b-roll" in stage_lower:
+                        sub_stage = 0.55
+                    elif "crop" in stage_lower or "framing" in stage_lower:
+                        sub_stage = 0.70
+                    elif "overlay" in stage_lower or "b-roll" in stage_lower:
+                        sub_stage = 0.85
+                    elif "burning subtitles" in stage_lower:
+                        sub_stage = 0.95
+
+                    fraction = (current + sub_stage) / max(total, 1)
+                    pct = int(min(fraction, 0.99) * 100)
+                    render_progress.progress(
+                        min(fraction, 0.99),
+                        text=f"Rendering ({pct}%): [{current + 1}/{total}] {stage}",
+                    )
+                    render_stage_text.markdown(f"**[{current + 1}/{total}]** {stage}")
 
                 try:
                     with st.spinner("Rendering selected clips..."):
@@ -1082,8 +1165,8 @@ def main() -> None:
                             progress_cb=_render_cb,
                         )
 
-                    render_progress.progress(1.0)
-                    render_stage_text.markdown("**✓ All clips rendered!**")
+                    render_progress.progress(1.0, text="100% — All clips rendered.")
+                    render_stage_text.markdown("**All clips rendered.**")
                     st.session_state["url_results"] = render_results
                     st.session_state["url_is_rendering"] = False
 
@@ -1097,10 +1180,9 @@ def main() -> None:
 
         elif not url_input.strip() and not st.session_state.get("url_is_analyzing"):
             st.markdown("""
-            <div style="text-align:center;padding:4rem 0;opacity:0.4;">
-                <div style="font-size:5rem;">🔗</div>
-                <p style="font-size:1.1rem;margin-top:1rem;">
-                    Paste a video URL and click Analyze to get started
+            <div style="text-align:center;padding:3rem 0;border:1px dashed #27272a;border-radius:6px;margin-top:1rem;">
+                <p style="font-size:0.88rem;color:#71717a;margin:0;">
+                    Paste a video URL above and click Analyze Video to get started
                 </p>
             </div>
             """, unsafe_allow_html=True)
