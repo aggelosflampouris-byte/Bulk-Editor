@@ -361,6 +361,29 @@ def _render_sidebar() -> Settings:
         )
 
         st.markdown("---")
+        st.markdown("### VFX & Colour Grading")
+        enable_vfx = st.checkbox(
+            "Enable Auto VFX / Colour Grade",
+            value=True,
+            help=(
+                "Analyses the transcript and YOLO scene detections to automatically "
+                "select and apply one of five colour grades:\n"
+                "• VIBRANCE — high-energy/hype moments\n"
+                "• DRAMATIC — suspense/tension keywords\n"
+                "• WARMTH — person-dominant clips\n"
+                "• CINEMATIC — action/object scenes without people\n"
+                "• SUBTLE — mild universal lift (fallback)"
+            ),
+            key="enable_vfx_check",
+        )
+        if enable_vfx:
+            st.caption(
+                "Preset selected automatically per clip from transcript keywords "
+                "and YOLO scene analysis. Applied after subtitle burn-in, before "
+                "background music."
+            )
+
+        st.markdown("---")
         st.markdown("### B-Roll Overlay")
         broll_start = st.slider(
             "Overlay Start (seconds)",
@@ -566,6 +589,7 @@ def _render_sidebar() -> Settings:
         qwen_api_base=str(qwen_api_base).strip(),
         qwen_model=str(qwen_model).strip(),
         enable_face_tracking=bool(enable_face_tracking),
+        enable_vfx=bool(enable_vfx),
         broll_start_offset=float(broll_start),
         broll_overlay_duration=float(broll_duration),
         transition_type=str(transition_style),

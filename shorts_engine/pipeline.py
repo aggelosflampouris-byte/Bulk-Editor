@@ -42,6 +42,13 @@ from services.transcriber import (
 )
 from services.face_tracker import calculate_active_speaker_crop_x
 from services.highlight_scorer import extract_clip_segment, score_highlight
+from services.vfx_engine import (
+    SceneAnalysis,
+    VfxPreset,
+    analyse_scene_objects,
+    apply_vfx,
+    choose_vfx_preset,
+)
 from services.video_engine import (
     burn_subtitles,
     concatenate_with_outro,
@@ -320,7 +327,26 @@ def process_single(
         burn_subtitles(current_path, ass_path, burned_path)
         current_path = burned_path
 
-        # ── Stage 6b: Background Music ────────────────────────────────────────
+        # ── Stage 6c: VFX / Colour Grading ────────────────────────────────
+        if settings.enable_vfx:
+            _report("Analysing scene for VFX / colour grading...")
+            try:
+                scene: SceneAnalysis = analyse_scene_objects(
+                    current_path,
+                    model_path=settings.vfx_yolo_model,
+                )
+                preset: VfxPreset = choose_vfx_preset(transcript_text, scene)
+                _report(f"Applying VFX preset: {preset.name}...")
+                vfx_path: Path = tmp_dir / f"{stem}_vfx.mp4"
+                apply_vfx(current_path, vfx_path, preset)
+                current_path = vfx_path
+                logger.info("VFX stage complete: preset=%s", preset.name)
+            except Exception as exc:
+                msg = f"VFX stage skipped: {exc}"
+                logger.warning(msg)
+                warnings.append(msg)
+
+        # ── Stage 6d: Background Music ────────────────────────────────────────
         bg_music_path = settings.resolve_bg_music_path()
         if bg_music_path is not None:
             _report("Mixing background music...")
@@ -620,7 +646,29 @@ def process_url_clip(
         else:
             warnings.append(f"Clip {clip.index}: subtitle burn skipped (no .ass file).")
 
-        # ── Stage 7b: Background Music ─────────────────────────────────────────
+        # ── Stage 7b: VFX / Colour Grading ────────────────────────────────────
+        if settings.enable_vfx:
+            clip_transcript = " ".join(s.text for s in clip_segments) if clip_segments else ""
+            _report("Analysing scene for VFX / colour grading...")
+            try:
+                scene: SceneAnalysis = analyse_scene_objects(
+                    current_path,
+                    model_path=settings.vfx_yolo_model,
+                )
+                preset: VfxPreset = choose_vfx_preset(clip_transcript, scene)
+                _report(f"Applying VFX preset: {preset.name}...")
+                vfx_path = tmp_dir / f"{stem}_vfx.mp4"
+                apply_vfx(current_path, vfx_path, preset)
+                current_path = vfx_path
+                logger.info(
+                    "VFX stage complete for clip %d: preset=%s", clip.index, preset.name
+                )
+            except Exception as exc:
+                msg = f"Clip {clip.index}: VFX stage skipped: {exc}"
+                logger.warning(msg)
+                warnings.append(msg)
+
+        # ── Stage 7c: Background Music ─────────────────────────────────────────
         bg_music_path = settings.resolve_bg_music_path()
         if bg_music_path is not None:
             _report("Mixing background music...")

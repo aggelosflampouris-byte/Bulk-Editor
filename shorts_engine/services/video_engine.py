@@ -447,18 +447,44 @@ def overlay_broll(
             "-i", str(broll_path),
         ]
 
+    # Probe for an audio stream in the main video.  Using '-map 0:a?' is
+    # technically optional, but FFmpeg silently drops audio when the source
+    # stream-copy clip has no compatible audio muxed in.  We handle this
+    # explicitly: if audio is missing we generate a silent track via anullsrc
+    # so every downstream stage (subtitle burn, background music) always has
+    # an audio stream to work with.
+    main_has_audio = probe_has_audio(main_path)
+    main_dur = probe_duration(main_path)
+
+    audio_map_args: list[str]
+    if main_has_audio:
+        # Extend filter_complex to also normalise audio through
+        audio_norm_af = "aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo"
+        filter_complex = (
+            f"{filter_complex};"
+            f"[0:a]{audio_norm_af}[a_out]"
+        )
+        audio_map_args = ["-map", "[a_out]", "-c:a", "aac", "-b:a", "128k"]
+    else:
+        # No audio track in main — generate a silent one so the container
+        # always has audio and mix_background_music can layer music over it.
+        filter_complex = (
+            f"{filter_complex};"
+            f"anullsrc=channel_layout=stereo:sample_rate=44100,"
+            f"atrim=duration={main_dur:.3f}[a_out]"
+        )
+        audio_map_args = ["-map", "[a_out]", "-c:a", "aac", "-b:a", "128k"]
+
     cmd = ["ffmpeg", "-y"]
     cmd.extend(ffmpeg_input_args)
     cmd.extend([
         "-filter_complex", filter_complex,
         "-map", "[v_out]",
-        "-map", "0:a?",  # Preserve original audio; '?' = optional (no audio = skip)
+        *audio_map_args,
         "-c:v", "libx264",
         "-pix_fmt", "yuv420p",
         "-preset", "fast",
         "-crf", "23",
-        "-c:a", "aac",
-        "-b:a", "128k",
         "-movflags", "+faststart",
         str(output_path),
     ])

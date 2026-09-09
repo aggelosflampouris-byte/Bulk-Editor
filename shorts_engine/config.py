@@ -225,6 +225,12 @@ class Settings:
     # ── Active Speaker Framing (YOLO-face) ─────────────────────
     enable_face_tracking: bool = True
 
+    # ── VFX / Colour Grading ──────────────────────────────────
+    # Enable transcript- and YOLO-driven colour grading applied after subtitle burn.
+    enable_vfx: bool = True
+    # YOLO model weights used for scene analysis (same file as face tracker).
+    vfx_yolo_model: str = "yolov8n.pt"
+
     # ── Output ────────────────────────────────────────────────
     output_dir: Path = field(default_factory=lambda: DEFAULT_OUTPUT_DIR)
 
