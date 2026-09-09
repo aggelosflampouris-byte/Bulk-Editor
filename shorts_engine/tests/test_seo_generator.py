@@ -202,3 +202,34 @@ def test_get_download_filename():
     )
 
 
+def test_strip_emojis():
+    from shorts_engine.services.seo_generator import strip_emojis
+
+    text = "🔥 Το Μέλλον της Τεχνητής Νοημοσύνης 🤖 στην Ελλάδα 🇬🇷! 🚀"
+    cleaned = strip_emojis(text)
+    assert cleaned == "Το Μέλλον της Τεχνητής Νοημοσύνης στην Ελλάδα!"
+    assert "🔥" not in cleaned
+    assert "🤖" not in cleaned
+    assert "🇬🇷" not in cleaned
+    assert "🚀" not in cleaned
+
+
+def test_validate_seo_dict_removes_emojis():
+    from shorts_engine.services.seo_generator import _validate_seo_dict
+
+    data = {
+        "title": "🎬 Η ανάλυση του προέδρου για την οικονομία 📈!",
+        "description": "💥 Αναλυτική τοποθέτηση για τις εξελίξεις 🏛️ #Shorts",
+        "tags": ["🔥 Τσίπρας", "οικονομία 💶", "Ελλάδα 🇬🇷", "shorts"],
+    }
+    seo = _validate_seo_dict(data)
+    assert seo.title == "Η ανάλυση του προέδρου για την οικονομία!"
+    assert "🎬" not in seo.title
+    assert "📈" not in seo.title
+    assert "💥" not in seo.description
+    assert "🏛️" not in seo.description
+    assert "🔥" not in seo.tags[0]
+    assert "💶" not in seo.tags[1]
+    assert "🇬🇷" not in seo.tags[2]
+
+

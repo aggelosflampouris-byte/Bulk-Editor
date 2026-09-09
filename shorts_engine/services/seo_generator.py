@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -69,36 +70,39 @@ def _call_gemini_with_fallback(
 
 # Strict prompt requesting JSON so we can parse deterministically
 _PROMPT_TEMPLATE = """\
-You are a YouTube Shorts SEO strategist specialising in Greek-language viral content.
+You are an expert editorial strategist and YouTube Shorts SEO specialist for Greek-language video productions.
 
-Given the following transcript from a Greek YouTube Short, generate high-CTR, \
-algorithmically optimised SEO metadata.
+Given the following transcript and source context, generate an authoritative, high-CTR, \
+semi-official SEO package matching the prestige, subject matter, and visual image of the video.
+
+SOURCE VIDEO CONTEXT / TITLE: {source_title}
 
 Respond ONLY with a valid JSON object — no markdown, no code fences, no \
 explanation. The JSON must have exactly these keys:
 
 {{
-  "title": "<Greek title, max 60 characters, high-CTR curiosity-gap headline using strong Greek power words>",
-  "description": "<Greek description, max 5000 characters, structured with hook in first 2 lines, core value in the rest, CTA and 3-5 trending hashtags at the end>",
+  "title": "<Greek title, max 60 characters, semi-official third-person phrasing matching video image, strictly NO emojis>",
+  "description": "<Greek description, max 5000 characters, structured with hook in first 2 lines, core value in the rest, CTA and 3-5 trending hashtags at the end, strictly NO emojis>",
   "tags": ["<tag 1>", "<tag 2>", ..., "<tag 16>"]
 }}
 
-Rules:
-- title and description must be in Greek.
-- title must be clickable and curiosity-inducing (e.g. "Η Αλήθεια Για...", "Το Μυστικό Που...", "Μην Κάνεις Αυτό το Λάθος!").
-- CRITICAL — The title must NOT be a direct quote or close paraphrase of the \
-transcript. It must instead capture the TOPIC, HOOK, or VALUE PROPOSITION of \
-the video (e.g. what the viewer will learn, why they should care, or what \
-makes this clip interesting). Think of it as a clickable headline, not a \
-transcript excerpt.
+TITLE & STYLE RULES (CRITICAL):
+- Language: All titles and descriptions MUST be in Greek.
+- IMAGE & BRAND ALIGNMENT: The title must fit the visual identity, gravity, and context of the source video (e.g. serious interview, analysis, podcast, news, or documentary).
+- SEMI-OFFICIAL THIRD-PERSON TONE:
+  * Write strictly in the third person (γ' πρόσωπο: "Η ανάλυση του...", "Πώς εξηγείται η απόφαση...", "Τι αποκαλύπτουν τα στοιχεία για...", "Η τοποθέτηση σχετικά με...").
+  * Maintain a semi-official, credible, analytical tone (ημι-επίσημο δημοσιογραφικό ύφος κύρους).
+  * NEVER use first-person ("Είδα", "Έμαθα", "Σας δείχνω", "Εγώ").
+  * NEVER use cheap, juvenile clickbait or second-person imperatives ("Δες εδώ", "Μάθε τώρα", "Μην κάνεις αυτό το λάθος!").
+- STRICTLY NO EMOJIS: Do NOT use any emojis, symbols, or pictographs in the title or metadata (no 🔥, 🚀, 😱, 🎬, etc. — strictly clean Greek text and standard punctuation).
+- NOT A DIRECT QUOTE: The title must capture the core topic, thesis, or value proposition — not a flat excerpt or quote from the transcript. Max 60 characters.
+
+DESCRIPTION & TAGS RULES:
 - description must follow the 3-part structure:
-  1. Lines 1–2: Viral hook summarizing the core takeaway with primary search keywords.
-  2. Lines 3–4: Value expansion / key points discussed in the Short.
-  3. Call to Action (CTA) for comments/subscribers + 3–5 trending Greek hashtags (e.g. #Shorts #Ελλάδα #...).
-- tags must be a list of 12 to 18 high-performing keywords and search phrases \
-optimized for the YouTube search algorithm (mix of Greek specific search queries, \
-entities/names mentioned, topic keywords, and 1-2 broad category/shorts terms).
-- tags must NOT contain the '#' prefix (e.g. use "ελληνική πολιτική" instead of "#ελληνική_πολιτική").
+  1. Lines 1–2: Professional hook in the third person summarizing the core takeaway with primary search keywords.
+  2. Lines 3–4: Analytical value expansion / key topics explored.
+  3. Call to Action (CTA) + 3–5 relevant Greek hashtags (e.g. #Shorts #Ελλάδα). Strictly NO emojis.
+- tags must be 12 to 18 high-performing keywords and search phrases (mix of Greek search queries, entity/speaker names, and topic categories). NO '#' prefix and NO emojis.
 - Do NOT include any text outside the JSON object.
 
 Transcript:
@@ -148,6 +152,41 @@ class SeoMetadata:
                 "video", "fyp", "explore", "content", "greece",
             ]),
         )
+
+
+_EMOJI_PATTERN = re.compile(
+    r"[\U00010000-\U0010ffff]|"  # SMP characters (emojis, transport, pictographs)
+    r"[\u2600-\u27BF]|"          # Dingbats and miscellaneous symbols
+    r"[\uFE00-\uFE0F]|"          # Variation selectors
+    r"[\u200D]|"                 # Zero-width joiner
+    r"[\u2300-\u23FF]|"          # Misc technical symbols
+    r"[\u2B50\u2B55\u2934\u2935\u25AA-\u25FE]"  # Stars, circles, arrows, shapes
+)
+
+
+def strip_emojis(text: str) -> str:
+    """
+    Remove all emoji characters, symbols, and pictographs from text,
+    normalising surrounding whitespace and punctuation.
+
+    Preserves standard alphabets (Greek, Latin), numbers, accents,
+    currency symbols, and punctuation marks.
+    """
+    if not text:
+        return ""
+    cleaned = _EMOJI_PATTERN.sub("", text)
+    # Filter any remaining 'So' (Symbol, other) unicode characters, preserving currency/punctuation
+    preserved = set("+=-%€$#@/\\:;.,!?()[]\"'«»")
+    result: list[str] = []
+    for ch in cleaned:
+        cat = unicodedata.category(ch)
+        if cat in ("So", "Cn") and ch not in preserved:
+            continue
+        result.append(ch)
+    cleaned = "".join(result)
+    cleaned = re.sub(r"\s+([!?:;.,])", r"\1", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
 
 
 def sanitize_filename(title: str, max_length: int = 100) -> str:
@@ -273,17 +312,23 @@ def _validate_seo_dict(data: dict) -> SeoMetadata:
     if missing:
         raise ValueError(f"Gemini response missing required keys: {missing}")
 
-    title: str = str(data["title"])[:60]  # Hard-cap to YouTube's limit
-    description: str = str(data["description"])[:5000]
+    raw_title = str(data["title"])
+    clean_title = strip_emojis(raw_title)
+    if not clean_title:
+        clean_title = "Ελληνικό Βίντεο"
+    title: str = clean_title[:60]  # Hard-cap to YouTube's limit
+
+    clean_description = strip_emojis(str(data["description"]))
+    description: str = clean_description[:5000]
 
     raw_tags = data["tags"]
     if not isinstance(raw_tags, list):
         raw_tags = []
 
-    # Normalise: strip '#', strip whitespace, remove empty, deduplicate preserving order
+    # Normalise: strip emojis, strip '#', strip whitespace, remove empty, deduplicate preserving order
     tags: list[str] = []
     for t in raw_tags:
-        cleaned = str(t).lstrip("#").strip().strip(",")
+        cleaned = strip_emojis(str(t).lstrip("#").strip().strip(","))
         if cleaned and cleaned not in tags:
             tags.append(cleaned)
 
@@ -306,7 +351,11 @@ def _validate_seo_dict(data: dict) -> SeoMetadata:
 
 # ── Public API ─────────────────────────────────────────────────────────────────
 
-def generate_seo(transcript_text: str, api_key: str) -> SeoMetadata:
+def generate_seo(
+    transcript_text: str,
+    api_key: str,
+    source_title: str = "",
+) -> SeoMetadata:
     """
     Generate YouTube Shorts SEO metadata from a Greek transcript using Gemini.
 
@@ -317,6 +366,7 @@ def generate_seo(transcript_text: str, api_key: str) -> SeoMetadata:
     Args:
         transcript_text: Full Greek transcript text for the Short.
         api_key:         Google Gemini API key.
+        source_title:    Optional source video title or topic context.
 
     Returns:
         A SeoMetadata instance (either from the API or a fallback).
@@ -329,7 +379,10 @@ def generate_seo(transcript_text: str, api_key: str) -> SeoMetadata:
         logger.warning("Transcript is empty — returning fallback SEO metadata.")
         return SeoMetadata.fallback("")
 
-    prompt = _PROMPT_TEMPLATE.format(transcript=transcript_text)
+    prompt = _PROMPT_TEMPLATE.format(
+        transcript=transcript_text,
+        source_title=source_title or "Unknown",
+    )
 
     logger.info("Calling Gemini for SEO metadata...")
     try:

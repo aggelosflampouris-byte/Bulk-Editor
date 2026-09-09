@@ -52,23 +52,24 @@ _MAX_OUTPUT_TOKENS: int = 8192
 # ── Prompt ────────────────────────────────────────────────────────────────────
 
 _CLIP_SELECTION_PROMPT = """\
-You are a professional YouTube Shorts editor and SEO strategist specialising \
-in Greek-language viral content.
+You are a professional editorial editor and YouTube Shorts SEO strategist specialising \
+in Greek-language video productions.
 
 Below is a timestamped transcript from a longer source video. Your task is to \
-identify the best moments to extract as standalone YouTube Shorts.
+identify the best moments to extract as standalone YouTube Shorts and craft authoritative \
+SEO metadata that fits the image of the video.
 
 SOURCE TITLE: {source_title}
 
 CLIP STRUCTURE & HOOK REQUIREMENTS (CRITICAL):
 - 0–3s ENGAGING HOOK: The clip MUST start immediately on a high-impact sentence, \
-provocative question, controversial statement, or curiosity gap. \
+provocative question, or curiosity gap. \
 NEVER start on filler words (e.g. "Εεε", "Λοιπόν", "Και να πούμε", "Ναι", "Όπως είπαμε"), \
-throat-clearing, greetings, or dead silence. Cut straight into the action.
+throat-clearing, greetings, or dead silence. Cut straight into the core thought.
 - 3–35s FAST-PACED BODY: Unbroken narrative thread with continuous value, tension, \
-or storytelling. Zero rambling or fluff.
+or analysis. Zero rambling or fluff.
 - 35–50s PUNCHLINE / RESOLUTION: End cleanly on a conclusive takeaway, punchline, \
-or mic-drop insight. Never cut mid-sentence or mid-thought.
+or clear resolution. Never cut mid-sentence or mid-thought.
 
 CONSTRAINTS:
 - You MUST select AT LEAST {min_clips} clips and at most {max_clips} clips (aim for 5-8 clips if the video duration allows).
@@ -76,9 +77,9 @@ CONSTRAINTS:
 {max_dur} seconds (inclusive). The ideal sweet spot is 35–50 seconds.
 - Each clip must be self-contained: it must have a clear hook, development, \
 and resolution/punchline. A viewer who has NOT seen the full video must be \
-able to understand and enjoy it.
+able to understand and appreciate it.
 - Clips must NOT overlap. Spread them across different distinct moments and topics in the video.
-- Order clips by estimated virality potential (best first).
+- Order clips by estimated virality and engagement potential (best first).
 
 TIMESTAMP & CUTTING RULES:
 - "start_time" and "end_time" must be specified as total seconds (e.g. 285.0) or as "MM:SS" strings (e.g. "04:45").
@@ -99,10 +100,9 @@ is an array. Each array element must have exactly these keys:
       "hook_summary": "<1–2 sentence English explanation of why this clip's hook \
 and structure will maximize retention and CTR on YouTube Shorts>",
       "seo": {{
-        "title":       "<Greek title, max 60 chars, high-CTR curiosity-gap headline \
-using strong Greek power words — NOT a direct transcript quote>",
+        "title":       "<Greek title, max 60 chars, semi-official third-person phrasing matching video image, strictly NO emojis>",
         "description": "<Greek description, concise max 500 chars, structured with \
-hook in first 2 lines, core value in the rest, CTA and 3–5 trending hashtags at the end>",
+hook in first 2 lines, core value in the rest, CTA and 3–5 trending hashtags at the end, strictly NO emojis>",
         "tags":        ["<tag 1>", ..., "<tag 16>"]
       }},
       "broll_query": "<2–5 word English Pexels search query for stock footage \
@@ -111,14 +111,21 @@ matching what the speaker is talking about in THIS clip>"
   ]
 }}
 
-SEO RULES:
-- title and description inside "seo" must be in Greek.
-- title must be clickable and curiosity-inducing (e.g. "Η Αλήθεια Για...", "Το Μυστικό Που...", "Μην Κάνεις Αυτό το Λάθος!").
-- description must follow the 3-part structure (Hook -> Value -> CTA + hashtags like #Shorts #Ελλάδα).
+SEO & TITLE RULES (CRITICAL):
+- Language: title and description inside "seo" must be in Greek.
+- IMAGE & BRAND ALIGNMENT: The title must fit the visual identity, gravity, and theme of the video and the SOURCE TITLE (e.g. serious interview, analysis, podcast, documentary).
+- SEMI-OFFICIAL THIRD-PERSON TONE:
+  * Write strictly in the third person (γ' πρόσωπο: "Η ανάλυση του...", "Πώς εξηγείται η απόφαση...", "Τι αποκαλύπτει η τοποθέτηση του [Ομιλητή]...").
+  * Maintain a semi-official, credible, analytical tone (ημι-επίσημο δημοσιογραφικό ύφος κύρους).
+  * NEVER use first-person ("Είδα", "Έμαθα", "Σας λέω").
+  * NEVER use cheap, juvenile clickbait or second-person imperatives ("Δες εδώ", "Μάθε τώρα", "Μην κάνεις αυτό το λάθος!").
+- STRICTLY NO EMOJIS: Do NOT use any emojis, symbols, or pictographs in the title or metadata (no 🔥, 🚀, 😱, 🎬, etc. — strictly clean Greek text and standard punctuation).
+- NOT A DIRECT QUOTE: Max 60 characters. Must capture the core topic or thesis, NOT a flat transcript excerpt.
+- description must follow the 3-part structure (Hook -> Value -> CTA + hashtags like #Shorts #Ελλάδα) without emojis.
 - tags must be a list of 12 to 18 high-performing keywords and search phrases \
 optimized for the YouTube search algorithm (mix of Greek search queries, \
 entities/names mentioned, topic keywords, and 1-2 broad category/shorts terms). \
-Do NOT include '#' symbol prefix in any tag.
+Do NOT include '#' symbol prefix in any tag, and NO emojis.
 - broll_query must describe a concrete visual scene, not an abstract concept.
 - Do NOT output anything outside the JSON object.
 

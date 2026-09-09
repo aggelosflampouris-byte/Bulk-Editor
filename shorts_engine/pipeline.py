@@ -399,7 +399,11 @@ def process_single(
 
         # ── Stage 8: SEO Generation ───────────────────────────────────────────
         _report("Generating SEO metadata...")
-        seo = generate_seo(transcript_text, settings.gemini_api_key)
+        seo = generate_seo(
+            transcript_text,
+            settings.gemini_api_key,
+            source_title=video_path.stem,
+        )
 
         # ── Stage 9: Write Final Output ───────────────────────────────────────
         _report("Writing output files...")
