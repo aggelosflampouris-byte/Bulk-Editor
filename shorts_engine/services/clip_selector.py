@@ -53,12 +53,22 @@ _MAX_OUTPUT_TOKENS: int = 8192
 
 _CLIP_SELECTION_PROMPT = """\
 You are a professional YouTube Shorts editor and SEO strategist specialising \
-in Greek-language content.
+in Greek-language viral content.
 
 Below is a timestamped transcript from a longer source video. Your task is to \
 identify the best moments to extract as standalone YouTube Shorts.
 
 SOURCE TITLE: {source_title}
+
+CLIP STRUCTURE & HOOK REQUIREMENTS (CRITICAL):
+- 0–3s ENGAGING HOOK: The clip MUST start immediately on a high-impact sentence, \
+provocative question, controversial statement, or curiosity gap. \
+NEVER start on filler words (e.g. "Εεε", "Λοιπόν", "Και να πούμε", "Ναι", "Όπως είπαμε"), \
+throat-clearing, greetings, or dead silence. Cut straight into the action.
+- 3–35s FAST-PACED BODY: Unbroken narrative thread with continuous value, tension, \
+or storytelling. Zero rambling or fluff.
+- 35–50s PUNCHLINE / RESOLUTION: End cleanly on a conclusive takeaway, punchline, \
+or mic-drop insight. Never cut mid-sentence or mid-thought.
 
 CONSTRAINTS:
 - You MUST select AT LEAST {min_clips} clips and at most {max_clips} clips (aim for 5-8 clips if the video duration allows).
@@ -70,8 +80,10 @@ able to understand and enjoy it.
 - Clips must NOT overlap. Spread them across different distinct moments and topics in the video.
 - Order clips by estimated virality potential (best first).
 
-TIMESTAMP RULES (CRITICAL):
+TIMESTAMP & CUTTING RULES:
 - "start_time" and "end_time" must be specified as total seconds (e.g. 285.0) or as "MM:SS" strings (e.g. "04:45").
+- Align "start_time" to the natural speech pause immediately before the hook begins.
+- Align "end_time" to the natural silence pause right after the punchline sentence finishes.
 - Never write decimal minutes like 4.45 to mean 4m 45s (4 minutes 45 seconds is 285 seconds or "04:45").
 
 OUTPUT FORMAT:
@@ -84,14 +96,14 @@ is an array. Each array element must have exactly these keys:
     {{
       "start_time": <float total seconds or "MM:SS" string>,
       "end_time":   <float total seconds or "MM:SS" string>,
-      "hook_summary": "<1–2 sentence English explanation of why this clip \
-will perform well on YouTube Shorts>",
+      "hook_summary": "<1–2 sentence English explanation of why this clip's hook \
+and structure will maximize retention and CTR on YouTube Shorts>",
       "seo": {{
-        "title":       "<Greek title, max 60 chars, compelling & keyword-rich \
-— NOT a direct transcript quote>",
-        "description": "<Greek description, concise max 500 chars, hook in first 2 \
-lines, value in the rest, CTA at the end>",
-        "tags":        ["<tag 1>", ..., "<tag 15>"]
+        "title":       "<Greek title, max 60 chars, high-CTR curiosity-gap headline \
+using strong Greek power words — NOT a direct transcript quote>",
+        "description": "<Greek description, concise max 500 chars, structured with \
+hook in first 2 lines, core value in the rest, CTA and 3–5 trending hashtags at the end>",
+        "tags":        ["<tag 1>", ..., "<tag 16>"]
       }},
       "broll_query": "<2–5 word English Pexels search query for stock footage \
 matching what the speaker is talking about in THIS clip>"
@@ -99,8 +111,10 @@ matching what the speaker is talking about in THIS clip>"
   ]
 }}
 
-RULES:
+SEO RULES:
 - title and description inside "seo" must be in Greek.
+- title must be clickable and curiosity-inducing (e.g. "Η Αλήθεια Για...", "Το Μυστικό Που...", "Μην Κάνεις Αυτό το Λάθος!").
+- description must follow the 3-part structure (Hook -> Value -> CTA + hashtags like #Shorts #Ελλάδα).
 - tags must be a list of 12 to 18 high-performing keywords and search phrases \
 optimized for the YouTube search algorithm (mix of Greek search queries, \
 entities/names mentioned, topic keywords, and 1-2 broad category/shorts terms). \

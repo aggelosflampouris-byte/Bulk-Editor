@@ -69,33 +69,37 @@ def _call_gemini_with_fallback(
 
 # Strict prompt requesting JSON so we can parse deterministically
 _PROMPT_TEMPLATE = """\
-You are a YouTube Shorts SEO expert specialising in Greek-language content.
+You are a YouTube Shorts SEO strategist specialising in Greek-language viral content.
 
-Given the following transcript from a Greek YouTube Short, generate optimised \
-SEO metadata.
+Given the following transcript from a Greek YouTube Short, generate high-CTR, \
+algorithmically optimised SEO metadata.
 
 Respond ONLY with a valid JSON object — no markdown, no code fences, no \
 explanation. The JSON must have exactly these keys:
 
 {{
-  "title": "<Greek title, max 60 characters, compelling & keyword-rich>",
-  "description": "<Greek description, max 5000 characters, first 2 lines \
-are the hook, rest expands value, ends with a CTA>",
-  "tags": ["<tag 1>", "<tag 2>", ..., "<tag 15>"]
+  "title": "<Greek title, max 60 characters, high-CTR curiosity-gap headline using strong Greek power words>",
+  "description": "<Greek description, max 5000 characters, structured with hook in first 2 lines, core value in the rest, CTA and 3-5 trending hashtags at the end>",
+  "tags": ["<tag 1>", "<tag 2>", ..., "<tag 16>"]
 }}
 
 Rules:
 - title and description must be in Greek.
-- tags must be a list of 12 to 18 high-performing keywords and search phrases \
-optimized for the YouTube search algorithm (mix of Greek specific search queries, \
-entities/names mentioned, topic keywords, and 1-2 broad category/shorts terms).
-- tags must NOT contain the '#' prefix (e.g. use "ελληνική πολιτική" instead of "#ελληνική_πολιτική").
-- Do NOT include any text outside the JSON object.
+- title must be clickable and curiosity-inducing (e.g. "Η Αλήθεια Για...", "Το Μυστικό Που...", "Μην Κάνεις Αυτό το Λάθος!").
 - CRITICAL — The title must NOT be a direct quote or close paraphrase of the \
 transcript. It must instead capture the TOPIC, HOOK, or VALUE PROPOSITION of \
 the video (e.g. what the viewer will learn, why they should care, or what \
 makes this clip interesting). Think of it as a clickable headline, not a \
 transcript excerpt.
+- description must follow the 3-part structure:
+  1. Lines 1–2: Viral hook summarizing the core takeaway with primary search keywords.
+  2. Lines 3–4: Value expansion / key points discussed in the Short.
+  3. Call to Action (CTA) for comments/subscribers + 3–5 trending Greek hashtags (e.g. #Shorts #Ελλάδα #...).
+- tags must be a list of 12 to 18 high-performing keywords and search phrases \
+optimized for the YouTube search algorithm (mix of Greek specific search queries, \
+entities/names mentioned, topic keywords, and 1-2 broad category/shorts terms).
+- tags must NOT contain the '#' prefix (e.g. use "ελληνική πολιτική" instead of "#ελληνική_πολιτική").
+- Do NOT include any text outside the JSON object.
 
 Transcript:
 {transcript}

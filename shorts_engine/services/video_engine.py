@@ -760,7 +760,8 @@ def slice_video(
         "Re-encoding slice [%.2f → %.2f] with libx264 for precise cut...",
         start_time, end_time,
     )
-    run_ffmpeg([
+    has_audio = probe_has_audio(source_path)
+    cmd = [
         "ffmpeg", "-y",
         "-ss", f"{start_time:.3f}",
         "-to", f"{end_time:.3f}",
@@ -768,12 +769,23 @@ def slice_video(
         "-c:v", "libx264",
         "-preset", "fast",
         "-crf", "23",
-        "-c:a", "aac",
-        "-b:a", "128k",
+    ]
+    if has_audio:
+        fade_out_st = max(0.0, expected_duration - 0.08)
+        cmd.extend([
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-af", f"afade=t=in:st=0:d=0.04,afade=t=out:st={fade_out_st:.3f}:d=0.08",
+        ])
+    else:
+        cmd.extend(["-an"])
+
+    cmd.extend([
         "-avoid_negative_ts", "make_zero",
         "-movflags", "+faststart",
         str(output_path),
     ])
+    run_ffmpeg(cmd)
 
     logger.info(
         "Re-encode slice complete: '%s' → '%s'.",
