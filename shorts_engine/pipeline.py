@@ -40,7 +40,7 @@ from services.transcriber import (
     transcribe,
     write_ass_file,
 )
-from services.face_tracker import calculate_active_speaker_crop_x
+from services.face_tracker import calculate_active_speaker_crop_x, track_active_speaker
 from services.highlight_scorer import extract_clip_segment, score_highlight
 from services.vfx_engine import (
     SceneAnalysis,
@@ -260,32 +260,28 @@ def process_single(
         # ── Stage 4: Crop to 9:16 (active speaker tracking) ───────────────────
         cropped_path: Path = tmp_dir / f"{stem}_cropped.mp4"
 
-        if is_already_9_16(
-            video_path,
-            target_width=settings.target_width,
-            target_height=settings.target_height,
-        ):
-            # Input is already 9:16 — skip the re-encode and copy
-            import shutil as _shutil
-            _shutil.copy2(str(video_path), str(cropped_path))
-            _report("Crop skipped — video is already 9:16.")
-            logger.info("Crop stage skipped for '%s' (already 9:16).", video_path.name)
-        else:
+        has_speaker: bool = False
+        crop_x_offset: Optional[int] = None
+        crop_x_expr: Optional[str] = None
+        if not is_already_9_16(video_path, settings.target_width, settings.target_height):
             _report("Cropping to 9:16 (active speaker tracking)...")
-            crop_x_offset: Optional[int] = None
             if settings.enable_face_tracking:
                 try:
                     src_w, src_h = probe_resolution(video_path)
-                    crop_x_offset = calculate_active_speaker_crop_x(
+                    tracking_info = track_active_speaker(
                         video_path=video_path,
                         source_width=src_w,
                         source_height=src_h,
                         target_width=settings.target_width,
                         target_height=settings.target_height,
                     )
+                    has_speaker = tracking_info.has_speaker
+                    crop_x_offset = tracking_info.static_crop_x
+                    crop_x_expr = tracking_info.crop_expression
                 except Exception as exc:
                     logger.warning("Active speaker tracking failed: %s — using center-crop.", exc)
                     crop_x_offset = None
+                    crop_x_expr = None
 
             crop_to_9_16(
                 video_path,
@@ -293,11 +289,33 @@ def process_single(
                 target_width=settings.target_width,
                 target_height=settings.target_height,
                 crop_x_offset=crop_x_offset,
+                crop_x_expr=crop_x_expr,
             )
+        else:
+            import shutil as _shutil
+            _shutil.copy2(str(video_path), str(cropped_path))
+            _report("Crop skipped — video is already 9:16.")
+            logger.info("Crop stage skipped for '%s' (already 9:16).", video_path.name)
+            if settings.enable_face_tracking:
+                try:
+                    src_w, src_h = probe_resolution(video_path)
+                    tracking_info = track_active_speaker(
+                        video_path=video_path,
+                        source_width=src_w,
+                        source_height=src_h,
+                        target_width=settings.target_width,
+                        target_height=settings.target_height,
+                    )
+                    has_speaker = tracking_info.has_speaker
+                except Exception:
+                    pass
 
         # ── Stage 5: B-Roll Overlay ───────────────────────────────────────────
         current_path = cropped_path
-        if broll_path is not None:
+        if has_speaker:
+            logger.info("Speaker recognized on screen — keeping speaker centered at all times; suppressing B-roll overlay.")
+            warnings.append("Speaker recognized on screen — B-roll overlay suppressed to keep speaker in center at all times.")
+        elif broll_path is not None:
             _report("Applying B-roll overlay...")
             main_duration = probe_duration(cropped_path)
             # Clamp overlay duration and start offset so overlay cleanly fits within clip length
@@ -582,26 +600,45 @@ def process_url_clip(
 
         # ── Stage 5: Crop to 9:16 (active speaker tracking) ───────────────────
         cropped_path = tmp_dir / f"{stem}_cropped.mp4"
+        has_speaker: bool = False
+        crop_x_offset: Optional[int] = None
+        crop_x_expr: Optional[str] = None
         if is_already_9_16(raw_clip_path, settings.target_width, settings.target_height):
             import shutil as _shutil
             _shutil.copy2(str(raw_clip_path), str(cropped_path))
             _report("Crop skipped — already 9:16.")
-        else:
-            _report("Cropping to 9:16 (active speaker tracking)...")
-            crop_x_offset: Optional[int] = None
             if settings.enable_face_tracking:
                 try:
                     src_w, src_h = probe_resolution(raw_clip_path)
-                    crop_x_offset = calculate_active_speaker_crop_x(
+                    tracking_info = track_active_speaker(
                         video_path=raw_clip_path,
                         source_width=src_w,
                         source_height=src_h,
                         target_width=settings.target_width,
                         target_height=settings.target_height,
                     )
+                    has_speaker = tracking_info.has_speaker
+                except Exception:
+                    pass
+        else:
+            _report("Cropping to 9:16 (active speaker tracking)...")
+            if settings.enable_face_tracking:
+                try:
+                    src_w, src_h = probe_resolution(raw_clip_path)
+                    tracking_info = track_active_speaker(
+                        video_path=raw_clip_path,
+                        source_width=src_w,
+                        source_height=src_h,
+                        target_width=settings.target_width,
+                        target_height=settings.target_height,
+                    )
+                    has_speaker = tracking_info.has_speaker
+                    crop_x_offset = tracking_info.static_crop_x
+                    crop_x_expr = tracking_info.crop_expression
                 except Exception as exc:
                     logger.warning("Active speaker tracking failed: %s — using center-crop.", exc)
                     crop_x_offset = None
+                    crop_x_expr = None
 
             crop_to_9_16(
                 raw_clip_path,
@@ -609,11 +646,18 @@ def process_url_clip(
                 target_width=settings.target_width,
                 target_height=settings.target_height,
                 crop_x_offset=crop_x_offset,
+                crop_x_expr=crop_x_expr,
             )
 
         # ── Stage 6: B-Roll Overlay ────────────────────────────────────────────
         current_path = cropped_path
-        if broll_path is not None:
+        if has_speaker:
+            logger.info(
+                "Speaker recognized on screen for clip %d — centering speaker at all times; suppressing B-roll overlay.",
+                clip.index,
+            )
+            warnings.append(f"Clip {clip.index}: speaker recognized on screen — B-roll overlay suppressed to keep speaker in center at all times.")
+        elif broll_path is not None:
             _report("Applying B-roll overlay...")
             main_dur = probe_duration(cropped_path)
             # Clamp overlay duration and start offset so overlay cleanly fits within clip length

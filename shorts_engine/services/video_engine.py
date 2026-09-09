@@ -263,12 +263,14 @@ def crop_to_9_16(
     target_width: int = 1080,
     target_height: int = 1920,
     crop_x_offset: Optional[int] = None,
+    crop_x_expr: Optional[str] = None,
 ) -> Path:
     """
     Scale and crop *input_path* to exactly *target_width* × *target_height* (9:16).
 
-    If *crop_x_offset* is provided, the horizontal crop is positioned at that
-    pixel offset (used for active speaker tracking). Otherwise, center-crop is applied.
+    If *crop_x_expr* is provided, it is used directly as the FFmpeg crop X expression
+    (enabling dynamic time-based auto-framing). If *crop_x_offset* is provided, the
+    horizontal crop is positioned at that fixed pixel offset. Otherwise, center-crop is applied.
 
     The filter chain:
       1. `scale` — scale so the shortest dimension fits, preserving aspect ratio.
@@ -280,7 +282,8 @@ def crop_to_9_16(
         output_path:   Destination path for the cropped video.
         target_width:  Output width in pixels (default 1080).
         target_height: Output height in pixels (default 1920).
-        crop_x_offset: Optional horizontal pixel offset for dynamic speaker framing.
+        crop_x_offset: Optional fixed horizontal pixel offset.
+        crop_x_expr:   Optional dynamic FFmpeg time expression for speaker tracking.
 
     Returns:
         The written *output_path*.
@@ -292,7 +295,13 @@ def crop_to_9_16(
     if not input_path.is_file():
         raise FileNotFoundError(f"Input video not found: {input_path}")
 
-    x_expr = str(crop_x_offset) if crop_x_offset is not None else f"(iw-{target_width})/2"
+    if crop_x_expr is not None and crop_x_expr.strip():
+        raw_expr = crop_x_expr.strip()
+        x_expr = f"'{raw_expr}'" if ("," in raw_expr and not raw_expr.startswith("'")) else raw_expr
+    elif crop_x_offset is not None:
+        x_expr = str(crop_x_offset)
+    else:
+        x_expr = f"(iw-{target_width})/2"
 
     vf = (
         f"scale=w={target_width}:h={target_height}:force_original_aspect_ratio=increase,"

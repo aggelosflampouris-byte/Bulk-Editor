@@ -60,3 +60,36 @@ def test_crop_to_9_16_with_dynamic_crop_offset(tmp_path):
     assert result.is_file()
     w, h = probe_resolution(result)
     assert (w, h) == (1080, 1920)
+
+
+def test_track_active_speaker_no_faces(tmp_path):
+    landscape_video = _generate_synthetic_video(tmp_path / "landscape_no_face.mp4", 1920, 1080, duration=1.0)
+    from shorts_engine.services.face_tracker import track_active_speaker, SpeakerTrackingResult
+
+    result = track_active_speaker(
+        video_path=landscape_video,
+        source_width=1920,
+        source_height=1080,
+        target_width=1080,
+        target_height=1920,
+    )
+    assert isinstance(result, SpeakerTrackingResult)
+    assert result.has_speaker is False
+    assert result.speaker_presence_ratio == 0.0
+    assert isinstance(result.static_crop_x, int)
+    assert isinstance(result.crop_expression, str)
+
+
+def test_crop_to_9_16_with_dynamic_time_expression(tmp_path):
+    landscape_video = _generate_synthetic_video(tmp_path / "dynamic_input.mp4", 1920, 1080, duration=1.0)
+    output_video = tmp_path / "dynamic_cropped.mp4"
+
+    result = crop_to_9_16(
+        landscape_video,
+        output_video,
+        crop_x_expr="if(lt(t,0.5),200,500)",
+    )
+    assert result.is_file()
+    w, h = probe_resolution(result)
+    assert (w, h) == (1080, 1920)
+
