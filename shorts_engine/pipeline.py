@@ -91,6 +91,8 @@ class ProcessingResult:
     # Viral hook text and score detected by Qwen 2.5
     hook_text: Optional[str] = None
     virality_score: Optional[float] = None
+    # Clip index when processing multi-clip URL mode
+    clip_index: Optional[int] = None
 
 
 # ── Single-Video Pipeline ──────────────────────────────────────────────────────
@@ -523,7 +525,7 @@ def process_url_clip(
     """
     # Use a deterministic stem so files don't collide across clips
     stem = f"clip_{clip.index:02d}"
-    result = ProcessingResult(input_file=source_path)
+    result = ProcessingResult(input_file=source_path, clip_index=clip.index)
     warnings: list[str] = []
 
     def _report(stage: str) -> None:
@@ -906,10 +908,11 @@ def run_url_pipeline(
         successful, total_clips, run_output_dir,
     )
     print(f"\n{'='*65}\n✅ RENDERED {successful}/{total_clips} SHORTS:\n{'='*65}")
-    for r in results:
+    for idx, r in enumerate(results, 1):
+        c_idx = r.clip_index if r.clip_index is not None else idx
         status_icon = "✓" if r.success else "✗"
-        title = (r.seo.title if r.seo else None) or (r.output_file.name if r.output_file else f"Clip #{r.clip_index}")
+        title = (r.seo.title if r.seo else None) or (r.output_file.name if r.output_file else f"Clip #{c_idx}")
         out_path = str(r.output_file) if r.output_file else "None"
-        print(f"  [{status_icon}] Clip #{r.clip_index}: \"{title}\" -> {out_path}")
+        print(f"  [{status_icon}] Clip #{c_idx}: \"{title}\" -> {out_path}")
     print(f"{'='*65}\n")
     return all_candidates, results
