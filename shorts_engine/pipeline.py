@@ -860,6 +860,19 @@ def run_url_pipeline(
 
         all_candidates = snapped
 
+        # Print and log the selected clips with minimum guaranteed count
+        logger.info(
+            "Selected %d clip candidates (minimum guaranteed: %d):",
+            len(all_candidates), settings.min_clips,
+        )
+        print(f"\n{'='*65}\n🎬 SELECTED {len(all_candidates)} SHORTS (MINIMUM: {settings.min_clips}):\n{'='*65}")
+        for c in all_candidates:
+            dur = c.end_time - c.start_time
+            title = c.seo.title if c.seo else "Clip"
+            logger.info("  [#%d] [%.1fs - %.1fs] (%.1fs): %s", c.index, c.start_time, c.end_time, dur, title)
+            print(f"  [#{c.index}] {c.start_time:.1f}s - {c.end_time:.1f}s ({dur:.1f}s) — \"{title}\"")
+        print(f"{'='*65}\n")
+
         # Filter to user-approved indices if provided
         if clip_indices is not None:
             to_process = [c for c in snapped if c.index in clip_indices]
@@ -892,4 +905,11 @@ def run_url_pipeline(
         "URL pipeline complete: %d/%d clips succeeded. Output: '%s'",
         successful, total_clips, run_output_dir,
     )
+    print(f"\n{'='*65}\n✅ RENDERED {successful}/{total_clips} SHORTS:\n{'='*65}")
+    for r in results:
+        status_icon = "✓" if r.success else "✗"
+        title = (r.seo.title if r.seo else None) or (r.output_file.name if r.output_file else f"Clip #{r.clip_index}")
+        out_path = str(r.output_file) if r.output_file else "None"
+        print(f"  [{status_icon}] Clip #{r.clip_index}: \"{title}\" -> {out_path}")
+    print(f"{'='*65}\n")
     return all_candidates, results

@@ -300,7 +300,10 @@ def apply_vfx(
         FFmpegError:       If FFmpeg fails.
     """
     # Import here to avoid any circular dependency at module level.
-    from services.video_engine import run_ffmpeg  # noqa: PLC0415
+    try:
+        from shorts_engine.services.video_engine import run_ffmpeg  # noqa: PLC0415
+    except ModuleNotFoundError:
+        from services.video_engine import run_ffmpeg  # noqa: PLC0415
 
     if not input_path.is_file():
         raise FileNotFoundError(f"VFX input not found: {input_path}")

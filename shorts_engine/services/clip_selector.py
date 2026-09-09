@@ -332,7 +332,9 @@ def _supplement_clips(
 
     source_start = segments[0].start
     source_end = segments[-1].end
-    clip_dur = (min_dur + max_dur) / 2.0
+    source_duration = max(0.0, source_end - source_start)
+    effective_min = min(min_dur, source_duration)
+    clip_dur = min(max_dur, max(effective_min, (min_dur + max_dur) / 2.0))
 
     intervals = sorted(
         [(c.start_time, c.end_time) for c in existing_clips],
@@ -342,10 +344,10 @@ def _supplement_clips(
     gaps: list[tuple[float, float]] = []
     curr = source_start
     for s, e in intervals:
-        if s - curr >= min_dur:
+        if s - curr >= effective_min:
             gaps.append((curr, s))
         curr = max(curr, e)
-    if source_end - curr >= min_dur:
+    if source_end - curr >= effective_min:
         gaps.append((curr, source_end))
 
     result = list(existing_clips)
@@ -353,10 +355,10 @@ def _supplement_clips(
     while len(result) < target_count and gap_idx < len(gaps):
         gap_s, gap_e = gaps[gap_idx]
         gap_len = gap_e - gap_s
-        if gap_len >= min_dur:
+        if gap_len >= effective_min:
             cand_s = gap_s
             cand_e = min(cand_s + clip_dur, gap_e)
-            if cand_e - cand_s >= min_dur:
+            if cand_e - cand_s >= effective_min:
                 idx = len(result) + 1
                 excerpt_segs = [s for s in segments if s.end >= cand_s and s.start <= cand_e]
                 excerpt_text = " ".join(s.text.strip() for s in excerpt_segs)[:200] or f"Clip #{idx}"
@@ -374,6 +376,33 @@ def _supplement_clips(
                 gaps[gap_idx] = (cand_e, gap_e)
                 continue
         gap_idx += 1
+
+    # Secondary fallback: If non-overlapping gaps were not enough, slide windows across the duration
+    if len(result) < target_count and source_duration >= effective_min:
+        needed = target_count - len(result)
+        max_start = max(source_start, source_end - clip_dur)
+        stride = (max_start - source_start) / max(needed + 1, 1)
+        for k in range(needed):
+            cand_s = source_start + (k + 1) * stride
+            cand_e = min(cand_s + clip_dur, source_end)
+            if cand_e - cand_s < effective_min and source_duration >= effective_min:
+                cand_s = max(source_start, cand_e - effective_min)
+            idx = len(result) + 1
+            excerpt_segs = [s for s in segments if s.end >= cand_s and s.start <= cand_e]
+            excerpt_text = " ".join(s.text.strip() for s in excerpt_segs)[:200] or f"Clip #{idx}"
+            seo = SeoMetadata.fallback(excerpt_text)
+            result.append(
+                ClipCandidate(
+                    index=idx,
+                    start_time=round(cand_s, 3),
+                    end_time=round(cand_e, 3),
+                    hook_summary="Supplementary candidate from video transcript.",
+                    seo=seo,
+                    broll_query="greek speaker talking",
+                )
+            )
+            if len(result) >= target_count:
+                break
 
     return [
         ClipCandidate(
@@ -399,14 +428,14 @@ def _build_fallback_clips(
     Generate evenly-distributed clips as a fallback when the Gemini call fails.
 
     Divides the transcript into evenly spaced windows of *target_dur* seconds,
-    ensuring at least *min_clips* are produced when duration permits.
+    ensuring at least *min_clips* (minimum 3) are produced when duration permits.
 
     Args:
         segments: Full transcript segments.
         max_clips: Maximum number of clips to generate.
         min_dur:   Minimum clip duration (seconds).
         max_dur:   Maximum clip duration (seconds).
-        min_clips: Minimum number of clips to attempt.
+        min_clips: Minimum number of clips to attempt (at least 3).
 
     Returns:
         List of ClipCandidate objects.
@@ -414,34 +443,41 @@ def _build_fallback_clips(
     if not segments:
         return []
 
+    min_clips = max(3, min_clips)
+    max_clips = max(min_clips, max_clips)
+
     source_end = segments[-1].end
     source_start = segments[0].start
-    target_dur = (min_dur + max_dur) / 2.0
+    source_duration = max(0.0, source_end - source_start)
+    effective_min = min(min_dur, source_duration)
+    target_dur = min(max_dur, max(effective_min, (min_dur + max_dur) / 2.0))
 
-    # Step size so clips are spread across the full video
-    source_duration = source_end - source_start
-    if source_duration <= target_dur:
-        clips_count = 1
-        step = 0.0
-    else:
-        max_possible = max(1, int(source_duration // min_dur))
-        clips_count = max(min(min_clips, max_possible), min(max_clips, int(source_duration // target_dur)))
-        step = source_duration / clips_count
+    # Always attempt at least min_clips
+    desired_clips = max(min_clips, min(max_clips, int(source_duration // target_dur) if target_dur > 0 else min_clips))
+    desired_clips = max(desired_clips, min_clips)
 
     candidates: list[ClipCandidate] = []
-    for i in range(clips_count):
+    max_start = max(source_start, source_end - target_dur)
+    if desired_clips > 1 and max_start > source_start:
+        step = (max_start - source_start) / (desired_clips - 1)
+    else:
+        step = 0.0
+
+    for i in range(desired_clips):
         clip_start = source_start + i * step
         clip_end = min(clip_start + target_dur, source_end)
-        if clip_end - clip_start < min_dur:
-            break
+        if clip_end - clip_start < effective_min and source_duration >= effective_min:
+            clip_start = max(source_start, clip_end - effective_min)
 
-        seo = SeoMetadata.fallback(f"Clip {i + 1}")
+        excerpt_segs = [s for s in segments if s.end >= clip_start and s.start <= clip_end]
+        excerpt_text = " ".join(s.text.strip() for s in excerpt_segs)[:200] or f"Clip {i + 1}"
+        seo = SeoMetadata.fallback(excerpt_text)
         candidates.append(
             ClipCandidate(
                 index=i + 1,
                 start_time=round(clip_start, 3),
                 end_time=round(clip_end, 3),
-                hook_summary="Fallback clip — Gemini selection unavailable.",
+                hook_summary="Fallback clip — evenly distributed across video.",
                 seo=seo,
                 broll_query="people talking",
             )
@@ -486,7 +522,7 @@ def select_clips(
         List of ClipCandidate objects, ordered by virality (best first),
         at most *max_clips* items.
     """
-    min_clips = max(1, min(10, min_clips))
+    min_clips = max(3, min(10, min_clips))
     max_clips = max(min_clips, min(10, max_clips))
 
     if not segments:
@@ -554,11 +590,12 @@ def select_clips(
         ):
             deduplicated.append(clip)
 
-    # Ensure minimum clip threshold if video length allows
+    # Ensure minimum clip threshold (guaranteed at least 3 clips)
     source_duration = (segments[-1].end - segments[0].start) if segments else 0.0
-    target_min = min(min_clips, max(1, int(source_duration // min_dur)))
+    effective_min = min(min_dur, source_duration)
+    target_min = max(3, min_clips) if source_duration >= effective_min else 1
 
-    if len(deduplicated) < target_min and source_duration >= min_dur:
+    if len(deduplicated) < target_min and source_duration >= effective_min:
         logger.info(
             "Only %d clip(s) found after deduplication; generating supplementary candidates to satisfy min_clips=%d",
             len(deduplicated), target_min,
@@ -571,8 +608,27 @@ def select_clips(
             max_dur=max_dur,
         )
 
+    # Secondary guarantee: if still below target_min, top up directly with fallback clips
+    if len(deduplicated) < target_min and source_duration >= effective_min:
+        fallback_clips = _build_fallback_clips(
+            segments, max_clips, min_dur, max_dur, min_clips=target_min
+        )
+        for fb in fallback_clips:
+            if len(deduplicated) >= target_min:
+                break
+            deduplicated.append(
+                ClipCandidate(
+                    index=len(deduplicated) + 1,
+                    start_time=fb.start_time,
+                    end_time=fb.end_time,
+                    hook_summary=fb.hook_summary,
+                    seo=fb.seo,
+                    broll_query=fb.broll_query,
+                )
+            )
+
     logger.info(
-        "Clip selection complete: %d/%d clips selected, %d after deduplication & min threshold.",
-        len(candidates), len(raw_clips), len(deduplicated),
+        "Clip selection complete: %d clips selected (satisfies min_clips=%d).",
+        len(deduplicated), min_clips,
     )
     return deduplicated[:max_clips]

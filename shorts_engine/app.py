@@ -1271,7 +1271,7 @@ def main() -> None:
         candidates: list[ClipCandidate] = st.session_state.get("url_candidates", [])
         if candidates:
             st.markdown("---")
-            st.markdown(f"### {len(candidates)} Clip Candidates Found")
+            st.markdown(f"### {len(candidates)} Clip Candidates Found (Minimum: 3)")
 
             selected_indices = _render_url_candidate_table(candidates)
 
@@ -1280,6 +1280,7 @@ def main() -> None:
 
             st.markdown("")
             n_selected = len(selected_indices)
+            min_required = min(3, len(candidates))
 
             # ── Stage 2: Render Button ─────────────────────────────────────────
             col_render, _ = st.columns([3, 1])
@@ -1288,7 +1289,7 @@ def main() -> None:
                     f"Generate {n_selected} Short{'s' if n_selected != 1 else ''}",
                     type="primary",
                     disabled=(
-                        n_selected == 0
+                        n_selected < min_required
                         or st.session_state["url_is_rendering"]
                         or not url_input.strip()
                     ),
@@ -1296,11 +1297,11 @@ def main() -> None:
                     key="render_button",
                 )
 
-            if n_selected == 0:
-                st.warning("Select at least one clip to render.")
+            if n_selected < min_required:
+                st.warning(f"⚠️ A minimum of {min_required} clips must be selected to render (currently selected: {n_selected}).")
 
             # ── Render Execution ───────────────────────────────────────────────
-            if render_clicked and n_selected > 0 and url_input.strip():
+            if render_clicked and n_selected >= min_required and url_input.strip():
                 st.session_state["url_is_rendering"] = True
                 st.session_state["url_results"] = []
 

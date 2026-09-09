@@ -14,12 +14,20 @@ from pathlib import Path
 
 import pytest
 
-from services.vfx_engine import (
-    SceneAnalysis,
-    VfxPreset,
-    choose_vfx_preset,
-    apply_vfx,
-)
+try:
+    from shorts_engine.services.vfx_engine import (
+        SceneAnalysis,
+        VfxPreset,
+        choose_vfx_preset,
+        apply_vfx,
+    )
+except ModuleNotFoundError:
+    from services.vfx_engine import (
+        SceneAnalysis,
+        VfxPreset,
+        choose_vfx_preset,
+        apply_vfx,
+    )
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────

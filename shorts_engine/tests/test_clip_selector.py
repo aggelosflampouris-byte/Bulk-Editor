@@ -120,3 +120,50 @@ def test_select_clips_fallback_generates_minimum_clips():
     assert len(clips) >= 3
     for c in clips:
         assert 35.0 <= c.duration <= 50.0
+
+
+def test_select_clips_gemini_single_clip_supplements_to_minimum_three():
+    # Model returns only 1 clip, select_clips must supplement to at least 3 clips
+    segments = [
+        TranscriptionSegment(start=i * 5.0, end=(i + 1) * 5.0, text=f"Κείμενο {i}")
+        for i in range(40)  # 200s total
+    ]
+    single_clip_response = (
+        '{"clips": [{"start_time": 10.0, "end_time": 50.0, "hook_summary": "Single hook", '
+        '"seo": {"title": "Τίτλος 1", "description": "Περιγραφή 1", "tags": ["tag1"]}, '
+        '"broll_query": "greek business"}]}'
+    )
+    with patch("shorts_engine.services.clip_selector.genai.Client"), \
+         patch("shorts_engine.services.clip_selector._call_gemini_with_fallback", return_value=single_clip_response):
+        clips = select_clips(
+            segments=segments,
+            gemini_api_key="valid_fake_key",
+            min_clips=3,
+            max_clips=5,
+            min_dur=35.0,
+            max_dur=50.0,
+        )
+        assert len(clips) >= 3
+        # Check first is the Gemini-selected clip
+        assert clips[0].start_time == 10.0
+        assert clips[0].end_time == 50.0
+
+
+def test_select_clips_compact_duration_guarantees_minimum_three():
+    # Even on compact transcripts (e.g. 70s duration), at least 3 clips are generated
+    segments = [
+        TranscriptionSegment(start=i * 5.0, end=(i + 1) * 5.0, text=f"Λέξη {i}")
+        for i in range(14)  # 70s total
+    ]
+    clips = select_clips(
+        segments=segments,
+        gemini_api_key="",
+        min_clips=3,
+        max_clips=5,
+        min_dur=30.0,
+        max_dur=45.0,
+    )
+    assert len(clips) >= 3
+    for c in clips:
+        assert c.duration >= 30.0
+
