@@ -534,6 +534,23 @@ def _render_sidebar() -> Settings:
             )
 
         st.markdown("---")
+        st.markdown("### 📁 Output Destination")
+        from config import DEFAULT_OUTPUT_DIR
+        default_output_str = str(st.session_state.get("custom_output_dir", DEFAULT_OUTPUT_DIR))
+        output_dir_input = st.text_input(
+            "Destination Directory",
+            value=default_output_str,
+            help="Folder on your machine where processed shorts, cut clips, and SEO JSON files are saved automatically.",
+            key="output_dir_input",
+        )
+        resolved_output_dir = (
+            Path(output_dir_input).expanduser().resolve()
+            if output_dir_input.strip()
+            else DEFAULT_OUTPUT_DIR
+        )
+        st.session_state["custom_output_dir"] = str(resolved_output_dir)
+
+        st.markdown("---")
         st.markdown(
             "<div style='font-size:0.72rem;color:#555;text-align:center'>"
             "Greek Shorts Engine · CPU-only<br>"
@@ -563,6 +580,7 @@ def _render_sidebar() -> Settings:
         clip_min_duration=float(clip_min_dur),
         clip_max_duration=float(max(clip_max_dur, clip_min_dur + 5)),
         outro_path=outro_path,
+        output_dir=resolved_output_dir,
     )
 
 
@@ -618,6 +636,33 @@ def _render_result_card(result: ProcessingResult, index: int) -> None:
                         key=f"video_download_{index}",
                         use_container_width=True,
                     )
+
+                    # Option to set destination folder and save directly on disk
+                    with st.expander("📁 Save to Custom Folder", expanded=False):
+                        default_dest = st.session_state.get("custom_output_dir", str(Path.home() / "Downloads"))
+                        dest_folder_val = st.text_input(
+                            "Destination Folder",
+                            value=default_dest,
+                            key=f"dest_folder_val_{index}",
+                            help="Local directory path to save a copy of this short.",
+                        )
+                        if st.button("💾 Save Copy to Folder", key=f"btn_save_dest_{index}", use_container_width=True):
+                            try:
+                                target_dir = Path(dest_folder_val).expanduser().resolve()
+                                target_dir.mkdir(parents=True, exist_ok=True)
+                                target_file = target_dir / dl_filename
+                                import shutil as _shutil
+                                _shutil.copy2(str(result.output_file), str(target_file))
+
+                                # Also copy companion SEO JSON if available
+                                seo_json_name = f"seo_{result.output_file.stem.replace('_short','')}.json"
+                                src_seo = result.output_file.parent / seo_json_name
+                                if src_seo.is_file():
+                                    _shutil.copy2(str(src_seo), str(target_dir / seo_json_name))
+
+                                st.success(f"✓ Saved to: `{target_file}`")
+                            except Exception as exc:
+                                st.error(f"Failed to save: {exc}")
 
             with meta_col:
                 st.markdown("**Output File**")
