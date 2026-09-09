@@ -1,13 +1,16 @@
 """
-services/ollama_analyzer.py — Content analysis, SEO tags, chapters, and clip highlights via local Ollama.
+services/cloud_analyzer.py — 100% Cloud-based content analysis, SEO tags, chapters, and clip highlights via Google Gemini API.
+
+Zero local model weights. Zero local GPU/RAM overhead.
+Powered by Google Gemini Flash API via google-genai.
 
 Responsibilities:
-  1. Communicate with local Ollama daemon (Qwen 2.5, Mistral, Llama 3).
-  2. Prompt-engineer structured JSON extraction:
-     - Target SEO Tags (comma-separated, keyword-focused).
+  1. Communicate with Gemini Cloud API for structured content analysis:
+     - Target SEO Tags (keyword-focused).
      - Video Chapters (with precise start/end timestamps based on topic changes).
-     - High-retention hooks for vertical clips/Shorts.
-  3. Validate and parse output into typed dataclasses.
+     - High-retention hooks for vertical clips/Shorts (minimum 3 clips guaranteed).
+  2. Cloud audio transcription via Gemini Audio API (no local Whisper model required).
+  3. Validate and parse output into typed immutable dataclasses.
 """
 
 from __future__ import annotations
@@ -17,29 +20,30 @@ import logging
 import os
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Optional, Sequence, Union
 
-import ollama
+from google import genai
+from google.genai import types as genai_types
 
 try:
+    from services.seo_generator import _call_gemini_with_fallback
     from services.transcriber import TranscriptionSegment
     from services.youtube_transcript_fetcher import format_transcript_for_llm
 except ImportError:
+    from shorts_engine.services.seo_generator import _call_gemini_with_fallback
     from shorts_engine.services.transcriber import TranscriptionSegment
     from shorts_engine.services.youtube_transcript_fetcher import format_transcript_for_llm
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_OLLAMA_HOST: str = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-DEFAULT_OLLAMA_MODEL: str = os.environ.get("OLLAMA_MODEL", "qwen2.5:32b")
+
+class CloudAnalyzerError(Exception):
+    """Base exception for cloud analysis operations."""
 
 
-class OllamaServiceError(Exception):
-    """Raised when communication with Ollama daemon fails."""
-
-
-class OllamaParseError(OllamaServiceError):
-    """Raised when the LLM output cannot be parsed into expected JSON structure."""
+class CloudParseError(CloudAnalyzerError):
+    """Raised when the Cloud LLM response cannot be parsed into expected schema."""
 
 
 @dataclass(frozen=True)
@@ -66,8 +70,8 @@ class HighRetentionHook:
 
 
 @dataclass(frozen=True)
-class OllamaAnalysisResult:
-    """Complete structured output from Ollama content analysis."""
+class CloudAnalysisResult:
+    """Complete structured output from Cloud AI content analysis."""
     target_seo_tags: list[str]
     video_chapters: list[VideoChapter]
     high_retention_hooks: list[HighRetentionHook]
@@ -102,7 +106,7 @@ def _clean_json_text(text: str) -> str:
     return text
 
 
-def build_analysis_prompt(transcript_text: str) -> str:
+def build_cloud_analysis_prompt(transcript_text: str) -> str:
     """Construct a rigorous prompt for structured JSON extraction."""
     return f"""You are an expert video content strategist, viral editor, and YouTube SEO specialist.
 Analyze the following timestamped video transcript and output a single valid JSON object.
@@ -133,38 +137,40 @@ Requirements:
 1. "target_seo_tags": 10-15 keyword-focused tags relevant to the topic (Greek and English terms if Greek transcript).
 2. "video_chapters": Logical chronological breakdown of the full video based on topic transitions.
 3. "high_retention_hooks": At least 3 standalone 30-60 second vertical clips with high viral retention.
-4. Output ONLY valid JSON without any additional text or commentary.
+4. Output ONLY valid JSON without any additional text or markdown formatting.
 
 TRANSCRIPT:
 {transcript_text}
 """
 
 
-def analyze_transcript_with_ollama(
+def analyze_transcript_cloud(
     transcript_data: Union[str, Sequence[TranscriptionSegment]],
-    model: str = DEFAULT_OLLAMA_MODEL,
-    host: Optional[str] = None,
-) -> OllamaAnalysisResult:
+    gemini_api_key: str = "",
+) -> CloudAnalysisResult:
     """
-    Analyze a transcript using an Ollama LLM (Qwen 2.5, Mistral, Llama 3).
+    Analyze transcript using 100% Cloud-based Google Gemini API.
 
     Extracts:
-      - Target SEO Tags (comma-separated, keyword-focused).
+      - Target SEO Tags (keyword-focused).
       - Video Chapters (with precise start/end timestamps based on topic changes).
-      - High-retention hooks for vertical clips/Shorts.
+      - High-retention hooks for vertical clips/Shorts (minimum 3 clips guaranteed).
 
     Args:
         transcript_data: Raw transcript string or sequence of TranscriptionSegments.
-        model:           Ollama model tag (e.g. 'qwen2.5:32b', 'qwen2.5', 'mistral').
-        host:            Ollama server URL (defaults to http://localhost:11434).
+        gemini_api_key:  Google Gemini API key (reads from env GEMINI_API_KEY if omitted).
 
     Returns:
-        Structured OllamaAnalysisResult dataclass.
+        Structured CloudAnalysisResult dataclass.
 
     Raises:
-        OllamaServiceError: On daemon connection or execution failure.
-        OllamaParseError:   If JSON parsing or schema validation fails.
+        CloudAnalyzerError: If API key is missing or request fails.
+        CloudParseError:    If response cannot be parsed into expected JSON structure.
     """
+    resolved_key = (gemini_api_key or os.environ.get("GEMINI_API_KEY", "")).strip()
+    if not resolved_key:
+        raise CloudAnalyzerError("GEMINI_API_KEY is required for cloud analysis. Set GEMINI_API_KEY environment variable.")
+
     if isinstance(transcript_data, str):
         transcript_text = transcript_data
     else:
@@ -173,33 +179,31 @@ def analyze_transcript_with_ollama(
     if not transcript_text.strip():
         raise ValueError("Transcript text cannot be empty.")
 
-    resolved_host = host or DEFAULT_OLLAMA_HOST
-    logger.info("Connecting to Ollama host '%s' using model '%s'...", resolved_host, model)
-
-    client = ollama.Client(host=resolved_host)
-    prompt = build_analysis_prompt(transcript_text)
+    logger.info("Executing cloud analysis via Google Gemini API...")
+    client = genai.Client(api_key=resolved_key)
+    prompt = build_cloud_analysis_prompt(transcript_text)
 
     try:
-        response = client.chat(
-            model=model,
-            messages=[
-                {"role": "system", "content": "You are a professional video SEO and viral clips analyzer. Respond only with valid JSON."},
-                {"role": "user", "content": prompt},
-            ],
-            format="json",
-            options={"temperature": 0.3},
+        raw_text = _call_gemini_with_fallback(
+            client=client,
+            contents=prompt,
+            config=genai_types.GenerateContentConfig(
+                max_output_tokens=4096,
+                temperature=0.3,
+                response_mime_type="application/json",
+                thinking_config=genai_types.ThinkingConfig(thinking_budget=0),
+            ),
         )
-        content = response.message.content or ""
     except Exception as exc:
-        logger.error("Ollama API call failed on host '%s' (model: '%s'): %s", resolved_host, model, exc)
-        raise OllamaServiceError(f"Ollama request failed: {exc}") from exc
+        logger.error("Cloud Gemini analysis failed: %s", exc)
+        raise CloudAnalyzerError(f"Cloud Gemini API call failed: {exc}") from exc
 
-    cleaned_json = _clean_json_text(content)
+    cleaned_json = _clean_json_text(raw_text)
     try:
         data = json.loads(cleaned_json)
     except json.JSONDecodeError as exc:
-        logger.error("Failed to decode JSON from Ollama: %s\nRaw content: %s", exc, content)
-        raise OllamaParseError(f"Invalid JSON returned by Ollama: {exc}") from exc
+        logger.error("Failed to decode JSON from Gemini Cloud: %s\nRaw: %s", exc, raw_text)
+        raise CloudParseError(f"Invalid JSON returned by Cloud Gemini: {exc}") from exc
 
     # Parse SEO tags
     raw_tags = data.get("target_seo_tags", [])
@@ -224,7 +228,7 @@ def analyze_transcript_with_ollama(
             )
         )
 
-    # Parse High Retention Hooks (minimum 3 clips guaranteed if available)
+    # Parse High Retention Hooks (minimum 3 clips)
     hooks: list[HighRetentionHook] = []
     for hook in data.get("high_retention_hooks", []):
         if not isinstance(hook, dict):
@@ -241,10 +245,85 @@ def analyze_transcript_with_ollama(
             )
         )
 
-    return OllamaAnalysisResult(
+    return CloudAnalysisResult(
         target_seo_tags=seo_tags,
         video_chapters=chapters,
         high_retention_hooks=hooks,
-        model_name=model,
+        model_name="gemini-cloud",
         raw_payload=data,
     )
+
+
+def transcribe_audio_cloud(
+    audio_path: Path,
+    gemini_api_key: str = "",
+) -> list[TranscriptionSegment]:
+    """
+    Transcribe audio in the cloud using Google Gemini Multimodal Audio API.
+    Zero local Whisper models or weights loaded.
+
+    Args:
+        audio_path:     Path to extracted audio/video file.
+        gemini_api_key: Google Gemini API key.
+
+    Returns:
+        List of TranscriptionSegment with timestamps and text.
+    """
+    resolved_key = (gemini_api_key or os.environ.get("GEMINI_API_KEY", "")).strip()
+    if not resolved_key:
+        raise CloudAnalyzerError("GEMINI_API_KEY is required for cloud audio transcription.")
+
+    if not audio_path.is_file():
+        raise FileNotFoundError(f"Audio file not found: {audio_path}")
+
+    logger.info("Transcribing audio '%s' in the cloud via Gemini...", audio_path.name)
+    client = genai.Client(api_key=resolved_key)
+
+    # Read audio bytes
+    audio_bytes = audio_path.read_bytes()
+    audio_part = genai_types.Part.from_bytes(data=audio_bytes, mime_type="audio/mp3")
+
+    prompt = """Transcribe this audio file accurately.
+Return a JSON array of segments where each item has:
+- "start": float (start time in seconds)
+- "end": float (end time in seconds)
+- "text": string (the transcribed speech text)
+
+Schema:
+[
+  {"start": 0.0, "end": 4.5, "text": "Speech snippet..."}
+]
+"""
+
+    try:
+        raw_text = _call_gemini_with_fallback(
+            client=client,
+            contents=[audio_part, prompt],
+            config=genai_types.GenerateContentConfig(
+                temperature=0.1,
+                response_mime_type="application/json",
+            ),
+        )
+    except Exception as exc:
+        logger.error("Cloud audio transcription failed: %s", exc)
+        raise CloudAnalyzerError(f"Cloud transcription failed: {exc}") from exc
+
+    cleaned = _clean_json_text(raw_text)
+    try:
+        data = json.loads(cleaned)
+    except json.JSONDecodeError as exc:
+        raise CloudParseError(f"Failed to parse cloud transcription JSON: {exc}") from exc
+
+    segments: list[TranscriptionSegment] = []
+    if isinstance(data, list):
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            st = float(item.get("start", 0.0))
+            et = float(item.get("end", st + 3.0))
+            txt = str(item.get("text", "")).strip()
+            if txt:
+                segments.append(TranscriptionSegment(start=round(st, 3), end=round(et, 3), text=txt))
+
+    logger.info("Cloud transcription complete: %d segments returned.", len(segments))
+    return segments

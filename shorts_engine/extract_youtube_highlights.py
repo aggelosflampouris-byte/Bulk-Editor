@@ -1,17 +1,20 @@
 """
-extract_youtube_highlights.py — YouTube transcript extraction and local Ollama analysis.
+extract_youtube_highlights.py — 100% Cloud-driven YouTube transcript extraction and Gemini analysis.
+
+Zero local model weights. Zero local GPU/RAM overhead.
+100% Cloud-powered via youtube-transcript-api and Google Gemini Cloud API.
 
 Workflow:
-  1. Fetch YouTube transcript directly via youtube-transcript-api (zero video download).
-  2. If captions are disabled/unavailable, fallback to downloading audio and local faster-whisper.
-  3. Send transcript to local Ollama LLM (Qwen 2.5 / Mistral Small) to extract:
+  1. Fetch YouTube transcript directly via youtube-transcript-api (cloud fetch, zero download).
+  2. If captions are disabled/unavailable, fallback to Gemini Cloud Audio API transcription.
+  3. Send transcript to Google Gemini Flash Cloud API to extract:
      - Target SEO Tags (comma-separated, keyword-focused)
-     - Video Chapters (with precise start/end timestamps)
-     - High-retention hooks for vertical clips/Shorts (minimum 3 clips)
+     - Video Chapters (with precise start/end timestamps based on topic changes)
+     - High-retention hooks for vertical clips/Shorts (minimum 3 clips guaranteed)
   4. Output structured JSON.
 
 Usage:
-  python shorts_engine/extract_youtube_highlights.py <YOUTUBE_URL> [--model qwen2.5:32b] [--output results.json]
+  python shorts_engine/extract_youtube_highlights.py <YOUTUBE_URL> [--output results.json]
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -35,12 +39,12 @@ from services.youtube_transcript_fetcher import (
     format_transcript_for_llm,
     YouTubeTranscriptError,
 )
-from services.ollama_analyzer import (
-    analyze_transcript_with_ollama,
-    DEFAULT_OLLAMA_MODEL,
-    DEFAULT_OLLAMA_HOST,
+from services.cloud_analyzer import (
+    analyze_transcript_cloud,
+    transcribe_audio_cloud,
+    CloudAnalyzerError,
 )
-from services.transcriber import transcribe, TranscriptionSegment
+from services.transcriber import TranscriptionSegment
 from services.downloader import download_video
 
 logging.basicConfig(
@@ -52,58 +56,57 @@ logger = logging.getLogger("extract_youtube_highlights")
 
 def process_youtube_highlights(
     url: str,
-    model: str = DEFAULT_OLLAMA_MODEL,
-    host: str = DEFAULT_OLLAMA_HOST,
-    whisper_model: str = "large-v3",
+    gemini_api_key: str = "",
     output_file: Path | None = None,
 ) -> dict:
     """
-    Execute the end-to-end extraction and analysis pipeline.
+    Execute the 100% cloud-driven extraction and analysis pipeline.
 
     Args:
-        url:           YouTube video URL.
-        model:         Ollama model tag (e.g. 'qwen2.5:32b', 'mistral').
-        host:          Ollama host URL.
-        whisper_model: Whisper model size for local fallback transcription.
-        output_file:   Optional file path to write results JSON.
+        url:            YouTube video URL or video ID.
+        gemini_api_key: Google Gemini API key (defaults to GEMINI_API_KEY environment variable).
+        output_file:    Optional file path to write results JSON.
 
     Returns:
         Dictionary containing target_seo_tags, video_chapters, and high_retention_hooks.
     """
-    print(f"\n{'='*70}\n🚀 YOUTUBE HIGHLIGHTS & SEO EXTRACTION PIPELINE\n{'='*70}")
-    print(f"URL:   {url}")
-    print(f"Model: {model} (Ollama @ {host})\n")
+    resolved_key = (gemini_api_key or os.environ.get("GEMINI_API_KEY", "")).strip()
+    if not resolved_key:
+        raise CloudAnalyzerError("GEMINI_API_KEY is required. Please set GEMINI_API_KEY environment variable or pass --api-key.")
+
+    print(f"\n{'='*70}\n☁️ 100% CLOUD YOUTUBE HIGHLIGHTS & SEO PIPELINE (ZERO LOCAL COMPUTE)\n{'='*70}")
+    print(f"URL: {url}\n")
 
     # ── Step 1: Attempt youtube-transcript-api ─────────────────────────
     segments: list[TranscriptionSegment] = []
-    print("⏳ [1/3] Fetching transcript directly via youtube-transcript-api...")
+    print("⏳ [1/3] Fetching transcript directly via youtube-transcript-api (HTTP cloud fetch)...")
     try:
         segments = fetch_youtube_transcript(url, languages=("el", "en"))
-        print(f"✅ Retrieved {len(segments)} transcript segments directly from YouTube (no download needed).\n")
+        print(f"✅ Retrieved {len(segments)} transcript segments from YouTube (zero download, zero local compute).\n")
     except YouTubeTranscriptError as exc:
         print(f"⚠️ YouTube captions unavailable ({exc}).")
-        print("⏳ [1/3 Fallback] Downloading audio and transcribing locally with faster-whisper...")
+        print("⏳ [1/3 Cloud Fallback] Transcribing via Google Gemini Cloud Audio API...")
         with tempfile.TemporaryDirectory(prefix="yt_audio_") as tmp_dir:
             tmp_path = Path(tmp_dir)
             video_path = download_video(url, dest_dir=tmp_path)
-            segments = transcribe(video_path, model_size=whisper_model)
-        print(f"✅ Transcribed {len(segments)} segments locally with faster-whisper.\n")
+            segments = transcribe_audio_cloud(video_path, gemini_api_key=resolved_key)
+        print(f"✅ Transcribed {len(segments)} segments in the cloud via Gemini.\n")
 
     if not segments:
         raise RuntimeError("No transcript segments could be obtained.")
 
     # ── Step 2: Format Transcript for LLM ──────────────────────────────
-    print(f"⏳ [2/3] Preparing transcript ({len(segments)} segments) for LLM ingestion...")
+    print(f"⏳ [2/3] Preparing transcript ({len(segments)} segments) for Cloud LLM ingestion...")
     transcript_text = format_transcript_for_llm(segments)
 
-    # ── Step 3: Analyze with Ollama ────────────────────────────────────
-    print(f"⏳ [3/3] Sending to Ollama ({model}) for SEO tags, chapters, and clip extraction...")
-    analysis = analyze_transcript_with_ollama(transcript_text, model=model, host=host)
+    # ── Step 3: Analyze with Gemini Cloud API ──────────────────────────
+    print("⏳ [3/3] Analyzing with Google Gemini Cloud API for SEO tags, chapters, and clips...")
+    analysis = analyze_transcript_cloud(transcript_text, gemini_api_key=resolved_key)
 
     # ── Format Results ─────────────────────────────────────────────────
     result_payload = {
         "url": url,
-        "model": model,
+        "engine": "100% Cloud (Google Gemini 2.5 Flash)",
         "target_seo_tags": analysis.target_seo_tags,
         "video_chapters": [
             {
@@ -139,7 +142,7 @@ def process_youtube_highlights(
         if chap.summary:
             print(f"     └─ {chap.summary}")
 
-    print(f"\n{'='*70}\n🎬 HIGH-RETENTION HOOKS / SHORTS ({len(analysis.high_retention_hooks)} clips):\n{'='*70}")
+    print(f"\n{'='*70}\n🎬 HIGH-RETENTION HOOKS / SHORTS (MINIMUM: 3, Total: {len(analysis.high_retention_hooks)}):\n{'='*70}")
     for i, hook in enumerate(analysis.high_retention_hooks, 1):
         s_m, s_s = divmod(int(hook.start_time), 60)
         e_m, e_s = divmod(int(hook.end_time), 60)
@@ -159,12 +162,10 @@ def process_youtube_highlights(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Extract YouTube transcripts and analyze with Ollama for SEO tags, chapters, and viral Shorts."
+        description="Extract YouTube transcripts and analyze via 100% Cloud Gemini API (zero local models)."
     )
     parser.add_argument("url", help="YouTube video URL or video ID")
-    parser.add_argument("--model", default=DEFAULT_OLLAMA_MODEL, help=f"Ollama model tag (default: {DEFAULT_OLLAMA_MODEL})")
-    parser.add_argument("--host", default=DEFAULT_OLLAMA_HOST, help=f"Ollama server host (default: {DEFAULT_OLLAMA_HOST})")
-    parser.add_argument("--whisper-model", default="large-v3", help="Whisper model size for fallback transcription (default: large-v3)")
+    parser.add_argument("--api-key", default="", help="Google Gemini API key (or set GEMINI_API_KEY env var)")
     parser.add_argument("--output", type=Path, default=None, help="Optional output JSON path")
 
     args = parser.parse_args()
@@ -172,9 +173,7 @@ def main() -> None:
     try:
         process_youtube_highlights(
             url=args.url,
-            model=args.model,
-            host=args.host,
-            whisper_model=args.whisper_model,
+            gemini_api_key=args.api_key,
             output_file=args.output,
         )
     except Exception as exc:
