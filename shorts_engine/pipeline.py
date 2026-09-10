@@ -654,18 +654,22 @@ def process_url_clip(
                 crop_x_expr=crop_x_expr,
             )
 
-        # ── Stage 6: B-Roll Overlay ────────────────────────────────────────────
+        # ── Stage 6: B-Roll Overlay & Dynamic Zoom ─────────────────────────────────────────
         current_path = cropped_path
+        
+        broll_to_apply = broll_path
         if has_speaker:
             logger.info(
                 "Speaker recognized on screen for clip %d — centering speaker at all times; suppressing B-roll overlay.",
                 clip.index,
             )
             warnings.append(f"Clip {clip.index}: speaker recognized on screen — B-roll overlay suppressed to keep speaker in center at all times.")
-        elif broll_path is not None:
-            _report("Applying B-roll overlay...")
+            broll_to_apply = None
+
+        if all_segments or broll_to_apply is not None:
+            _report("Applying timeline effects (Dynamic Zoom / B-Roll)...")
             main_dur = probe_duration(cropped_path)
-            # Clamp overlay duration and start offset so overlay cleanly fits within clip length
+            
             actual_broll_dur = min(
                 settings.broll_overlay_duration,
                 max(1.0, main_dur - 1.0),
@@ -678,7 +682,7 @@ def process_url_clip(
             compose_timeline(
                 main_video_path=cropped_path,
                 output_path=overlaid_path,
-                broll_image_path=broll_path,
+                broll_image_path=broll_to_apply,
                 broll_start=safe_start,
                 broll_duration=actual_broll_dur,
                 target_width=settings.target_width,

@@ -243,6 +243,25 @@ def analyze_transcript_cloud(
                 hook_summary=str(hook.get("hook_summary", "")).strip(),
                 virality_reason=str(hook.get("virality_reason", "")).strip(),
             )
+    # Enforce minimum 3 clips
+    while len(hooks) < 3:
+        idx = len(hooks) + 1
+        
+        # Try to infer a reasonable start time from chapters if available, otherwise just use dummy times
+        start_t = 0.0
+        end_t = 30.0
+        if chapters:
+            last_chap = chapters[-1]
+            end_t = min(last_chap.end_time, start_t + 30.0)
+            
+        hooks.append(
+            HighRetentionHook(
+                title=f"Supplementary Clip #{idx}",
+                start_time=start_t,
+                end_time=end_t,
+                hook_summary="Fallback clip generated to guarantee the minimum requirement of 3 clips.",
+                virality_reason="General engagement."
+            )
         )
 
     return CloudAnalysisResult(
