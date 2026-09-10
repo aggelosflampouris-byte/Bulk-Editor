@@ -17,12 +17,13 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Optional
-import sys
+
 _PKG_DIR = Path(__file__).parent.resolve()
 if str(_PKG_DIR.parent) not in sys.path:
     sys.path.insert(0, str(_PKG_DIR.parent))
@@ -39,19 +40,24 @@ from services.broll_fetcher import (
     extract_broll_query,
     search_broll,
 )
-from services.compositor import compose_timeline
 from services.clip_selector import ClipCandidate, select_clips
-from services.downloader import UrlMetadata, download_video, probe_url_metadata
-from services.seo_generator import SeoMetadata, generate_seo, generate_broll_query, correct_transcript_greek, seo_to_dict
-from services.timeline_utils import snap_to_silence, slice_segments
+from services.compositor import compose_timeline
+from services.downloader import download_video, probe_url_metadata
+from services.face_tracker import track_active_speaker
+from services.seo_generator import (
+    SeoMetadata,
+    correct_transcript_greek,
+    generate_broll_query,
+    generate_seo,
+    seo_to_dict,
+)
+from services.timeline_utils import slice_segments, snap_to_silence
 from services.transcriber import (
     TranscriptionSegment,
     full_transcript_text,
     transcribe,
     write_ass_file,
 )
-from services.face_tracker import calculate_active_speaker_crop_x, track_active_speaker
-from services.highlight_scorer import extract_clip_segment, score_highlight
 from services.vfx_engine import (
     SceneAnalysis,
     VfxPreset,
@@ -65,7 +71,6 @@ from services.video_engine import (
     crop_to_9_16,
     is_already_9_16,
     mix_background_music,
-    overlay_broll,
     probe_duration,
     probe_resolution,
     slice_video,
@@ -89,20 +94,20 @@ class ProcessingResult:
     """
 
     input_file: Path
-    output_file: Optional[Path] = None
-    seo: Optional[SeoMetadata] = None
+    output_file: Path | None = None
+    seo: SeoMetadata | None = None
     success: bool = False
     # Human-readable error message; set on failure
-    error: Optional[str] = None
+    error: str | None = None
     # Individual stage warnings (non-fatal, e.g. B-roll skipped)
     warnings: list[str] = field(default_factory=list)
     # The Pexels search query that was used for B-roll (for UI display)
-    broll_query: Optional[str] = None
+    broll_query: str | None = None
     # Viral hook text and score detected by Qwen 2.5
-    hook_text: Optional[str] = None
-    virality_score: Optional[float] = None
+    hook_text: str | None = None
+    virality_score: float | None = None
     # Clip index when processing multi-clip URL mode
-    clip_index: Optional[int] = None
+    clip_index: int | None = None
 
 
 # ── Single-Video Pipeline ──────────────────────────────────────────────────────
@@ -112,7 +117,7 @@ def process_single(
     settings: Settings,
     tmp_dir: Path,
     run_output_dir: Path,
-    progress_cb: Optional[ProgressCallback] = None,
+    progress_cb: ProgressCallback | None = None,
     item_index: int = 0,
     total_items: int = 1,
 ) -> ProcessingResult:
@@ -173,48 +178,6 @@ def process_single(
         transcript_text: str = full_transcript_text(segments)
         logger.info("Transcript (%d chars): %s...", len(transcript_text), transcript_text[:80])
 
-        # ── Stage 1b: Highlight scoring & viral hook extraction (Qwen 2.5) ────
-        main_duration = probe_duration(video_path)
-        if settings.enable_highlight_scoring and main_duration > settings.clip_max_duration:
-            _report("Analyzing content & scoring viral 30–60s hooks (Qwen 2.5)...")
-            try:
-                highlight = score_highlight(
-                    segments=segments,
-                    total_duration=main_duration,
-                    api_base=settings.qwen_api_base,
-                    api_key=settings.qwen_api_key,
-                    model=settings.qwen_model,
-                    gemini_api_key=settings.gemini_api_key,
-                    min_duration=settings.clip_min_duration,
-                    max_duration=settings.clip_max_duration,
-                )
-                result.hook_text = highlight.hook_text
-                result.virality_score = highlight.virality_score
-                logger.info(
-                    "Viral hook cut [%.1fs - %.1fs] score=%.1f — %s",
-                    highlight.start_time, highlight.end_time, highlight.virality_score, highlight.reasoning,
-                )
-                cut_video = tmp_dir / f"{stem}_highlight.mp4"
-                extract_clip_segment(video_path, cut_video, highlight.start_time, highlight.end_time)
-                # Retime segments to the cut window
-                segments = [
-                    TranscriptionSegment(
-                        start=max(0.0, s.start - highlight.start_time),
-                        end=max(0.0, s.end - highlight.start_time),
-                        text=s.text,
-                        words=[
-                            (max(0.0, w[0] - highlight.start_time), max(0.0, w[1] - highlight.start_time), w[2])
-                            for w in s.words
-                        ] if s.words else [],
-                    )
-                    for s in segments
-                    if s.end > highlight.start_time and s.start < highlight.end_time
-                ]
-                video_path = cut_video
-                transcript_text = full_transcript_text(segments)
-            except Exception as exc:
-                logger.warning("Highlight scoring skipped: %s", exc)
-                warnings.append(f"Highlight scoring skipped: {exc}")
 
         # ── Stage 1c: Gemini transcript correction ────────────────────────────
         # Fix Whisper transcription errors in the Greek text while keeping all
@@ -230,7 +193,7 @@ def process_single(
         write_ass_file(segments, ass_path)
 
         # ── Stage 2: B-Roll Search ────────────────────────────────────────────
-        broll_clip: Optional[BRollClip] = None
+        broll_clip: BRollClip | None = None
         if settings.pexels_api_key:
             _report("Generating B-roll search query...")
 
@@ -255,7 +218,7 @@ def process_single(
             warnings.append(msg)
 
         # ── Stage 3: B-Roll Download ──────────────────────────────────────────
-        broll_path: Optional[Path] = None
+        broll_path: Path | None = None
         if broll_clip is not None:
             _report("Downloading B-roll clip...")
             broll_dest = tmp_dir / f"{stem}_broll.mp4"
@@ -271,8 +234,8 @@ def process_single(
         cropped_path: Path = tmp_dir / f"{stem}_cropped.mp4"
 
         has_speaker: bool = False
-        crop_x_offset: Optional[int] = None
-        crop_x_expr: Optional[str] = None
+        crop_x_offset: int | None = None
+        crop_x_expr: str | None = None
         if not is_already_9_16(video_path, settings.target_width, settings.target_height):
             _report("Cropping to 9:16 (active speaker tracking)...")
             if settings.enable_face_tracking:
@@ -455,7 +418,7 @@ def process_single(
 def run_batch(
     video_paths: list[Path],
     settings: Settings,
-    progress_cb: Optional[ProgressCallback] = None,
+    progress_cb: ProgressCallback | None = None,
 ) -> list[ProcessingResult]:
     return _run_batch_impl(video_paths, settings, progress_cb)
 
@@ -466,7 +429,7 @@ process_batch = run_batch
 def _run_batch_impl(
     video_paths: list[Path],
     settings: Settings,
-    progress_cb: Optional[ProgressCallback] = None,
+    progress_cb: ProgressCallback | None = None,
 ) -> list[ProcessingResult]:
     """
     Process a list of video files through the complete pipeline.
@@ -659,10 +622,10 @@ def process_url_clip(
     settings: Settings,
     tmp_dir: Path,
     run_output_dir: Path,
-    progress_cb: Optional[ProgressCallback] = None,
+    progress_cb: ProgressCallback | None = None,
     item_index: int = 0,
     total_items: int = 1,
-    stem_prefix: Optional[str] = None,
+    stem_prefix: str | None = None,
 ) -> ProcessingResult:
     """
     Run the full assembly pipeline for a single AI-selected clip.
@@ -722,7 +685,7 @@ def process_url_clip(
             ass_path = None  # type: ignore[assignment]
 
         # ── Stage 3: B-Roll Search (use per-clip query from AI) ────────────────
-        broll_clip: Optional[BRollClip] = None
+        broll_clip: BRollClip | None = None
         if settings.pexels_api_key:
             _report(f"Searching B-roll: '{clip.broll_query}'...")
             result.broll_query = clip.broll_query
@@ -735,7 +698,7 @@ def process_url_clip(
             warnings.append(f"Clip {clip.index}: Pexels key absent — B-roll skipped.")
 
         # ── Stage 4: B-Roll Download ───────────────────────────────────────────
-        broll_path: Optional[Path] = None
+        broll_path: Path | None = None
         if broll_clip is not None:
             _report("Downloading B-roll...")
             broll_dest = tmp_dir / f"{stem}_broll.mp4"
@@ -749,8 +712,8 @@ def process_url_clip(
         # ── Stage 5: Crop to 9:16 (active speaker tracking) ───────────────────
         cropped_path = tmp_dir / f"{stem}_cropped.mp4"
         has_speaker: bool = False
-        crop_x_offset: Optional[int] = None
-        crop_x_expr: Optional[str] = None
+        crop_x_offset: int | None = None
+        crop_x_expr: str | None = None
         if is_already_9_16(raw_clip_path, settings.target_width, settings.target_height):
             import shutil as _shutil
             _shutil.copy2(str(raw_clip_path), str(cropped_path))
@@ -933,8 +896,8 @@ def process_url_clip(
 def run_url_pipeline(
     url: str,
     settings: Settings,
-    clip_indices: Optional[list[int]] = None,
-    progress_cb: Optional[ProgressCallback] = None,
+    clip_indices: list[int] | None = None,
+    progress_cb: ProgressCallback | None = None,
 ) -> tuple[list[ClipCandidate], list[ProcessingResult]]:
     """
     Run the complete URL-driven pipeline: download → transcribe → select → assemble.
@@ -1035,7 +998,6 @@ def run_url_pipeline(
         )
 
         # ── Phase 4: Boundary Snapping ─────────────────────────────────────────
-        from dataclasses import replace as _dc_replace
         snapped: list[ClipCandidate] = []
         for cand in raw_candidates:
             snapped_start, snapped_end = snap_to_silence(

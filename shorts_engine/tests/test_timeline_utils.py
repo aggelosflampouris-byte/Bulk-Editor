@@ -4,10 +4,7 @@ tests/test_timeline_utils.py — Unit tests for silence snapping, clip structure
 
 from __future__ import annotations
 
-import pytest
-
 from shorts_engine.services.timeline_utils import (
-    format_transcript_with_timestamps,
     slice_segments,
     snap_to_silence,
 )
@@ -227,7 +224,8 @@ def test_compute_zoom_intervals_with_rebased_offset():
 
 
 def test_apply_dynamic_zoom_ffmpeg_calls_correct_overlay_filter(tmp_path: Path):
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import MagicMock, patch
+
     from shorts_engine.services.compositor import apply_dynamic_zoom_ffmpeg
 
     src_video = tmp_path / "in.mp4"

@@ -5,12 +5,10 @@ tests/test_batch_multiclip.py — Unit tests for batch multi-clip extraction on 
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import patch
 
 from shorts_engine.config import Settings
-from shorts_engine.pipeline import process_batch, ProcessingResult
+from shorts_engine.pipeline import ProcessingResult, process_batch
 from shorts_engine.services.clip_selector import ClipCandidate
 from shorts_engine.services.seo_generator import SeoMetadata
 from shorts_engine.services.transcriber import TranscriptionSegment

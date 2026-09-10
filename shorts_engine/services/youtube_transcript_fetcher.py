@@ -12,15 +12,15 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Optional, Sequence
+from collections.abc import Sequence
 from urllib.parse import parse_qs, urlparse
 
 from youtube_transcript_api import (
-    YouTubeTranscriptApi,
-    TranscriptsDisabled,
-    NoTranscriptFound,
-    VideoUnavailable,
     InvalidVideoId,
+    NoTranscriptFound,
+    TranscriptsDisabled,
+    VideoUnavailable,
+    YouTubeTranscriptApi,
     YouTubeTranscriptApiException,
 )
 
@@ -47,7 +47,7 @@ class YouTubeTranscriptUnavailableError(YouTubeTranscriptError):
     """Raised when subtitles/transcripts are disabled or unavailable for the video."""
 
 
-def extract_youtube_id(url_or_id: str) -> Optional[str]:
+def extract_youtube_id(url_or_id: str) -> str | None:
     """
     Extract an 11-character YouTube video ID from a URL or raw ID string.
 
@@ -155,7 +155,7 @@ def fetch_youtube_transcript(
 
         # Estimate word-level chunks across the snippet duration for downstream alignment
         words_raw = text.split()
-        words_timed: Optional[list[tuple[float, float, str]]] = None
+        words_timed: list[tuple[float, float, str]] | None = None
         if words_raw:
             w_step = duration / len(words_raw)
             words_timed = [

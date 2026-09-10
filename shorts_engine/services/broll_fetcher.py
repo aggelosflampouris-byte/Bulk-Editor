@@ -13,10 +13,8 @@ This module has zero FFmpeg or transcription dependencies.
 from __future__ import annotations
 
 import logging
-import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 from urllib.parse import urlencode
 
 import requests
@@ -45,7 +43,7 @@ class BRollClip:
     duration: int        # seconds
     width: int
     height: int
-    file_size: Optional[int]  # bytes, may be absent in API response
+    file_size: int | None  # bytes, may be absent in API response
 
 
 # ── Internal Helpers ───────────────────────────────────────────────────────────
@@ -57,7 +55,7 @@ def _build_headers(api_key: str) -> dict[str, str]:
     }
 
 
-def _select_best_video_file(video_files: list[dict]) -> Optional[dict]:
+def _select_best_video_file(video_files: list[dict]) -> dict | None:
     """
     From the Pexels video_files list, select the best HD landscape variant.
 
@@ -94,7 +92,7 @@ def search_broll(
     query: str,
     api_key: str,
     per_page: int = 25,
-) -> Optional[BRollClip]:
+) -> BRollClip | None:
     """
     Search the Pexels Videos API for a relevant B-roll clip.
 

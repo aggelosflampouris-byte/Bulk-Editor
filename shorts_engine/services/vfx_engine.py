@@ -21,7 +21,6 @@ import re
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +70,7 @@ class SceneAnalysis:
 
     person_frame_ratio: float = 0.0
     detected_classes: set[str] = field(default_factory=set)
-    dominant_class: Optional[str] = None
+    dominant_class: str | None = None
 
 
 class VfxPreset(Enum):
@@ -301,9 +300,9 @@ def apply_vfx(
     """
     # Import here to avoid any circular dependency at module level.
     try:
-        from shorts_engine.services.video_engine import run_ffmpeg  # noqa: PLC0415
+        from shorts_engine.services.video_engine import run_ffmpeg
     except ModuleNotFoundError:
-        from services.video_engine import run_ffmpeg  # noqa: PLC0415
+        from services.video_engine import run_ffmpeg
 
     if not input_path.is_file():
         raise FileNotFoundError(f"VFX input not found: {input_path}")

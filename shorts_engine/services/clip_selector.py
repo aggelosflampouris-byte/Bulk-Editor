@@ -17,7 +17,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from google import genai
 from google.genai import types as genai_types
@@ -270,7 +270,7 @@ def _normalize_clip_times(
     return start, end
 
 
-def _parse_single_clip(raw: dict, index: int, min_dur: float, max_dur: float) -> Optional[ClipCandidate]:
+def _parse_single_clip(raw: dict, index: int, min_dur: float, max_dur: float) -> ClipCandidate | None:
     """
     Parse a single raw clip dict into a ClipCandidate.
 
@@ -337,7 +337,7 @@ def _parse_single_clip(raw: dict, index: int, min_dur: float, max_dur: float) ->
 
 def _supplement_clips(
     existing_clips: list[ClipCandidate],
-    segments: list["TranscriptionSegment"],
+    segments: list[TranscriptionSegment],
     target_count: int,
     min_dur: float,
     max_dur: float,
@@ -439,7 +439,7 @@ def _supplement_clips(
 
 
 def _build_fallback_clips(
-    segments: list["TranscriptionSegment"],
+    segments: list[TranscriptionSegment],
     max_clips: int,
     min_dur: float,
     max_dur: float,
@@ -511,7 +511,7 @@ def _build_fallback_clips(
 
 
 def select_clips(
-    segments: list["TranscriptionSegment"],
+    segments: list[TranscriptionSegment],
     gemini_api_key: str,
     max_clips: int = 10,
     min_clips: int = 3,

@@ -17,8 +17,7 @@ import json
 import logging
 import re
 import unicodedata
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
 
 from google import genai
 from google.genai import types as genai_types
@@ -52,7 +51,7 @@ def _call_gemini_with_fallback(
         except Exception:
             pass
 
-    last_err: Optional[Exception] = None
+    last_err: Exception | None = None
     for model in _GEMINI_MODELS:
         try:
             response = client.models.generate_content(
@@ -135,7 +134,7 @@ class SeoMetadata:
         return sanitize_filename(self.title)
 
     @classmethod
-    def fallback(cls, transcript_excerpt: str) -> "SeoMetadata":
+    def fallback(cls, transcript_excerpt: str) -> SeoMetadata:
         """
         Create a minimal fallback SeoMetadata when the API call fails.
 
@@ -224,7 +223,7 @@ def sanitize_filename(title: str, max_length: int = 100) -> str:
 
 
 def get_download_filename(
-    title: Optional[str] = None,
+    title: str | None = None,
     fallback_filename: str = "clip.mp4",
     extension: str = "mp4",
 ) -> str:
@@ -466,7 +465,7 @@ Transcript:
 """
 
 
-def generate_broll_query(transcript_text: str, api_key: str) -> Optional[str]:
+def generate_broll_query(transcript_text: str, api_key: str) -> str | None:
     """
     Use Gemini to derive a visually-meaningful English B-roll search query
     from a Greek transcript.
@@ -596,9 +595,9 @@ def align_words_with_corrected_text(
 
 
 def correct_transcript_greek(
-    segments: "list",
+    segments: list,
     api_key: str,
-) -> "list":
+) -> list:
     """
     Use Gemini to fix Whisper transcription errors in Greek segments.
 
@@ -614,7 +613,7 @@ def correct_transcript_greek(
         List of corrected TranscriptionSegment objects (or original on failure).
     """
     # Lazy import to avoid circular dependency between seo_generator ↔ transcriber
-    from services.transcriber import TranscriptionSegment  # noqa: PLC0415
+    from services.transcriber import TranscriptionSegment
 
     if not api_key or not api_key.strip():
         logger.debug("Gemini key absent — skipping transcript correction.")

@@ -5,7 +5,6 @@ tests/test_video_engine.py — Unit tests for video_engine primitives.
 from __future__ import annotations
 
 import subprocess
-import tempfile
 from pathlib import Path
 
 import pytest

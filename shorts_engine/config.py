@@ -10,15 +10,12 @@ from __future__ import annotations
 import os
 import platform
 import shutil
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
-
 
 # ── .env Auto-Loader (zero external dependencies) ─────────────────────────────
 
-def _load_dotenv(env_file: Optional[Path] = None) -> None:
+def _load_dotenv(env_file: Path | None = None) -> None:
     """
     Parse a .env file and inject its key=value pairs into os.environ.
 
@@ -209,18 +206,7 @@ class Settings:
     # Beam search size (5 = full beam search for highest accuracy)
     whisper_beam_size: int = 5
 
-    # ── Content Analysis & SEO (Qwen 2.5) ──────────────────────
-    # OpenAI-compatible API base for Qwen (Ollama, vLLM, OpenRouter, etc.)
-    qwen_api_base: str = field(
-        default_factory=lambda: os.environ.get("QWEN_API_BASE", "http://localhost:11434/v1")
-    )
-    qwen_api_key: str = field(
-        default_factory=lambda: os.environ.get("QWEN_API_KEY", "")
-    )
-    qwen_model: str = field(
-        default_factory=lambda: os.environ.get("QWEN_MODEL", "qwen2.5:32b")
-    )
-    enable_highlight_scoring: bool = True
+
 
     # ── Active Speaker Framing (YOLO-face) ─────────────────────
     enable_face_tracking: bool = True
@@ -236,7 +222,7 @@ class Settings:
 
     # ── Outro ─────────────────────────────────────────────────
     # Path to an optional outro bumper video. None = skip concatenation.
-    outro_path: Optional[Path] = None
+    outro_path: Path | None = None
 
     # ── B-Roll & Transitions ──────────────────────────────────
     # Target duration (seconds) for each B-roll overlay
@@ -266,7 +252,7 @@ class Settings:
     # Track preset: "ambient_calm" | "dramatic_pulse" | "upbeat_groove" | "custom" | "none"
     bg_music_track: str = "ambient_calm"
     # Optional path to custom uploaded audio file (used when bg_music_track == "custom")
-    bg_music_path: Optional[Path] = None
+    bg_music_path: Path | None = None
     # Music volume level (0.01 to 0.50, default 0.20 = 20% volume)
     bg_music_volume: float = 0.20
     # Dynamic speech ducking (sidechain compression to dip music during speech)
@@ -276,7 +262,7 @@ class Settings:
     target_width: int = 1080
     target_height: int = 1920
 
-    def resolve_bg_music_path(self) -> Optional[Path]:
+    def resolve_bg_music_path(self) -> Path | None:
         """
         Resolve the Path to the active background music file, or None if disabled.
         """

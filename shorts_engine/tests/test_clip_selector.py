@@ -4,14 +4,11 @@ tests/test_clip_selector.py — Unit tests for AI clip selection, timestamp norm
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import patch
 
 from shorts_engine.services.clip_selector import (
     ClipCandidate,
     _normalize_clip_times,
-    _parse_clips_json,
     _parse_single_clip,
     _parse_time_value,
     _supplement_clips,

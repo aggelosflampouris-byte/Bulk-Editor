@@ -12,15 +12,19 @@ This module has zero FFmpeg or HTTP dependencies.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Optional
 
 from faster_whisper import WhisperModel
 
 try:
     from config import ASS_HEADER_TEMPLATE, ASS_HIGHLIGHT_STYLE_LINE, ASS_STYLE_LINE
 except ImportError:
-    from shorts_engine.config import ASS_HEADER_TEMPLATE, ASS_HIGHLIGHT_STYLE_LINE, ASS_STYLE_LINE
+    from shorts_engine.config import (
+        ASS_HEADER_TEMPLATE,
+        ASS_HIGHLIGHT_STYLE_LINE,
+        ASS_STYLE_LINE,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -33,20 +37,20 @@ class TranscriptionSegment:
     Uses __slots__ for memory efficiency when processing many segments.
     """
 
-    __slots__ = ("start", "end", "text", "words")
+    __slots__ = ("end", "start", "text", "words")
 
     def __init__(
         self,
         start: float,
         end: float,
         text: str,
-        words: Optional[list[tuple[float, float, str]]] = None,
+        words: list[tuple[float, float, str]] | None = None,
     ) -> None:
         self.start: float = start
         self.end: float = end
         self.text: str = text.strip()
         # Each entry: (word_start, word_end, word_text)
-        self.words: Optional[list[tuple[float, float, str]]] = words
+        self.words: list[tuple[float, float, str]] | None = words
 
     def __repr__(self) -> str:
         return f"TranscriptionSegment(start={self.start:.2f}, end={self.end:.2f}, text={self.text!r})"
@@ -60,7 +64,7 @@ def transcribe(
     device: str = "cpu",
     compute_type: str = "int8",
     beam_size: int = 1,
-    progress_cb: Optional[Callable[[float, str], None]] = None,
+    progress_cb: Callable[[float, str], None] | None = None,
 ) -> list[TranscriptionSegment]:
     """
     Transcribe Greek speech from *video_path* using faster-whisper.
@@ -118,7 +122,7 @@ def transcribe(
         if not seg.text.strip():
             continue
         # Extract word-level timing when available
-        word_data: Optional[list[tuple[float, float, str]]] = None
+        word_data: list[tuple[float, float, str]] | None = None
         if seg.words:
             word_data = [
                 (w.start, w.end, w.word)
@@ -216,8 +220,8 @@ def _build_karaoke_text(words: list[tuple[float, float, str]], seg_start: float)
 
 def segments_to_ass(
     segments: list[TranscriptionSegment],
-    style_line: Optional[str] = None,
-    highlight_style_line: Optional[str] = None,
+    style_line: str | None = None,
+    highlight_style_line: str | None = None,
 ) -> str:
     """
     Render a full ASS subtitle file string from a list of segments.
@@ -267,8 +271,8 @@ def segments_to_ass(
 def write_ass_file(
     segments: list[TranscriptionSegment],
     output_path: Path,
-    style_line: Optional[str] = None,
-    highlight_style_line: Optional[str] = None,
+    style_line: str | None = None,
+    highlight_style_line: str | None = None,
 ) -> Path:
     """
     Generate and write an ASS subtitle file for the given segments.

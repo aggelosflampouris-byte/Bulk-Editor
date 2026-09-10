@@ -19,9 +19,10 @@ import json
 import logging
 import os
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional, Sequence, Union
+from typing import Any
 
 from google import genai
 from google.genai import types as genai_types
@@ -33,7 +34,9 @@ try:
 except ImportError:
     from shorts_engine.services.seo_generator import _call_gemini_with_fallback
     from shorts_engine.services.transcriber import TranscriptionSegment
-    from shorts_engine.services.youtube_transcript_fetcher import format_transcript_for_llm
+    from shorts_engine.services.youtube_transcript_fetcher import (
+        format_transcript_for_llm,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +148,7 @@ TRANSCRIPT:
 
 
 def analyze_transcript_cloud(
-    transcript_data: Union[str, Sequence[TranscriptionSegment]],
+    transcript_data: str | Sequence[TranscriptionSegment],
     gemini_api_key: str = "",
 ) -> CloudAnalysisResult:
     """

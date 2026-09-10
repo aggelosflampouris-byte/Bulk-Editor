@@ -11,18 +11,14 @@ Architecture contract:
 
 from __future__ import annotations
 
-import json
 import logging
 import tempfile
 from pathlib import Path
-from typing import Optional
 
 import streamlit as st
-
 from config import Settings, assert_system_binaries, inject_ffmpeg_path
 from pipeline import ProcessingResult, run_batch, run_url_pipeline
 from services.clip_selector import ClipCandidate
-from services.downloader import probe_url_metadata
 from services.seo_generator import get_download_filename
 
 # ── Logging Setup ──────────────────────────────────────────────────────────────
@@ -331,26 +327,6 @@ def _render_sidebar() -> Settings:
 
         st.markdown("---")
         st.markdown("### Content Analysis & Hooks")
-        enable_highlight_scoring = st.checkbox(
-            "Qwen 2.5 Highlight Scoring",
-            value=True,
-            help="Analyzes Greek transcript to detect high-retention 30–60s hooks and viral cut points using Qwen 2.5-32B/72B (with Gemini fallback).",
-            key="enable_highlight_scoring_check",
-        )
-        with st.expander("Qwen LLM Endpoint Config", expanded=False):
-            qwen_api_base = st.text_input(
-                "API Base URL",
-                value=_os.environ.get("QWEN_API_BASE", "http://localhost:11434/v1"),
-                help="OpenAI-compatible REST endpoint (Ollama, vLLM, OpenRouter, etc.)",
-                key="qwen_api_base_input",
-            )
-            qwen_model = st.text_input(
-                "Model Name",
-                value=_os.environ.get("QWEN_MODEL", "qwen2.5:32b"),
-                help="Model name identifier, e.g. qwen2.5:32b or qwen2.5:72b",
-                key="qwen_model_input",
-            )
-
         st.markdown("---")
         st.markdown("### Auto-Framing")
         enable_face_tracking = st.checkbox(
@@ -464,7 +440,7 @@ def _render_sidebar() -> Settings:
             key="outro_uploader",
         )
 
-        outro_path: Optional[Path] = None
+        outro_path: Path | None = None
         if outro_file is not None:
             # Persist the uploaded outro to a session-scoped temp file
             if "outro_tmp_path" not in st.session_state:
@@ -494,7 +470,7 @@ def _render_sidebar() -> Settings:
         )
 
         bg_music_track = "ambient_calm"
-        custom_music_path: Optional[Path] = None
+        custom_music_path: Path | None = None
         bg_music_vol = 0.20
         bg_music_duck = True
 
@@ -585,9 +561,7 @@ def _render_sidebar() -> Settings:
     return Settings(
         whisper_model_size=str(model_size),
         whisper_beam_size=int(whisper_beam_size),
-        enable_highlight_scoring=bool(enable_highlight_scoring),
-        qwen_api_base=str(qwen_api_base).strip(),
-        qwen_model=str(qwen_model).strip(),
+
         enable_face_tracking=bool(enable_face_tracking),
         enable_vfx=bool(enable_vfx),
         broll_start_offset=float(broll_start),
@@ -756,10 +730,10 @@ def _render_result_card(result: ProcessingResult, index: int) -> None:
 
 
 def _make_progress_callback(
-    progress_bar: "st.delta_generator.DeltaGenerator",
-    stage_text: "st.delta_generator.DeltaGenerator",
+    progress_bar: st.delta_generator.DeltaGenerator,
+    stage_text: st.delta_generator.DeltaGenerator,
     total: int,
-) -> "pipeline.ProgressCallback":
+) -> pipeline.ProgressCallback:
     """
     Build a ProgressCallback that updates Streamlit progress UI elements.
 

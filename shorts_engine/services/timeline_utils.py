@@ -16,7 +16,6 @@ All functions are pure (no side effects) to allow easy unit testing.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
 
 try:
     from services.transcriber import TranscriptionSegment
@@ -50,7 +49,7 @@ _CLAUSE_SEPARATORS: tuple[str, ...] = (",", ":", "-")
 
 
 def format_transcript_with_timestamps(
-    segments: list["TranscriptionSegment"],
+    segments: list[TranscriptionSegment],
 ) -> str:
     """
     Format a segment list into a timestamped block suitable for Gemini input.
@@ -75,7 +74,7 @@ def format_transcript_with_timestamps(
 def snap_to_silence(
     start_time: float,
     end_time: float,
-    segments: list["TranscriptionSegment"],
+    segments: list[TranscriptionSegment],
     min_dur: float = 20.0,
     max_dur: float = 40.0,
 ) -> tuple[float, float]:
@@ -287,10 +286,10 @@ def snap_to_silence(
 
 
 def slice_segments(
-    segments: list["TranscriptionSegment"],
+    segments: list[TranscriptionSegment],
     start_time: float,
     end_time: float,
-) -> list["TranscriptionSegment"]:
+) -> list[TranscriptionSegment]:
     """
     Filter segments to those within [start_time, end_time] and re-base timestamps.
 

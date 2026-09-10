@@ -18,15 +18,15 @@ try:
     from shorts_engine.services.vfx_engine import (
         SceneAnalysis,
         VfxPreset,
-        choose_vfx_preset,
         apply_vfx,
+        choose_vfx_preset,
     )
 except ModuleNotFoundError:
     from services.vfx_engine import (
         SceneAnalysis,
         VfxPreset,
-        choose_vfx_preset,
         apply_vfx,
+        choose_vfx_preset,
     )
 
 

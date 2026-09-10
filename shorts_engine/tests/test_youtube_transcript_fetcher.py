@@ -5,15 +5,16 @@ tests/test_youtube_transcript_fetcher.py — Unit tests for youtube-transcript-a
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
+
 import pytest
 
+from shorts_engine.services.transcriber import TranscriptionSegment
 from shorts_engine.services.youtube_transcript_fetcher import (
+    YouTubeTranscriptUnavailableError,
     extract_youtube_id,
     fetch_youtube_transcript,
     format_transcript_for_llm,
-    YouTubeTranscriptUnavailableError,
 )
-from shorts_engine.services.transcriber import TranscriptionSegment
 
 
 def test_extract_youtube_id():

@@ -7,8 +7,6 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-import pytest
-
 from shorts_engine.services.face_tracker import calculate_active_speaker_crop_x
 from shorts_engine.services.video_engine import crop_to_9_16, probe_resolution
 
@@ -64,7 +62,10 @@ def test_crop_to_9_16_with_dynamic_crop_offset(tmp_path):
 
 def test_track_active_speaker_no_faces(tmp_path):
     landscape_video = _generate_synthetic_video(tmp_path / "landscape_no_face.mp4", 1920, 1080, duration=1.0)
-    from shorts_engine.services.face_tracker import track_active_speaker, SpeakerTrackingResult
+    from shorts_engine.services.face_tracker import (
+        SpeakerTrackingResult,
+        track_active_speaker,
+    )
 
     result = track_active_speaker(
         video_path=landscape_video,

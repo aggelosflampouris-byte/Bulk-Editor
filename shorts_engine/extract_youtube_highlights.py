@@ -34,18 +34,18 @@ if str(_PKG_DIR.parent) not in sys.path:
 if str(_PKG_DIR) not in sys.path:
     sys.path.insert(0, str(_PKG_DIR))
 
-from services.youtube_transcript_fetcher import (
-    fetch_youtube_transcript,
-    format_transcript_for_llm,
-    YouTubeTranscriptError,
-)
 from services.cloud_analyzer import (
+    CloudAnalyzerError,
     analyze_transcript_cloud,
     transcribe_audio_cloud,
-    CloudAnalyzerError,
 )
-from services.transcriber import TranscriptionSegment
 from services.downloader import download_video
+from services.transcriber import TranscriptionSegment
+from services.youtube_transcript_fetcher import (
+    YouTubeTranscriptError,
+    fetch_youtube_transcript,
+    format_transcript_for_llm,
+)
 
 logging.basicConfig(
     level=logging.INFO,

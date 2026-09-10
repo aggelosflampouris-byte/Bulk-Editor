@@ -9,14 +9,17 @@ Responsibilities:
 
 import logging
 from pathlib import Path
-from typing import Optional, List, Tuple
 
 import cv2
 from moviepy import (
-    VideoFileClip, ImageClip, CompositeVideoClip, AudioFileClip, CompositeAudioClip
+    AudioFileClip,
+    CompositeAudioClip,
+    CompositeVideoClip,
+    ImageClip,
+    VideoFileClip,
 )
-from moviepy.video.fx import FadeIn, FadeOut, Resize
 from moviepy.audio.fx import AudioFadeIn, AudioFadeOut, MultiplyVolume
+from moviepy.video.fx import FadeIn, FadeOut, Resize
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +45,7 @@ def apply_ken_burns(clip, duration: float, zoom_factor: float = 1.15):
 
 def compute_zoom_intervals(
     duration: float,
-    segments: Optional[list] = None,
+    segments: list | None = None,
     clip_start_offset: float = 0.0,
     chunk_target: float = 3.5,
 ) -> list[tuple[float, float]]:
@@ -114,8 +117,8 @@ def apply_dynamic_zoom_ffmpeg(
     """
     Apply speech dynamic zoom jump-cuts natively and rapidly via FFmpeg overlay timeline expressions.
     """
-    import subprocess
     import shutil
+    import subprocess
 
     if not zoom_intervals:
         # No intervals: copy directly
@@ -186,14 +189,14 @@ def apply_dynamic_speech_zoom(clip, duration: float, segments: list, clip_start_
 def compose_timeline(
     main_video_path: Path,
     output_path: Path,
-    broll_image_path: Optional[Path] = None,
+    broll_image_path: Path | None = None,
     broll_start: float = 0.0,
     broll_duration: float = 3.0,
-    bg_music_path: Optional[Path] = None,
-    text_overlay_path: Optional[Path] = None,
+    bg_music_path: Path | None = None,
+    text_overlay_path: Path | None = None,
     target_width: int = 1080,
     target_height: int = 1920,
-    segments: Optional[list] = None,
+    segments: list | None = None,
     clip_start_offset: float = 0.0,
 ) -> Path:
     """

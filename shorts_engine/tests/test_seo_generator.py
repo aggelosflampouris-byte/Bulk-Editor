@@ -6,8 +6,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from shorts_engine.services.seo_generator import (
     _call_gemini_with_fallback,
     align_words_with_corrected_text,

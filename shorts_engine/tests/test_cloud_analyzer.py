@@ -4,18 +4,16 @@ tests/test_cloud_analyzer.py — Unit tests for 100% Cloud-based SEO, chapters, 
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
+
 import pytest
 
 from shorts_engine.services.cloud_analyzer import (
-    analyze_transcript_cloud,
     CloudAnalysisResult,
-    VideoChapter,
-    HighRetentionHook,
     CloudAnalyzerError,
+    analyze_transcript_cloud,
     transcribe_audio_cloud,
 )
-from shorts_engine.services.transcriber import TranscriptionSegment
 
 
 def test_analyze_transcript_cloud_success():

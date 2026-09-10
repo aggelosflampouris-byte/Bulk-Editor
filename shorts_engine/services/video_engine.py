@@ -19,7 +19,6 @@ import logging
 import subprocess
 import sys
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -262,8 +261,8 @@ def crop_to_9_16(
     output_path: Path,
     target_width: int = 1080,
     target_height: int = 1920,
-    crop_x_offset: Optional[int] = None,
-    crop_x_expr: Optional[str] = None,
+    crop_x_offset: int | None = None,
+    crop_x_expr: str | None = None,
 ) -> Path:
     """
     Scale and crop *input_path* to exactly *target_width* × *target_height* (9:16).
