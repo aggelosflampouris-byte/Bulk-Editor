@@ -547,7 +547,6 @@ def select_clips(
     max_clips = max(min_clips, min(10, max_clips))
 
     if not segments:
-        logger.warning("select_clips: empty segments list — returning empty.")
         return []
 
     if not gemini_api_key or not gemini_api_key.strip():

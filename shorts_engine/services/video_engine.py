@@ -815,7 +815,7 @@ def mix_background_music(
             fc = (
                 f"{bgm_filter};"
                 f"[0:a]{norm_af},asplit=2[speech_main][speech_sc];"
-                f"[bgm][speech_sc]sidechaincompress=threshold=0.08:ratio=3:attack=20:release=250:level_sc=2.0[ducked_bgm];"
+                f"[bgm][speech_sc]sidechaincompress=threshold=0.10:ratio=2.2:attack=25:release=350:level_sc=1.0[ducked_bgm];"
                 f"[speech_main][ducked_bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,atrim=0:{vid_dur:.3f}[a_out]"
             )
         else:

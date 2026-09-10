@@ -206,8 +206,8 @@ class Settings:
     whisper_device: str = "cpu"
     # Compute type appropriate for CPU
     whisper_compute_type: str = "int8"
-    # Beam search size (1 = greedy search, 3x faster on CPU with identical Greek accuracy)
-    whisper_beam_size: int = 1
+    # Beam search size (5 = full beam search for highest accuracy)
+    whisper_beam_size: int = 5
 
     # ── Content Analysis & SEO (Qwen 2.5) ──────────────────────
     # OpenAI-compatible API base for Qwen (Ollama, vLLM, OpenRouter, etc.)
@@ -267,8 +267,8 @@ class Settings:
     bg_music_track: str = "ambient_calm"
     # Optional path to custom uploaded audio file (used when bg_music_track == "custom")
     bg_music_path: Optional[Path] = None
-    # Music volume level (0.01 to 0.50, default 0.10 = 10% volume)
-    bg_music_volume: float = 0.10
+    # Music volume level (0.01 to 0.50, default 0.20 = 20% volume)
+    bg_music_volume: float = 0.20
     # Dynamic speech ducking (sidechain compression to dip music during speech)
     bg_music_ducking: bool = True
 

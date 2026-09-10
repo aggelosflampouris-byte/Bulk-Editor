@@ -103,6 +103,8 @@ def transcribe(
             word_timestamps=True,
             vad_filter=True,
             vad_parameters={"min_silence_duration_ms": 300},
+            initial_prompt="Γεια σας. Σήμερα θα μιλήσουμε για ένα πολύ ενδιαφέρον θέμα. Ας ξεκινήσουμε.",
+            condition_on_previous_text=False,
         )
     except Exception as exc:
         raise RuntimeError(

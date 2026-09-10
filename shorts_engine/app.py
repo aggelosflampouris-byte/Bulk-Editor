@@ -321,10 +321,10 @@ def _render_sidebar() -> Settings:
         whisper_beam_size = st.select_slider(
             "Whisper Beam Size",
             options=[1, 2, 5],
-            value=1,
+            value=5,
             help=(
-                "1 = greedy search (3x faster on CPU, highly recommended).\n"
-                "5 = full beam search (highest accuracy, slowest on CPU)."
+                "1 = greedy search (fastest).\n"
+                "5 = full beam search (highest accuracy for Greek, slower on CPU)."
             ),
             key="whisper_beam_size_select",
         )
@@ -495,7 +495,7 @@ def _render_sidebar() -> Settings:
 
         bg_music_track = "ambient_calm"
         custom_music_path: Optional[Path] = None
-        bg_music_vol = 0.10
+        bg_music_vol = 0.20
         bg_music_duck = True
 
         if enable_bg_music:
@@ -541,11 +541,11 @@ def _render_sidebar() -> Settings:
             bg_music_vol = st.slider(
                 "Music Volume",
                 min_value=0.02,
-                max_value=0.25,
-                value=0.10,
+                max_value=0.40,
+                value=0.20,
                 step=0.01,
                 format="%.2f",
-                help="Volume of background music relative to speech (10% recommended).",
+                help="Volume of background music relative to speech (20% recommended).",
                 key="bg_music_vol_slider",
             )
 

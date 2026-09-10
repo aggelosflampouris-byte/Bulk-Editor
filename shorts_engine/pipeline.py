@@ -22,8 +22,17 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
+import sys
+_PKG_DIR = Path(__file__).parent.resolve()
+if str(_PKG_DIR.parent) not in sys.path:
+    sys.path.insert(0, str(_PKG_DIR.parent))
+if str(_PKG_DIR) not in sys.path:
+    sys.path.insert(0, str(_PKG_DIR))
 
-from config import Settings, assert_system_binaries
+try:
+    from config import Settings, assert_system_binaries
+except ImportError:
+    from shorts_engine.config import Settings, assert_system_binaries
 from services.broll_fetcher import (
     BRollClip,
     download_clip,
@@ -311,15 +320,17 @@ def process_single(
                 except Exception:
                     pass
 
-        # ── Stage 5: B-Roll Overlay ───────────────────────────────────────────
+        # ── Stage 5: B-Roll Overlay & Dynamic Zoom ────────────────────────────
         current_path = cropped_path
+        broll_to_apply = broll_path
         if has_speaker:
             logger.info("Speaker recognized on screen — keeping speaker centered at all times; suppressing B-roll overlay.")
             warnings.append("Speaker recognized on screen — B-roll overlay suppressed to keep speaker in center at all times.")
-        elif broll_path is not None:
-            _report("Applying B-roll overlay...")
+            broll_to_apply = None
+
+        if segments or broll_to_apply is not None:
+            _report("Applying timeline effects (Dynamic Zoom / B-Roll)...")
             main_duration = probe_duration(cropped_path)
-            # Clamp overlay duration and start offset so overlay cleanly fits within clip length
             actual_broll_dur = min(
                 settings.broll_overlay_duration,
                 max(1.0, main_duration - 1.0),
@@ -332,7 +343,7 @@ def process_single(
             compose_timeline(
                 main_video_path=cropped_path,
                 output_path=overlaid_path,
-                broll_image_path=broll_path,
+                broll_image_path=broll_to_apply,
                 broll_start=safe_start,
                 broll_duration=actual_broll_dur,
                 target_width=settings.target_width,
@@ -446,6 +457,17 @@ def run_batch(
     settings: Settings,
     progress_cb: Optional[ProgressCallback] = None,
 ) -> list[ProcessingResult]:
+    return _run_batch_impl(video_paths, settings, progress_cb)
+
+
+process_batch = run_batch
+
+
+def _run_batch_impl(
+    video_paths: list[Path],
+    settings: Settings,
+    progress_cb: Optional[ProgressCallback] = None,
+) -> list[ProcessingResult]:
     """
     Process a list of video files through the complete pipeline.
 
@@ -492,21 +514,137 @@ def run_batch(
             per_video_tmp = tmp_dir / f"item_{idx:04d}"
             per_video_tmp.mkdir(parents=True, exist_ok=True)
 
-            result = process_single(
-                video_path=video_path,
-                settings=settings,
-                tmp_dir=per_video_tmp,
-                run_output_dir=run_output_dir,
-                progress_cb=progress_cb,
-                item_index=idx,
-                total_items=total,
-            )
-            results.append(result)
+            main_duration = probe_duration(video_path)
+            # If the video is longer than clip_max_duration, perform multi-clip extraction
+            # guaranteeing minimum settings.min_clips (default: 3)
+            if main_duration > settings.clip_max_duration:
+                logger.info(
+                    "Video '%s' duration (%.1fs) exceeds max clip duration (%.1fs) — running multi-clip extraction (minimum: %d)...",
+                    video_path.name, main_duration, settings.clip_max_duration, settings.min_clips,
+                )
+                if progress_cb:
+                    progress_cb(idx, total, f"[{video_path.name}] Transcribing audio...")
+
+                def _item_transcribe_cb(pct: float, msg: str) -> None:
+                    if progress_cb:
+                        progress_cb(idx, total, f"[{video_path.name}] {msg}")
+
+                all_segments = transcribe(
+                    video_path,
+                    model_size=settings.whisper_model_size,
+                    device=settings.whisper_device,
+                    compute_type=settings.whisper_compute_type,
+                    beam_size=settings.whisper_beam_size,
+                    progress_cb=_item_transcribe_cb,
+                )
+
+                if not all_segments:
+                    logger.info("No speech segments detected in '%s' — generating synthetic segments across duration (%.1fs)...", video_path.name, main_duration)
+                    step = main_duration / max(settings.min_clips, 1)
+                    all_segments = [
+                        TranscriptionSegment(
+                            start=round(k * step, 2),
+                            end=round(min((k + 1) * step, main_duration), 2),
+                            text=f"{video_path.stem} clip {k + 1}",
+                            words=[],
+                        )
+                        for k in range(settings.min_clips)
+                    ]
+                elif settings.gemini_api_key:
+                    if progress_cb:
+                        progress_cb(idx, total, f"[{video_path.name}] Correcting transcript with Gemini...")
+                    all_segments = correct_transcript_greek(all_segments, settings.gemini_api_key)
+
+                if progress_cb:
+                    progress_cb(idx, total, f"[{video_path.name}] Selecting best clips with AI...")
+
+                raw_candidates = select_clips(
+                    segments=all_segments,
+                    gemini_api_key=settings.gemini_api_key,
+                    max_clips=settings.max_clips,
+                    min_clips=settings.min_clips,
+                    min_dur=settings.clip_min_duration,
+                    max_dur=settings.clip_max_duration,
+                    source_title=video_path.stem,
+                )
+
+                snapped: list[ClipCandidate] = []
+                for cand in raw_candidates:
+                    s_start, s_end = snap_to_silence(
+                        start_time=cand.start_time,
+                        end_time=cand.end_time,
+                        segments=all_segments,
+                        min_dur=settings.clip_min_duration,
+                        max_dur=settings.clip_max_duration,
+                    )
+                    snapped.append(
+                        ClipCandidate(
+                            index=cand.index,
+                            start_time=s_start,
+                            end_time=s_end,
+                            hook_summary=cand.hook_summary,
+                            seo=cand.seo,
+                            broll_query=cand.broll_query,
+                        )
+                    )
+
+                logger.info(
+                    "Selected %d clip candidates from '%s' (minimum guaranteed: %d):",
+                    len(snapped), video_path.name, settings.min_clips,
+                )
+                print(f"\n{'='*65}\n🎬 SELECTED {len(snapped)} SHORTS FROM '{video_path.name}' (MINIMUM: {settings.min_clips}):\n{'='*65}")
+                for c in snapped:
+                    dur = c.end_time - c.start_time
+                    title = c.seo.title if c.seo else "Clip"
+                    logger.info("  [#%d] [%.1fs - %.1fs] (%.1fs): %s", c.index, c.start_time, c.end_time, dur, title)
+                    print(f"  [#{c.index}] {c.start_time:.1f}s - {c.end_time:.1f}s ({dur:.1f}s) — \"{title}\"")
+                print(f"{'='*65}\n")
+
+                stem_prefix = video_path.stem
+                item_results = []
+                for c_idx, clip in enumerate(snapped):
+                    per_clip_tmp = per_video_tmp / f"clip_{clip.index:02d}"
+                    per_clip_tmp.mkdir(parents=True, exist_ok=True)
+                    res = process_url_clip(
+                        clip=clip,
+                        source_path=video_path,
+                        all_segments=all_segments,
+                        settings=settings,
+                        tmp_dir=per_clip_tmp,
+                        run_output_dir=run_output_dir,
+                        progress_cb=progress_cb,
+                        item_index=c_idx,
+                        total_items=len(snapped),
+                        stem_prefix=stem_prefix or None,
+                    )
+                    item_results.append(res)
+                    results.append(res)
+
+                item_succ = sum(1 for r in item_results if r.success)
+                print(f"\n{'='*65}\n✅ RENDERED {item_succ}/{len(snapped)} SHORTS FROM '{video_path.name}':\n{'='*65}")
+                for idx_r, r in enumerate(item_results, 1):
+                    c_num = r.clip_index if r.clip_index is not None else idx_r
+                    st_icon = "✓" if r.success else "✗"
+                    c_title = (r.seo.title if r.seo else None) or (r.output_file.name if r.output_file else f"Clip #{c_num}")
+                    c_out = str(r.output_file) if r.output_file else "None"
+                    print(f"  [{st_icon}] Clip #{c_num}: \"{c_title}\" -> {c_out}")
+                print(f"{'='*65}\n")
+            else:
+                result = process_single(
+                    video_path=video_path,
+                    settings=settings,
+                    tmp_dir=per_video_tmp,
+                    run_output_dir=run_output_dir,
+                    progress_cb=progress_cb,
+                    item_index=idx,
+                    total_items=total,
+                )
+                results.append(result)
 
     successful = sum(1 for r in results if r.success)
     logger.info(
         "Batch complete: %d/%d succeeded. Output: '%s'",
-        successful, total, run_output_dir,
+        successful, len(results), run_output_dir,
     )
     return results
 
@@ -524,6 +662,7 @@ def process_url_clip(
     progress_cb: Optional[ProgressCallback] = None,
     item_index: int = 0,
     total_items: int = 1,
+    stem_prefix: Optional[str] = None,
 ) -> ProcessingResult:
     """
     Run the full assembly pipeline for a single AI-selected clip.
@@ -542,12 +681,16 @@ def process_url_clip(
         progress_cb:   Optional progress callback.
         item_index:    0-based clip index (for callback display).
         total_items:   Total clips being processed (for callback display).
+        stem_prefix:   Optional prefix for output filename.
 
     Returns:
         A ProcessingResult summarising the outcome.
     """
     # Use a deterministic stem so files don't collide across clips
-    stem = f"clip_{clip.index:02d}"
+    if stem_prefix:
+        stem = f"{stem_prefix}_clip_{clip.index:02d}"
+    else:
+        stem = f"clip_{clip.index:02d}"
     result = ProcessingResult(input_file=source_path, clip_index=clip.index)
     warnings: list[str] = []
 
@@ -687,8 +830,8 @@ def process_url_clip(
                 broll_duration=actual_broll_dur,
                 target_width=settings.target_width,
                 target_height=settings.target_height,
-                segments=all_segments,
-                clip_start_offset=clip.start_time,
+                segments=clip_segments,
+                clip_start_offset=0.0,
             )
             current_path = overlaid_path
 

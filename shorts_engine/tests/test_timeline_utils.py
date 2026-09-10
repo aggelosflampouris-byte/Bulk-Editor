@@ -175,3 +175,89 @@ def test_snap_to_silence_duration_clamping():
     )
     dur = snapped_end - snapped_start
     assert 20.0 <= dur <= 45.01
+
+
+def test_compute_zoom_intervals_single_segment():
+    from shorts_engine.services.compositor import compute_zoom_intervals
+
+    # Single continuous segment spanning 42 seconds
+    segments = [
+        TranscriptionSegment(
+            start=0.0,
+            end=42.0,
+            text="Ομιλία χωρίς διακοπή.",
+            words=[],
+        )
+    ]
+
+    intervals = compute_zoom_intervals(42.0, segments=segments)
+    # Must produce multiple alternating zoom intervals
+    assert len(intervals) >= 4
+    for start, end in intervals:
+        assert 0.0 <= start < end <= 42.0
+        assert (end - start) >= 0.8
+
+
+def test_compute_zoom_intervals_empty_segments_fallback():
+    from shorts_engine.services.compositor import compute_zoom_intervals
+
+    # Empty segments should still produce alternating zoom intervals
+    intervals = compute_zoom_intervals(20.0, segments=[])
+    assert len(intervals) >= 2
+    for start, end in intervals:
+        assert 0.0 <= start < end <= 20.0
+
+
+def test_compute_zoom_intervals_with_rebased_offset():
+    from shorts_engine.services.compositor import compute_zoom_intervals
+
+    # Pre-rebased segments (start at 0.0) but clip_start_offset was 150.0
+    segments = [
+        TranscriptionSegment(
+            start=0.5,
+            end=30.0,
+            text="Απόσπασμα ήδη χρονισμένο.",
+            words=[],
+        )
+    ]
+    intervals = compute_zoom_intervals(30.0, segments=segments, clip_start_offset=150.0)
+    assert len(intervals) >= 3
+    for start, end in intervals:
+        assert 0.0 <= start < end <= 30.0
+
+
+def test_apply_dynamic_zoom_ffmpeg_calls_correct_overlay_filter(tmp_path: Path):
+    from unittest.mock import patch, MagicMock
+    from shorts_engine.services.compositor import apply_dynamic_zoom_ffmpeg
+
+    src_video = tmp_path / "in.mp4"
+    src_video.write_bytes(b"dummy")
+    out_video = tmp_path / "out.mp4"
+
+    intervals = [(1.5, 4.5), (8.0, 11.5)]
+
+    mock_run = MagicMock()
+    mock_run.returncode = 0
+
+    with patch("subprocess.run", return_value=mock_run) as p_run:
+        result = apply_dynamic_zoom_ffmpeg(
+            video_path=src_video,
+            output_path=out_video,
+            zoom_intervals=intervals,
+            target_width=1080,
+            target_height=1920,
+            zoom_factor=1.15,
+        )
+
+        assert result == out_video
+        assert p_run.called
+        cmd = p_run.call_args[0][0]
+        # Verify overlay and filtergraph
+        cmd_str = " ".join(cmd)
+        assert "overlay=0:0:enable=" in cmd_str
+        assert "between(t,1.50,4.50)" in cmd_str
+        assert "between(t,8.00,11.50)" in cmd_str
+        assert "split=2" in cmd_str
+        assert "scale=1080:1920" in cmd_str
+
+

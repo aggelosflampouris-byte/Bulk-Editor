@@ -40,19 +40,126 @@ def apply_ken_burns(clip, duration: float, zoom_factor: float = 1.15):
 
     return clip.transform(image_transform)
 
+def compute_zoom_intervals(
+    duration: float,
+    segments: Optional[list] = None,
+    clip_start_offset: float = 0.0,
+    chunk_target: float = 3.5,
+) -> list[tuple[float, float]]:
+    """
+    Compute alternating punch-in zoom intervals (3.0s - 4.5s) for high-retention jump cuts.
+
+    Ensures that every short has energetic, visible camera punch-ins during speech,
+    even when Whisper returns only a single coarse segment or when segments are absent.
+
+    Returns:
+        List of (start_sec, end_sec) tuples relative to the clip start (0.0 to duration).
+    """
+    rel_speech: list[tuple[float, float]] = []
+    offset = clip_start_offset
+    # If segments appear already relative (e.g. all starts <= duration and offset > duration),
+    # do not subtract offset again.
+    if segments and clip_start_offset > duration:
+        all_small = all(
+            getattr(s, "start", s[0] if isinstance(s, (list, tuple)) else 0.0) <= (duration + 1.0)
+            for s in segments
+        )
+        if all_small:
+            offset = 0.0
+
+    if segments:
+        for s in segments:
+            start = getattr(s, "start", s[0] if isinstance(s, (list, tuple)) else 0.0)
+            end = getattr(s, "end", s[1] if isinstance(s, (list, tuple)) else duration)
+            r_s = max(0.0, start - offset)
+            r_e = min(duration, end - offset)
+            if r_e > r_s + 0.5:
+                rel_speech.append((r_s, r_e))
+
+    all_blocks: list[tuple[float, float]] = []
+    if not rel_speech:
+        # Fallback: divide entire duration into alternating pacing blocks
+        t = 0.0
+        while t < duration:
+            all_blocks.append((t, min(t + chunk_target, duration)))
+            t += chunk_target
+    else:
+        for s_start, s_end in rel_speech:
+            seg_len = s_end - s_start
+            if seg_len > 4.5:
+                t = s_start
+                while t < s_end:
+                    all_blocks.append((t, min(t + chunk_target, s_end)))
+                    t += chunk_target
+            else:
+                all_blocks.append((s_start, s_end))
+
+    # Zoom is active on odd-indexed blocks (every second chunk punches in)
+    zoom_intervals: list[tuple[float, float]] = []
+    for i, (b_s, b_e) in enumerate(all_blocks):
+        if i % 2 != 0 and (b_e - b_s) >= 0.8:
+            zoom_intervals.append((round(b_s, 2), round(b_e, 2)))
+
+    return zoom_intervals
+
+
+def apply_dynamic_zoom_ffmpeg(
+    video_path: Path,
+    output_path: Path,
+    zoom_intervals: list[tuple[float, float]],
+    target_width: int = 1080,
+    target_height: int = 1920,
+    zoom_factor: float = 1.15,
+) -> Path:
+    """
+    Apply speech dynamic zoom jump-cuts natively and rapidly via FFmpeg overlay timeline expressions.
+    """
+    import subprocess
+    import shutil
+
+    if not zoom_intervals:
+        # No intervals: copy directly
+        shutil.copy2(str(video_path), str(output_path))
+        return output_path
+
+    # Build between condition for FFmpeg overlay timeline enable
+    cond_expr = "+".join(f"between(t,{zs:.2f},{ze:.2f})" for zs, ze in zoom_intervals)
+    fc = (
+        f"[0:v]split=2[base][to_zoom];"
+        f"[to_zoom]crop=iw/{zoom_factor:.3f}:ih/{zoom_factor:.3f}:(iw-out_w)/2:(ih-out_h)/2,"
+        f"scale={target_width}:{target_height}:flags=bicubic[zoomed];"
+        f"[base]scale={target_width}:{target_height}:flags=bicubic[basescaled];"
+        f"[basescaled][zoomed]overlay=0:0:enable='{cond_expr}'[v]"
+    )
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", str(video_path),
+        "-filter_complex", fc,
+        "-map", "[v]",
+        "-map", "0:a?",
+        "-c:v", "libx264",
+        "-preset", "fast",
+        "-c:a", "copy",
+        str(output_path),
+    ]
+
+    logger.info("Executing native FFmpeg dynamic speech zoom (%d intervals)...", len(zoom_intervals))
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    if res.returncode != 0:
+        logger.warning("FFmpeg dynamic zoom failed (%s), falling back...", res.stderr)
+        raise RuntimeError(f"FFmpeg dynamic zoom failed: {res.stderr}")
+
+    return output_path
+
+
 def apply_dynamic_speech_zoom(clip, duration: float, segments: list, clip_start_offset: float = 0.0, zoom_factor: float = 1.15):
     """
     Apply a dynamic zoom-in and zoom-out effect to the main speaker based on speech segments.
     Alternates zoom on every spoken sentence/segment to simulate engaging jump cuts.
     """
     clip = clip.with_duration(duration)
-    
-    # Pre-calculate active zoom segments for O(1) time lookup
-    # Zoom is active on odd-indexed segments
-    zoom_intervals = []
-    for i, seg in enumerate(segments):
-        if i % 2 != 0:
-            zoom_intervals.append((seg.start, seg.end))
+    zoom_intervals = compute_zoom_intervals(duration, segments, clip_start_offset)
 
     def crop_center(image, scale):
         if scale == 1.0:
@@ -66,16 +173,11 @@ def apply_dynamic_speech_zoom(clip, duration: float, segments: list, clip_start_
 
     def image_transform(get_frame, t):
         frame = get_frame(t)
-        # Absolute time in source video
-        abs_t = t + clip_start_offset
-        
-        # Check if abs_t falls inside any zoom interval
         scale = 1.0
         for (z_start, z_end) in zoom_intervals:
-            if z_start <= abs_t <= z_end:
+            if z_start <= t <= z_end:
                 scale = zoom_factor
                 break
-                
         return crop_center(frame, scale)
 
     return clip.transform(image_transform)
@@ -98,7 +200,28 @@ def compose_timeline(
     Compose the final video using a multi-layer NLE approach.
     """
     logger.info("Compositing timeline for %s", main_video_path.name)
-    
+
+    # Fast path: If only dynamic zoom on main speaker is needed (no B-roll, no custom overlays, no separate bg_music in MoviePy)
+    if (
+        (not broll_image_path or not broll_image_path.exists())
+        and (not text_overlay_path or not text_overlay_path.exists())
+        and (not bg_music_path or not bg_music_path.exists())
+    ):
+        try:
+            from services.video_engine import probe_duration
+            dur = probe_duration(main_video_path)
+            zoom_intervals = compute_zoom_intervals(dur, segments, clip_start_offset)
+            return apply_dynamic_zoom_ffmpeg(
+                video_path=main_video_path,
+                output_path=output_path,
+                zoom_intervals=zoom_intervals,
+                target_width=target_width,
+                target_height=target_height,
+                zoom_factor=1.15,
+            )
+        except Exception as exc:
+            logger.warning("Fast FFmpeg dynamic zoom failed (%s), falling back to MoviePy...", exc)
+
     # Layer 0: Main Speaker
     main_clip = VideoFileClip(str(main_video_path))
     duration = main_clip.duration

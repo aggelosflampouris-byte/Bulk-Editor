@@ -243,6 +243,7 @@ def analyze_transcript_cloud(
                 hook_summary=str(hook.get("hook_summary", "")).strip(),
                 virality_reason=str(hook.get("virality_reason", "")).strip(),
             )
+        )
     # Enforce minimum 3 clips
     while len(hooks) < 3:
         idx = len(hooks) + 1
