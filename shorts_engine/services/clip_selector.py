@@ -62,6 +62,7 @@ SEO metadata that fits the image of the video.
 SOURCE TITLE: {source_title}
 
 CLIP STRUCTURE & HOOK REQUIREMENTS (CRITICAL):
+- VIRALITY FIRST: Prioritize segments containing high emotion (laughter, surprise, anger), counter-intuitive statements, strong opinions, or highly relatable analogies over plain informational text.
 - 0–3s ENGAGING HOOK: The clip MUST start immediately on a high-impact sentence, \
 provocative question, or curiosity gap. \
 NEVER start on filler words (e.g. "Εεε", "Λοιπόν", "Και να πούμε", "Ναι", "Όπως είπαμε"), \
@@ -100,9 +101,9 @@ is an array. Each array element must have exactly these keys:
       "hook_summary": "<1–2 sentence English explanation of why this clip's hook \
 and structure will maximize retention and CTR on YouTube Shorts>",
       "seo": {{
-        "title":       "<Greek title, max 60 chars, semi-official third-person phrasing matching video image, strictly NO emojis>",
+        "title":       "<Greek title, max 60 chars, engaging and curiosity-inducing, 1-2 strategic emojis allowed>",
         "description": "<Greek description, concise max 500 chars, structured with \
-hook in first 2 lines, core value in the rest, CTA and 3–5 trending hashtags at the end, strictly NO emojis>",
+hook in first 2 lines, core value in the rest, CTA and 3–5 trending hashtags at the end, 1-2 strategic emojis allowed>",
         "tags":        ["<tag 1>", ..., "<tag 16>"]
       }},
       "broll_query": "<2–5 word English Pexels search query for stock footage \
@@ -113,19 +114,18 @@ matching what the speaker is talking about in THIS clip>"
 
 SEO & TITLE RULES (CRITICAL):
 - Language: title and description inside "seo" must be in Greek.
-- IMAGE & BRAND ALIGNMENT: The title must fit the visual identity, gravity, and theme of the video and the SOURCE TITLE (e.g. serious interview, analysis, podcast, documentary).
-- SEMI-OFFICIAL THIRD-PERSON TONE:
-  * Write strictly in the third person (γ' πρόσωπο: "Η ανάλυση του...", "Πώς εξηγείται η απόφαση...", "Τι αποκαλύπτει η τοποθέτηση του [Ομιλητή]...").
-  * Maintain a semi-official, credible, analytical tone (ημι-επίσημο δημοσιογραφικό ύφος κύρους).
-  * NEVER use first-person ("Είδα", "Έμαθα", "Σας λέω").
-  * NEVER use cheap, juvenile clickbait or second-person imperatives ("Δες εδώ", "Μάθε τώρα", "Μην κάνεις αυτό το λάθος!").
-- STRICTLY NO EMOJIS: Do NOT use any emojis, symbols, or pictographs in the title or metadata (no 🔥, 🚀, 😱, 🎬, etc. — strictly clean Greek text and standard punctuation).
+- IMAGE & BRAND ALIGNMENT: The title must fit the visual identity of the source video (e.g., serious interview vs engaging vlog) but MUST prioritize high retention and Click-Through Rate (CTR).
+- ENGAGING TONE:
+  * Write in a highly engaging, relatable, or authoritative tone depending on the content.
+  * You may use third-person ("Τι αποκαλύπτουν τα στοιχεία...") or curiosity-driven hooks ("Ο λόγος που...").
+  * Avoid cheap clickbait, but ensure the title creates a strong curiosity gap.
+- EMOJIS ALLOWED: You MAY use 1 or 2 highly relevant emojis (e.g., 🤯, 🔥, 📈, 🚨) to act as visual pattern interrupts and increase CTR. Do not overuse them.
 - NOT A DIRECT QUOTE: Max 60 characters. Must capture the core topic or thesis, NOT a flat transcript excerpt.
-- description must follow the 3-part structure (Hook -> Value -> CTA + hashtags like #Shorts #Ελλάδα) without emojis.
+- description must follow the 3-part structure (Hook -> Value -> CTA + hashtags like #Shorts #Ελλάδα).
 - tags must be a list of 12 to 18 high-performing keywords and search phrases \
 optimized for the YouTube search algorithm (mix of Greek search queries, \
 entities/names mentioned, topic keywords, and 1-2 broad category/shorts terms). \
-Do NOT include '#' symbol prefix in any tag, and NO emojis.
+Do NOT include '#' symbol prefix in any tag.
 - broll_query must describe a concrete visual scene, not an abstract concept.
 - Do NOT output anything outside the JSON object.
 

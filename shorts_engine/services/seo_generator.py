@@ -72,7 +72,7 @@ _PROMPT_TEMPLATE = """\
 You are an expert editorial strategist and YouTube Shorts SEO specialist for Greek-language video productions.
 
 Given the following transcript and source context, generate an authoritative, high-CTR, \
-semi-official SEO package matching the prestige, subject matter, and visual image of the video.
+highly engaging SEO package matching the prestige, subject matter, and visual image of the video.
 
 SOURCE VIDEO CONTEXT / TITLE: {source_title}
 
@@ -80,28 +80,27 @@ Respond ONLY with a valid JSON object — no markdown, no code fences, no \
 explanation. The JSON must have exactly these keys:
 
 {{
-  "title": "<Greek title, max 60 characters, semi-official third-person phrasing matching video image, strictly NO emojis>",
-  "description": "<Greek description, max 5000 characters, structured with hook in first 2 lines, core value in the rest, CTA and 3-5 trending hashtags at the end, strictly NO emojis>",
+  "title": "<Greek title, max 60 characters, engaging and curiosity-inducing, 1-2 strategic emojis allowed>",
+  "description": "<Greek description, max 5000 characters, structured with hook in first 2 lines, core value in the rest, CTA and 3-5 trending hashtags at the end, 1-2 strategic emojis allowed>",
   "tags": ["<tag 1>", "<tag 2>", ..., "<tag 16>"]
 }}
 
 TITLE & STYLE RULES (CRITICAL):
 - Language: All titles and descriptions MUST be in Greek.
-- IMAGE & BRAND ALIGNMENT: The title must fit the visual identity, gravity, and context of the source video (e.g. serious interview, analysis, podcast, news, or documentary).
-- SEMI-OFFICIAL THIRD-PERSON TONE:
-  * Write strictly in the third person (γ' πρόσωπο: "Η ανάλυση του...", "Πώς εξηγείται η απόφαση...", "Τι αποκαλύπτουν τα στοιχεία για...", "Η τοποθέτηση σχετικά με...").
-  * Maintain a semi-official, credible, analytical tone (ημι-επίσημο δημοσιογραφικό ύφος κύρους).
-  * NEVER use first-person ("Είδα", "Έμαθα", "Σας δείχνω", "Εγώ").
-  * NEVER use cheap, juvenile clickbait or second-person imperatives ("Δες εδώ", "Μάθε τώρα", "Μην κάνεις αυτό το λάθος!").
-- STRICTLY NO EMOJIS: Do NOT use any emojis, symbols, or pictographs in the title or metadata (no 🔥, 🚀, 😱, 🎬, etc. — strictly clean Greek text and standard punctuation).
+- IMAGE & BRAND ALIGNMENT: The title must fit the visual identity of the source video (e.g., serious interview vs engaging vlog) but MUST prioritize high retention and Click-Through Rate (CTR).
+- ENGAGING TONE:
+  * Write in a highly engaging, relatable, or authoritative tone depending on the content.
+  * You may use third-person ("Τι αποκαλύπτουν τα στοιχεία...") or curiosity-driven hooks ("Ο λόγος που...").
+  * Avoid cheap clickbait, but ensure the title creates a strong curiosity gap.
+- EMOJIS ALLOWED: You MAY use 1 or 2 highly relevant emojis (e.g., 🤯, 🔥, 📈, 🚨) to act as visual pattern interrupts and increase CTR. Do not overuse them.
 - NOT A DIRECT QUOTE: The title must capture the core topic, thesis, or value proposition — not a flat excerpt or quote from the transcript. Max 60 characters.
 
 DESCRIPTION & TAGS RULES:
 - description must follow the 3-part structure:
-  1. Lines 1–2: Professional hook in the third person summarizing the core takeaway with primary search keywords.
+  1. Lines 1–2: High-impact hook summarizing the core takeaway with primary search keywords.
   2. Lines 3–4: Analytical value expansion / key topics explored.
-  3. Call to Action (CTA) + 3–5 relevant Greek hashtags (e.g. #Shorts #Ελλάδα). Strictly NO emojis.
-- tags must be 12 to 18 high-performing keywords and search phrases (mix of Greek search queries, entity/speaker names, and topic categories). NO '#' prefix and NO emojis.
+  3. Call to Action (CTA) + 3–5 relevant Greek hashtags (e.g. #Shorts #Ελλάδα).
+- tags must be 12 to 18 high-performing keywords and search phrases (mix of Greek search queries, entity/speaker names, and topic categories). NO '#' prefix.
 - Do NOT include any text outside the JSON object.
 
 Transcript:
@@ -205,6 +204,8 @@ def sanitize_filename(title: str, max_length: int = 100) -> str:
     """
     if not title:
         return ""
+        
+    title = strip_emojis(title)
 
     # Replace colons, vertical pipes, and slashes with clean ' - ' separators
     cleaned = re.sub(r"[\s]*[/\\:|][\s]*", " - ", title)
@@ -312,12 +313,12 @@ def _validate_seo_dict(data: dict) -> SeoMetadata:
         raise ValueError(f"Gemini response missing required keys: {missing}")
 
     raw_title = str(data["title"])
-    clean_title = strip_emojis(raw_title)
+    clean_title = raw_title.strip()
     if not clean_title:
         clean_title = "Ελληνικό Βίντεο"
     title: str = clean_title[:60]  # Hard-cap to YouTube's limit
 
-    clean_description = strip_emojis(str(data["description"]))
+    clean_description = str(data["description"]).strip()
     description: str = clean_description[:5000]
 
     raw_tags = data["tags"]
