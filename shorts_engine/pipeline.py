@@ -30,6 +30,7 @@ from services.broll_fetcher import (
     extract_broll_query,
     search_broll,
 )
+from services.compositor import compose_timeline
 from services.clip_selector import ClipCandidate, select_clips
 from services.downloader import UrlMetadata, download_video, probe_url_metadata
 from services.seo_generator import SeoMetadata, generate_seo, generate_broll_query, correct_transcript_greek, seo_to_dict
@@ -328,16 +329,16 @@ def process_single(
                 max(0.0, main_duration - actual_broll_dur),
             )
             overlaid_path: Path = tmp_dir / f"{stem}_overlaid.mp4"
-            overlay_broll(
-                main_path=cropped_path,
-                broll_path=broll_path,
-                start_time=safe_start,
-                overlay_duration=actual_broll_dur,
+            compose_timeline(
+                main_video_path=cropped_path,
                 output_path=overlaid_path,
+                broll_image_path=broll_path,
+                broll_start=safe_start,
+                broll_duration=actual_broll_dur,
                 target_width=settings.target_width,
                 target_height=settings.target_height,
-                transition=settings.transition_type,
-                transition_duration=settings.transition_duration,
+                segments=segments,
+                clip_start_offset=0.0,
             )
             current_path = overlaid_path
 
@@ -674,16 +675,16 @@ def process_url_clip(
                 max(0.0, main_dur - actual_broll_dur),
             )
             overlaid_path = tmp_dir / f"{stem}_overlaid.mp4"
-            overlay_broll(
-                main_path=cropped_path,
-                broll_path=broll_path,
-                start_time=safe_start,
-                overlay_duration=actual_broll_dur,
+            compose_timeline(
+                main_video_path=cropped_path,
                 output_path=overlaid_path,
+                broll_image_path=broll_path,
+                broll_start=safe_start,
+                broll_duration=actual_broll_dur,
                 target_width=settings.target_width,
                 target_height=settings.target_height,
-                transition=settings.transition_type,
-                transition_duration=settings.transition_duration,
+                segments=all_segments,
+                clip_start_offset=clip.start_time,
             )
             current_path = overlaid_path
 

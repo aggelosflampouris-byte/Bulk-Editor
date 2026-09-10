@@ -688,11 +688,8 @@ def slice_video(
     """
     Extract a sub-clip from *source_path* between [start_time, end_time].
 
-    Strategy:
-      1. Attempt a fast stream-copy cut (-c copy). This is near-instant but
-         may produce slightly inaccurate in/out points due to keyframe alignment.
-      2. Verify the resulting duration. If it deviates from the expected duration
-         by more than 0.5 seconds, fall back to a full re-encode for a precise cut.
+    Always re-encodes with libx264/aac to ensure frame-accurate cuts
+    and applies smooth micro-fades to audio to prevent clicks/pops.
 
     Args:
         source_path: Path to the source video (any codec).
@@ -705,7 +702,7 @@ def slice_video(
 
     Raises:
         FileNotFoundError: If *source_path* does not exist.
-        FFmpegError:       If both the stream-copy and re-encode attempts fail.
+        FFmpegError:       If the FFmpeg re-encode fails.
         ValueError:        If start_time >= end_time.
     """
     if not source_path.is_file():
@@ -718,48 +715,11 @@ def slice_video(
 
     expected_duration = end_time - start_time
 
-    # ── Attempt 1: Fast stream copy ───────────────────────────────────────────
     logger.info(
-        "Slicing '%s' [%.2f → %.2f] (%.1fs) via stream copy...",
+        "Slicing '%s' [%.2f → %.2f] (%.1fs) with re-encode for precise cut...",
         source_path.name, start_time, end_time, expected_duration,
     )
-    try:
-        run_ffmpeg([
-            "ffmpeg", "-y",
-            "-ss", f"{start_time:.3f}",
-            "-to", f"{end_time:.3f}",
-            "-i", str(source_path),
-            "-c", "copy",
-            "-avoid_negative_ts", "make_zero",
-            "-movflags", "+faststart",
-            str(output_path),
-        ])
-
-        # Verify the resulting duration
-        actual_duration = probe_duration(output_path)
-        if abs(actual_duration - expected_duration) <= 0.5:
-            logger.info(
-                "Stream-copy slice successful: actual=%.2fs, expected=%.2fs.",
-                actual_duration, expected_duration,
-            )
-            return output_path
-
-        logger.warning(
-            "Stream-copy duration mismatch: actual=%.2fs vs expected=%.2fs — "
-            "falling back to re-encode for precise cut.",
-            actual_duration, expected_duration,
-        )
-
-    except FFmpegError as exc:
-        logger.warning(
-            "Stream-copy slice failed: %s — falling back to re-encode.", exc
-        )
-
-    # ── Attempt 2: Precise re-encode ──────────────────────────────────────────
-    logger.info(
-        "Re-encoding slice [%.2f → %.2f] with libx264 for precise cut...",
-        start_time, end_time,
-    )
+    
     has_audio = probe_has_audio(source_path)
     cmd = [
         "ffmpeg", "-y",

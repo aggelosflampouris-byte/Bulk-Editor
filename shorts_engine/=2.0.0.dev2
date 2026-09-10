@@ -1,0 +1,47 @@
+Collecting moviepy
+  Downloading moviepy-2.2.1-py3-none-any.whl.metadata (6.9 kB)
+Collecting replicate
+  Downloading replicate-1.0.7-py3-none-any.whl.metadata (29 kB)
+Collecting decorator<6.0,>=4.0.2 (from moviepy)
+  Downloading decorator-5.3.1-py3-none-any.whl.metadata (3.9 kB)
+Collecting imageio<3.0,>=2.5 (from moviepy)
+  Downloading imageio-2.37.4-py3-none-any.whl.metadata (9.6 kB)
+Collecting imageio_ffmpeg>=0.2.0 (from moviepy)
+  Downloading imageio_ffmpeg-0.6.0-py3-none-manylinux2014_x86_64.whl.metadata (1.5 kB)
+Requirement already satisfied: numpy>=1.25.0 in ./.venv/lib/python3.14/site-packages (from moviepy) (2.5.3)
+Collecting proglog<=1.0.0 (from moviepy)
+  Downloading proglog-0.1.12-py3-none-any.whl.metadata (794 bytes)
+Collecting python-dotenv>=0.10 (from moviepy)
+  Using cached python_dotenv-1.2.3-py3-none-any.whl.metadata (29 kB)
+Collecting pillow<12.0,>=9.2.0 (from moviepy)
+  Downloading pillow-11.3.0-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (9.0 kB)
+Requirement already satisfied: tqdm in ./.venv/lib/python3.14/site-packages (from proglog<=1.0.0->moviepy) (4.70.0)
+Requirement already satisfied: httpx<1,>=0.21.0 in ./.venv/lib/python3.14/site-packages (from replicate) (0.28.1)
+Requirement already satisfied: packaging in ./.venv/lib/python3.14/site-packages (from replicate) (26.3)
+Requirement already satisfied: pydantic>1.10.7 in ./.venv/lib/python3.14/site-packages (from replicate) (2.13.5)
+Requirement already satisfied: typing_extensions>=4.5.0 in ./.venv/lib/python3.14/site-packages (from replicate) (4.16.0)
+Requirement already satisfied: anyio in ./.venv/lib/python3.14/site-packages (from httpx<1,>=0.21.0->replicate) (4.15.1)
+Requirement already satisfied: certifi in ./.venv/lib/python3.14/site-packages (from httpx<1,>=0.21.0->replicate) (2026.7.22)
+Requirement already satisfied: httpcore==1.* in ./.venv/lib/python3.14/site-packages (from httpx<1,>=0.21.0->replicate) (1.0.9)
+Requirement already satisfied: idna in ./.venv/lib/python3.14/site-packages (from httpx<1,>=0.21.0->replicate) (3.19)
+Requirement already satisfied: h11>=0.16 in ./.venv/lib/python3.14/site-packages (from httpcore==1.*->httpx<1,>=0.21.0->replicate) (0.16.0)
+Requirement already satisfied: annotated-types>=0.6.0 in ./.venv/lib/python3.14/site-packages (from pydantic>1.10.7->replicate) (0.8.0)
+Requirement already satisfied: pydantic-core==2.46.5 in ./.venv/lib/python3.14/site-packages (from pydantic>1.10.7->replicate) (2.46.5)
+Requirement already satisfied: typing-inspection>=0.4.2 in ./.venv/lib/python3.14/site-packages (from pydantic>1.10.7->replicate) (0.4.4)
+Downloading moviepy-2.2.1-py3-none-any.whl (129 kB)
+Downloading decorator-5.3.1-py3-none-any.whl (10 kB)
+Downloading imageio-2.37.4-py3-none-any.whl (318 kB)
+Downloading pillow-11.3.0-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (6.6 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 6.6/6.6 MB 4.1 MB/s  0:00:01
+Downloading proglog-0.1.12-py3-none-any.whl (6.3 kB)
+Downloading replicate-1.0.7-py3-none-any.whl (48 kB)
+Downloading imageio_ffmpeg-0.6.0-py3-none-manylinux2014_x86_64.whl (29.5 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 29.5/29.5 MB 4.9 MB/s  0:00:06
+Using cached python_dotenv-1.2.3-py3-none-any.whl (22 kB)
+Installing collected packages: python-dotenv, proglog, pillow, imageio_ffmpeg, decorator, imageio, replicate, moviepy
+  Attempting uninstall: pillow
+    Found existing installation: pillow 12.3.0
+    Uninstalling pillow-12.3.0:
+      Successfully uninstalled pillow-12.3.0
+
+Successfully installed decorator-5.3.1 imageio-2.37.4 imageio_ffmpeg-0.6.0 moviepy-2.2.1 pillow-11.3.0 proglog-0.1.12 python-dotenv-1.2.3 replicate-1.0.7

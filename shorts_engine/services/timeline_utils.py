@@ -165,7 +165,7 @@ def snap_to_silence(
         if next_start is not None and next_start > w_end:
             t_cand = min(next_start - 0.01, w_end + _POST_ROLL)
         else:
-            t_cand = w_end
+            t_cand = w_end + _POST_ROLL
 
         bonus = 0.0
         gap_after = (next_start - w_end) if next_start is not None else 1.0
@@ -214,15 +214,23 @@ def snap_to_silence(
     snapped_end = best_end
 
     # ── Word Boundary Protection ───────────────────────────────────────────────
-    # Ensure neither cut point lands strictly inside any word
-    for w_s, w_e, _ in all_words:
-        if w_s < snapped_start < w_e:
-            snapped_start = max(0.0, round(w_s - _PRE_ROLL, 3))
+    # Ensure neither cut point lands inside a word, or misses pre/post-roll
+    for i, (w_s, w_e, _) in enumerate(all_words):
+        if w_s <= snapped_start < w_e:
+            prev_e = all_words[i - 1][1] if i > 0 else 0.0
+            if prev_e < w_s:
+                snapped_start = max(0.0, max(prev_e + 0.01, round(w_s - _PRE_ROLL, 3)))
+            else:
+                snapped_start = max(0.0, w_s)
             break
 
-    for w_s, w_e, _ in all_words:
-        if w_s < snapped_end < w_e:
-            snapped_end = round(w_e + _POST_ROLL, 3)
+    for i, (w_s, w_e, _) in enumerate(all_words):
+        if w_s < snapped_end <= w_e:
+            next_s = all_words[i + 1][0] if i + 1 < total_words else float("inf")
+            if next_s > w_e:
+                snapped_end = min(next_s - 0.01, round(w_e + _POST_ROLL, 3))
+            else:
+                snapped_end = w_e
             break
 
     # ── Duration Clamping ──────────────────────────────────────────────────────
@@ -261,9 +269,13 @@ def snap_to_silence(
             snapped_end = round(snapped_start + min_dur, 3)
 
     # Re-check word collision on end boundary if clamped
-    for w_s, w_e, _ in all_words:
-        if w_s < snapped_end < w_e:
-            snapped_end = round(w_e + _POST_ROLL, 3)
+    for i, (w_s, w_e, _) in enumerate(all_words):
+        if w_s < snapped_end <= w_e:
+            next_s = all_words[i + 1][0] if i + 1 < total_words else float("inf")
+            if next_s > w_e:
+                snapped_end = min(next_s - 0.01, round(w_e + _POST_ROLL, 3))
+            else:
+                snapped_end = w_e
             break
 
     logger.debug(

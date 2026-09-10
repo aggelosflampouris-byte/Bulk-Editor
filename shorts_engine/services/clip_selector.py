@@ -616,7 +616,8 @@ def select_clips(
     effective_min = min(min_dur, source_duration)
     target_min = max(3, min_clips) if source_duration >= effective_min else 1
 
-    if len(deduplicated) < target_min and source_duration >= effective_min:
+    # FORCE guarantee of 3 clips minimum even if source duration is tiny
+    if len(deduplicated) < target_min:
         logger.info(
             "Only %d clip(s) found after deduplication; generating supplementary candidates to satisfy min_clips=%d",
             len(deduplicated), target_min,
@@ -630,7 +631,7 @@ def select_clips(
         )
 
     # Secondary guarantee: if still below target_min, top up directly with fallback clips
-    if len(deduplicated) < target_min and source_duration >= effective_min:
+    if len(deduplicated) < target_min:
         fallback_clips = _build_fallback_clips(
             segments, max_clips, min_dur, max_dur, min_clips=target_min
         )
