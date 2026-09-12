@@ -248,6 +248,19 @@ def process_single(
         # ── Stage 4: Crop to 9:16 (active speaker tracking) ───────────────────
         cropped_path: Path = tmp_dir / f"{stem}_cropped.mp4"
 
+        # Validation Check: Ensure input produced a valid video stream
+        try:
+            probe_resolution(video_path)
+        except Exception as exc:
+            msg = f"Input video is invalid or missing video stream: {exc}"
+            logger.error("URL pipeline aborting video: %s", msg)
+            return ProcessingResult(
+                input_file=video_path,
+                clip_index=1,
+                status="failed",
+                error=msg
+            )
+
         has_speaker: bool = False
         crop_x_offset: int | None = None
         crop_x_expr: str | None = None
@@ -320,6 +333,8 @@ def process_single(
                 target_height=settings.target_height,
                 segments=segments,
                 clip_start_offset=0.0,
+                ken_burns=settings.broll_ken_burns,
+                split_screen=settings.broll_split_screen,
             )
             current_path = overlaid_path
 
@@ -680,6 +695,19 @@ def process_url_clip(
             output_path=raw_clip_path,
         )
 
+        # Validation Check: Ensure extraction produced a valid video stream
+        try:
+            probe_resolution(raw_clip_path)
+        except Exception as exc:
+            msg = f"Extracted clip is invalid or missing video stream: {exc}"
+            logger.error("Batch pipeline aborting clip %d: %s", clip.index, msg)
+            return ProcessingResult(
+                input_file=source_path,
+                clip_index=clip.index,
+                status="failed",
+                error=msg
+            )
+
         # ── Stage 2: Build re-based subtitle file ──────────────────────────────
         _report("Building subtitles...")
         clip_segments = slice_segments(all_segments, clip.start_time, clip.end_time)
@@ -719,8 +747,21 @@ def process_url_clip(
                 logger.warning(msg)
                 warnings.append(msg)
 
-        # ── Stage 5: Crop to 9:16 (active speaker tracking) ───────────────────
+        # ── Stage 4: Crop to 9:16 (active speaker tracking) ───────────────────
         cropped_path = tmp_dir / f"{stem}_cropped.mp4"
+        
+        # Validation Check: Ensure extraction produced a valid video stream
+        try:
+            probe_resolution(video_path)
+        except Exception as exc:
+            msg = f"Extracted clip is invalid or missing video stream: {exc}"
+            logger.error("URL pipeline aborting clip: %s", msg)
+            return ProcessingResult(
+                input_file=video_path,
+                clip_index=1,
+                status="failed",
+                error=msg
+            )
         has_speaker: bool = False
         crop_x_offset: int | None = None
         crop_x_expr: str | None = None
@@ -795,7 +836,9 @@ def process_url_clip(
                 target_width=settings.target_width,
                 target_height=settings.target_height,
                 segments=clip_segments,
-                clip_start_offset=0.0,
+                clip_start_offset=clip.start_time,
+                ken_burns=settings.broll_ken_burns,
+                split_screen=settings.broll_split_screen,
             )
             current_path = overlaid_path
 

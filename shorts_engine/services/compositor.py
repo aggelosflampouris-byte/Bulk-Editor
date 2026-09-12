@@ -146,6 +146,8 @@ def compose_timeline(
     target_height: int = 1920,
     segments: list | None = None,
     clip_start_offset: float = 0.0,
+    ken_burns: bool = False,
+    split_screen: bool = False,
 ) -> Path:
     """
     Compose the final video using a multi-layer NLE approach.
@@ -153,11 +155,12 @@ def compose_timeline(
     logger.info("Compositing timeline for %s", main_video_path.name)
 
     # Fast path: If only dynamic zoom on main speaker is needed (no B-roll)
-    if not broll_video_path or not broll_video_path.exists():
-        try:
-            from services.video_engine import probe_duration
-            dur = probe_duration(main_video_path)
-            zoom_intervals = compute_zoom_intervals(dur, segments, clip_start_offset)
+    try:
+        from services.video_engine import probe_duration
+        dur = probe_duration(main_video_path)
+        zoom_intervals = compute_zoom_intervals(dur, segments, clip_start_offset)
+        
+        if not broll_video_path or not broll_video_path.exists():
             return apply_dynamic_zoom_ffmpeg(
                 video_path=main_video_path,
                 output_path=output_path,
@@ -166,11 +169,24 @@ def compose_timeline(
                 target_height=target_height,
                 zoom_factor=1.15,
             )
-        except Exception as exc:
-            logger.error("FFmpeg dynamic zoom failed: %s", exc)
+        else:
+            # We have B-roll, but we still want punch-ins on the main video
+            zoomed_main_path = main_video_path.with_name(f"{main_video_path.stem}_zoomed.mp4")
+            apply_dynamic_zoom_ffmpeg(
+                video_path=main_video_path,
+                output_path=zoomed_main_path,
+                zoom_intervals=zoom_intervals,
+                target_width=target_width,
+                target_height=target_height,
+                zoom_factor=1.15,
+            )
+            main_video_path = zoomed_main_path
+    except Exception as exc:
+        logger.error("FFmpeg dynamic zoom failed: %s", exc)
+        if not broll_video_path or not broll_video_path.exists():
             raise
 
-    # Layer 0: Main Speaker
+    # Layer 0: Main Speaker (now zoomed)
     main_clip = VideoFileClip(str(main_video_path))
     duration = main_clip.duration
     
@@ -179,11 +195,60 @@ def compose_timeline(
     # Layer 1: B-Roll Video
     broll_clip = None
     if broll_video_path and broll_video_path.exists():
-        logger.info("Adding B-Roll layer: %s", broll_video_path.name)
+        logger.info("Adding B-Roll layer: %s (Ken Burns: %s, Split-Screen: %s)", broll_video_path.name, ken_burns, split_screen)
         broll_clip = VideoFileClip(str(broll_video_path))
-        broll_clip = Resize(width=target_width).apply(broll_clip)
+        
+        # Trim to duration first
+        broll_clip = broll_clip.with_duration(broll_duration)
+
+        # Split screen logic: limit height to top half if enabled
+        b_target_h = target_height // 2 if split_screen else target_height
+        
+        # Apply Ken Burns if enabled
+        if ken_burns:
+            # We scale the clip slightly larger to allow zooming
+            zoom_start = 1.0
+            zoom_end = 1.15
             
-        broll_clip = broll_clip.with_start(broll_start).with_position("center")
+            # Helper to calculate dynamic resize based on time
+            def make_zoom(t):
+                # t goes from 0 to broll_duration
+                progress = t / max(broll_clip.duration, 0.1)
+                current_zoom = zoom_start + (zoom_end - zoom_start) * progress
+                return current_zoom
+                
+            # Apply dynamic zoom
+            broll_clip = broll_clip.transform(
+                lambda get_frame, t: cv2.resize(
+                    get_frame(t), 
+                    dsize=(0,0),
+                    fx=make_zoom(t), 
+                    fy=make_zoom(t), 
+                    interpolation=cv2.INTER_LINEAR
+                )
+            )
+
+        # Force resize to target width and height via MoviePy Resize
+        # Since we might have zoomed, or it might be raw, we apply a hard crop/resize
+        from moviepy.video.fx import Crop
+        broll_clip = Resize(width=target_width).apply(broll_clip)
+        
+        # If it's too short vertically after width resize, we resize height instead and crop width
+        if broll_clip.h < b_target_h:
+            broll_clip = Resize(height=b_target_h).apply(broll_clip)
+            
+        broll_clip = Crop(
+            x_center=broll_clip.w/2, 
+            y_center=broll_clip.h/2, 
+            width=target_width, 
+            height=b_target_h
+        ).apply(broll_clip)
+
+        # Positioning
+        if split_screen:
+            broll_clip = broll_clip.with_start(broll_start).with_position(("center", "top"))
+        else:
+            broll_clip = broll_clip.with_start(broll_start).with_position("center")
         
         # Transitions
         broll_clip = FadeIn(0.3).apply(broll_clip)

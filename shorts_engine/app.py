@@ -380,6 +380,19 @@ def _render_sidebar() -> Settings:
             step=0.5,
             key="broll_duration_slider",
         )
+        
+        broll_ken_burns = st.checkbox(
+            "Enable Ken Burns Effect",
+            value=True,
+            help="Apply a slow, continuous zoom-in to B-roll to keep the viewer engaged.",
+            key="broll_ken_burns_check",
+        )
+        broll_split_screen = st.checkbox(
+            "Split-Screen B-Roll",
+            value=False,
+            help="Show the B-roll in the top half and the speaker in the bottom half.",
+            key="broll_split_screen_check",
+        )
 
         st.markdown("---")
         st.markdown("### Transitions")
@@ -602,6 +615,8 @@ def _render_sidebar() -> Settings:
         enable_vfx=bool(enable_vfx),
         broll_start_offset=float(broll_start),
         broll_overlay_duration=float(broll_duration),
+        broll_ken_burns=bool(broll_ken_burns),
+        broll_split_screen=bool(broll_split_screen),
         transition_type=str(transition_style),
         transition_duration=float(transition_duration),
         enable_bg_music=bool(enable_bg_music),

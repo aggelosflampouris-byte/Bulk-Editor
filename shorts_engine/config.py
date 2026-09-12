@@ -227,6 +227,10 @@ class Settings:
     broll_overlay_duration: float = 5.0
     # Timestamp offset (seconds from start) at which B-roll starts
     broll_start_offset: float = 3.0
+    # Apply a Ken Burns zoom effect to B-roll
+    broll_ken_burns: bool = True
+    # Apply a Picture-in-Picture / Split-Screen effect to B-roll
+    broll_split_screen: bool = False
     # Transition style between main clip, B-roll, and outro: "fade" | "flash" | "none"
     transition_type: str = "fade"
     # Transition duration in seconds (default 0.35s for snappy short-form pacing)
