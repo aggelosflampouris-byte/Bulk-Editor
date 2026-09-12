@@ -143,16 +143,14 @@ def assert_system_binaries() -> None:
 #   ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow,
 #   Alignment, MarginL, MarginR, MarginV, Encoding
 ASS_STYLE_LINE: str = (
-    "Style: Default,Arial,56,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,"
-    "1,0,0,0,100,100,0,0,1,2.5,1.5,2,80,80,540,1"
+    "Style: Default,Arial,56,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,"
+    "1,0,0,0,100,100,0,0,1,3.5,1.5,2,80,80,540,1"
 )
 
-# Highlight style — identical to Default but with a yellow primary colour.
-# Active words receive {\rHighlight} via karaoke tags so the current spoken
-# word highlights while unspoken text remains white.
+# Highlight style — SecondaryColour is White (unspoken), PrimaryColour is Yellow (spoken).
 ASS_HIGHLIGHT_STYLE_LINE: str = (
-    "Style: Highlight,Arial,56,&H0000FFFF,&H000000FF,&H00000000,&H80000000,"
-    "1,0,0,0,100,100,0,0,1,2.5,1.5,2,80,80,540,1"
+    "Style: Highlight,Arial,56,&H0000FFFF,&H00FFFFFF,&H00000000,&H80000000,"
+    "1,0,0,0,100,100,0,0,1,3.5,1.5,2,80,80,540,1"
 )
 
 # Full ASS file header template.  {dialogue_lines} is replaced at generation time.

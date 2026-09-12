@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 import sys
 import tempfile
 from collections.abc import Callable
@@ -34,6 +35,7 @@ try:
     from config import Settings, assert_system_binaries
 except ImportError:
     from shorts_engine.config import Settings, assert_system_binaries
+from services.cache_manager import log_project_history
 from services.broll_fetcher import (
     BRollClip,
     download_clip,
@@ -188,9 +190,21 @@ def process_single(
             transcript_text = full_transcript_text(segments)
             logger.info("Corrected transcript: %s...", transcript_text[:80])
 
+        # ── Stage 1d: SEO Generation (moved early for subtitle keyword injection) ──
+        _report("Generating SEO metadata...")
+        seo = generate_seo(
+            transcript_text,
+            settings.gemini_api_key,
+            source_title=video_path.stem,
+        )
+
         # Write ASS subtitle file to scratch dir
         ass_path: Path = tmp_dir / f"{stem}.ass"
-        write_ass_file(segments, ass_path)
+        write_ass_file(
+            segments,
+            ass_path,
+            primary_keyword=seo.primary_keyword if seo else None,
+        )
 
         # ── Stage 2: B-Roll Search ────────────────────────────────────────────
         broll_clip: BRollClip | None = None
@@ -236,26 +250,29 @@ def process_single(
         has_speaker: bool = False
         crop_x_offset: int | None = None
         crop_x_expr: str | None = None
+        crop_y_offset: int | None = None
+        crop_y_expr: str | None = None
+
+        if settings.enable_face_tracking:
+            try:
+                src_w, src_h = probe_resolution(video_path)
+                tracking_info = track_active_speaker(
+                    video_path=video_path,
+                    source_width=src_w,
+                    source_height=src_h,
+                    target_width=settings.target_width,
+                    target_height=settings.target_height,
+                )
+                has_speaker = tracking_info.has_speaker
+                crop_x_offset = tracking_info.static_crop_x
+                crop_x_expr = tracking_info.crop_expression
+                crop_y_offset = getattr(tracking_info, "static_crop_y", None)
+                crop_y_expr = getattr(tracking_info, "crop_y_expression", None)
+            except Exception as exc:
+                logger.warning("Active speaker tracking failed: %s — using center-crop.", exc)
+
         if not is_already_9_16(video_path, settings.target_width, settings.target_height):
             _report("Cropping to 9:16 (active speaker tracking)...")
-            if settings.enable_face_tracking:
-                try:
-                    src_w, src_h = probe_resolution(video_path)
-                    tracking_info = track_active_speaker(
-                        video_path=video_path,
-                        source_width=src_w,
-                        source_height=src_h,
-                        target_width=settings.target_width,
-                        target_height=settings.target_height,
-                    )
-                    has_speaker = tracking_info.has_speaker
-                    crop_x_offset = tracking_info.static_crop_x
-                    crop_x_expr = tracking_info.crop_expression
-                except Exception as exc:
-                    logger.warning("Active speaker tracking failed: %s — using center-crop.", exc)
-                    crop_x_offset = None
-                    crop_x_expr = None
-
             crop_to_9_16(
                 video_path,
                 cropped_path,
@@ -263,25 +280,14 @@ def process_single(
                 target_height=settings.target_height,
                 crop_x_offset=crop_x_offset,
                 crop_x_expr=crop_x_expr,
+                crop_y_offset=crop_y_offset,
+                crop_y_expr=crop_y_expr,
             )
         else:
             import shutil as _shutil
             _shutil.copy2(str(video_path), str(cropped_path))
             _report("Crop skipped — video is already 9:16.")
             logger.info("Crop stage skipped for '%s' (already 9:16).", video_path.name)
-            if settings.enable_face_tracking:
-                try:
-                    src_w, src_h = probe_resolution(video_path)
-                    tracking_info = track_active_speaker(
-                        video_path=video_path,
-                        source_width=src_w,
-                        source_height=src_h,
-                        target_width=settings.target_width,
-                        target_height=settings.target_height,
-                    )
-                    has_speaker = tracking_info.has_speaker
-                except Exception:
-                    pass
 
         # ── Stage 5: B-Roll Overlay & Dynamic Zoom ────────────────────────────
         current_path = cropped_path
@@ -306,7 +312,7 @@ def process_single(
             compose_timeline(
                 main_video_path=cropped_path,
                 output_path=overlaid_path,
-                broll_image_path=broll_to_apply,
+                broll_video_path=broll_to_apply,
                 broll_start=safe_start,
                 broll_duration=actual_broll_dur,
                 target_width=settings.target_width,
@@ -372,13 +378,6 @@ def process_single(
         else:
             warnings.append("No outro provided — concatenation step skipped.")
 
-        # ── Stage 8: SEO Generation ───────────────────────────────────────────
-        _report("Generating SEO metadata...")
-        seo = generate_seo(
-            transcript_text,
-            settings.gemini_api_key,
-            source_title=video_path.stem,
-        )
 
         # ── Stage 9: Write Final Output ───────────────────────────────────────
         _report("Writing output files...")
@@ -388,7 +387,6 @@ def process_single(
         seo_json_path = run_output_dir / f"seo_{stem}.json"
 
         # Move final video from scratch to output dir
-        import shutil
         shutil.copy2(str(current_path), str(final_output))
 
         # Write SEO JSON alongside the video
@@ -401,6 +399,13 @@ def process_single(
         result.seo = seo
         result.success = True
         result.warnings = warnings
+        
+        # Log successful project history
+        try:
+            log_project_history(result, run_output_dir)
+        except Exception as e:
+            logger.warning("Failed to log project history: %s", e)
+            
         _report("Done ✓")
 
     except Exception as exc:
@@ -423,7 +428,6 @@ def run_batch(
     return _run_batch_impl(video_paths, settings, progress_cb)
 
 
-process_batch = run_batch
 
 
 def _run_batch_impl(
@@ -679,7 +683,11 @@ def process_url_clip(
         clip_segments = slice_segments(all_segments, clip.start_time, clip.end_time)
         ass_path = tmp_dir / f"{stem}.ass"
         if clip_segments:
-            write_ass_file(clip_segments, ass_path)
+            write_ass_file(
+                clip_segments,
+                ass_path,
+                primary_keyword=clip.seo.primary_keyword if clip.seo else None,
+            )
         else:
             warnings.append(f"Clip {clip.index}: no transcript segments in window — subtitles skipped.")
             ass_path = None  # type: ignore[assignment]
@@ -714,43 +722,32 @@ def process_url_clip(
         has_speaker: bool = False
         crop_x_offset: int | None = None
         crop_x_expr: str | None = None
+        crop_y_offset: int | None = None
+        crop_y_expr: str | None = None
+
+        if settings.enable_face_tracking:
+            try:
+                src_w, src_h = probe_resolution(raw_clip_path)
+                tracking_info = track_active_speaker(
+                    video_path=raw_clip_path,
+                    source_width=src_w,
+                    source_height=src_h,
+                    target_width=settings.target_width,
+                    target_height=settings.target_height,
+                )
+                has_speaker = tracking_info.has_speaker
+                crop_x_offset = tracking_info.static_crop_x
+                crop_x_expr = tracking_info.crop_expression
+                crop_y_offset = tracking_info.static_crop_y
+                crop_y_expr = tracking_info.crop_y_expression
+            except Exception as exc:
+                logger.warning("Active speaker tracking failed: %s — using center-crop.", exc)
+
         if is_already_9_16(raw_clip_path, settings.target_width, settings.target_height):
-            import shutil as _shutil
-            _shutil.copy2(str(raw_clip_path), str(cropped_path))
+            shutil.copy2(str(raw_clip_path), str(cropped_path))
             _report("Crop skipped — already 9:16.")
-            if settings.enable_face_tracking:
-                try:
-                    src_w, src_h = probe_resolution(raw_clip_path)
-                    tracking_info = track_active_speaker(
-                        video_path=raw_clip_path,
-                        source_width=src_w,
-                        source_height=src_h,
-                        target_width=settings.target_width,
-                        target_height=settings.target_height,
-                    )
-                    has_speaker = tracking_info.has_speaker
-                except Exception:
-                    pass
         else:
             _report("Cropping to 9:16 (active speaker tracking)...")
-            if settings.enable_face_tracking:
-                try:
-                    src_w, src_h = probe_resolution(raw_clip_path)
-                    tracking_info = track_active_speaker(
-                        video_path=raw_clip_path,
-                        source_width=src_w,
-                        source_height=src_h,
-                        target_width=settings.target_width,
-                        target_height=settings.target_height,
-                    )
-                    has_speaker = tracking_info.has_speaker
-                    crop_x_offset = tracking_info.static_crop_x
-                    crop_x_expr = tracking_info.crop_expression
-                except Exception as exc:
-                    logger.warning("Active speaker tracking failed: %s — using center-crop.", exc)
-                    crop_x_offset = None
-                    crop_x_expr = None
-
             crop_to_9_16(
                 raw_clip_path,
                 cropped_path,
@@ -758,6 +755,8 @@ def process_url_clip(
                 target_height=settings.target_height,
                 crop_x_offset=crop_x_offset,
                 crop_x_expr=crop_x_expr,
+                crop_y_offset=crop_y_offset,
+                crop_y_expr=crop_y_expr,
             )
 
         # ── Stage 6: B-Roll Overlay & Dynamic Zoom ─────────────────────────────────────────
@@ -788,7 +787,7 @@ def process_url_clip(
             compose_timeline(
                 main_video_path=cropped_path,
                 output_path=overlaid_path,
-                broll_image_path=broll_to_apply,
+                broll_video_path=broll_to_apply,
                 broll_start=safe_start,
                 broll_duration=actual_broll_dur,
                 target_width=settings.target_width,
@@ -867,7 +866,6 @@ def process_url_clip(
         final_output = run_output_dir / f"{stem}_short.mp4"
         seo_json_path = run_output_dir / f"seo_{stem}.json"
 
-        import shutil
         shutil.copy2(str(current_path), str(final_output))
 
         seo_json_path.write_text(

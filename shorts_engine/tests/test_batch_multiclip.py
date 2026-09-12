@@ -38,7 +38,16 @@ def test_process_batch_long_video_triggers_multiclip_extraction(tmp_path: Path):
             start_time=float(i * 35),
             end_time=float((i + 1) * 35),
             hook_summary=f"Hook {i + 1}",
-            seo=SeoMetadata(title=f"Clip {i + 1}", description=f"Desc {i + 1}", tags=["tag"]),
+            seo=SeoMetadata(
+                title=f"Clip {i + 1}",
+                description=f"Desc {i + 1}",
+                tags=("tag",),
+                primary_keyword="keyword",
+                pinned_comment="pinned",
+                alt_titles=("alt",),
+                tiktok_caption="tiktok",
+                ig_reels_caption="reels"
+            ),
             broll_query="greek speech",
         )
         for i in range(3)

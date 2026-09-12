@@ -12,6 +12,9 @@ Architecture contract:
 from __future__ import annotations
 
 import logging
+import os
+import re
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -287,9 +290,8 @@ def _render_sidebar() -> Settings:
         st.markdown("---")
 
         # ── API Key Status (read-only) ─────────────────────────────────────
-        import os as _os
-        pexels_loaded = bool(_os.environ.get("PEXELS_API_KEY", "").strip())
-        gemini_loaded = bool(_os.environ.get("GEMINI_API_KEY", "").strip())
+        pexels_loaded = bool(os.environ.get("PEXELS_API_KEY", "").strip())
+        gemini_loaded = bool(os.environ.get("GEMINI_API_KEY", "").strip())
 
         st.markdown("### API Keys")
         pexels_status = '<span style="color:#22c55e;font-size:0.8rem;">Connected</span>' if pexels_loaded else '<span style="color:#ef4444;font-size:0.8rem;">Missing</span>'
@@ -307,7 +309,7 @@ def _render_sidebar() -> Settings:
         model_size = st.selectbox(
             "Whisper Model Size",
             options=["tiny", "base", "small", "medium", "large-v3"],
-            index=4,  # default: large-v3 for maximum Greek accuracy & millisecond timestamps
+            index=2,  # default: small
             help=(
                 "faster-whisper-large-v3 delivers highest Greek accuracy and millisecond timestamps.\n"
                 "Use small or base for fast 1–2 minute previews on CPU for long YouTube videos."
@@ -444,9 +446,8 @@ def _render_sidebar() -> Settings:
         if outro_file is not None:
             # Persist the uploaded outro to a session-scoped temp file
             if "outro_tmp_path" not in st.session_state:
-                import tempfile as _tf
                 suffix = Path(outro_file.name).suffix
-                tmp = _tf.NamedTemporaryFile(
+                tmp = tempfile.NamedTemporaryFile(
                     delete=False, suffix=suffix, prefix="outro_"
                 )
                 tmp.write(outro_file.read())
@@ -499,9 +500,8 @@ def _render_sidebar() -> Settings:
                 )
                 if custom_music_file is not None:
                     if "custom_music_tmp_path" not in st.session_state:
-                        import tempfile as _tf
                         suffix = Path(custom_music_file.name).suffix
-                        tmp_music = _tf.NamedTemporaryFile(
+                        tmp_music = tempfile.NamedTemporaryFile(
                             delete=False, suffix=suffix, prefix="bgm_"
                         )
                         tmp_music.write(custom_music_file.read())
@@ -649,14 +649,13 @@ def _render_result_card(result: ProcessingResult, index: int) -> None:
                                 target_dir = Path(dest_folder_val).expanduser().resolve()
                                 target_dir.mkdir(parents=True, exist_ok=True)
                                 target_file = target_dir / dl_filename
-                                import shutil as _shutil
-                                _shutil.copy2(str(result.output_file), str(target_file))
+                                shutil.copy2(str(result.output_file), str(target_file))
 
                                 # Also copy companion SEO JSON if available
                                 seo_json_name = f"seo_{result.output_file.stem.replace('_short','')}.json"
                                 src_seo = result.output_file.parent / seo_json_name
                                 if src_seo.is_file():
-                                    _shutil.copy2(str(src_seo), str(target_dir / seo_json_name))
+                                    shutil.copy2(str(src_seo), str(target_dir / seo_json_name))
 
                                 st.success(f"✓ Saved to: `{target_file}`")
                             except Exception as exc:
@@ -689,6 +688,11 @@ def _render_result_card(result: ProcessingResult, index: int) -> None:
                 if result.seo:
                     st.markdown("**SEO Metadata**")
                     st.markdown(f"**Title:** {result.seo.title}")
+                    if result.seo.alt_titles:
+                        alt_titles_str = ' | '.join(result.seo.alt_titles)
+                        st.markdown(f"**Alt Titles:** *{alt_titles_str}*")
+                    if result.seo.primary_keyword:
+                        st.markdown(f"**Primary Keyword:** `{result.seo.primary_keyword}`")
 
                     # Tags as technical badges
                     tags_html = "".join(
@@ -700,8 +704,13 @@ def _render_result_card(result: ProcessingResult, index: int) -> None:
                     st.markdown("**YouTube Tags (Comma-separated for YouTube Studio):**")
                     st.code(result.seo.youtube_tags_display, language=None)
 
-                    with st.expander("Full Description"):
+                    with st.expander("Full Description & Multi-Platform"):
+                        st.markdown("**YouTube Description**")
                         st.text(result.seo.description)
+                        if result.seo.pinned_comment:
+                            st.markdown("**Pinned Comment**")
+                            st.info(result.seo.pinned_comment)
+
 
                     # Download SEO JSON
                     seo_json_path = result.output_file.parent / f"seo_{result.output_file.stem.replace('_short','')}.json"
@@ -748,8 +757,7 @@ def _make_progress_callback(
     def callback(current: int, _total: int, stage: str) -> None:
         fraction = current / max(total, 1)
         if "Transcribing audio:" in stage:
-            import re as _re
-            m = _re.search(r"\((\d+)%\)", stage)
+            m = re.search(r"\((\d+)%\)", stage)
             if m:
                 sub_pct = int(m.group(1)) / 100.0
                 fraction = (current + sub_pct * 0.5) / max(total, 1)
@@ -808,7 +816,7 @@ def _render_url_candidate_table(candidates: list[ClipCandidate]) -> list[int]:
 
         with row_cols[0]:
             checked = st.checkbox(
-                label="",
+                label=f"Select Clip {clip.index}",
                 value=True,
                 key=f"clip_check_{clip.index}",
                 label_visibility="collapsed",
@@ -848,8 +856,15 @@ def _render_url_candidate_table(candidates: list[ClipCandidate]) -> list[int]:
         with st.expander(f"Hook, SEO & Tags — Clip #{clip.index}", expanded=False):
             st.markdown(f"**Hook:** {clip.hook_summary}")
             st.markdown(f"**B-Roll query:** `{clip.broll_query}`")
+            st.markdown(f"**Primary Keyword:** `{clip.seo.primary_keyword}`")
             st.markdown(f"**AI Title:** {clip.seo.title}")
+            if clip.seo.alt_titles:
+                alt_titles_str = ' | '.join(clip.seo.alt_titles)
+                st.markdown(f"**Alt Titles:** *{alt_titles_str}*")
             st.markdown(f"**Description:** {clip.seo.description}")
+            if clip.seo.pinned_comment:
+                st.markdown("**Pinned Comment:**")
+                st.info(clip.seo.pinned_comment)
             st.markdown("**YouTube Tags (Copy & Paste directly into YouTube Studio Tags box):**")
             st.code(clip.seo.youtube_tags_display, language=None)
 
@@ -1066,8 +1081,7 @@ def main() -> None:
             st.session_state["results"] = results
             st.session_state["is_processing"] = False
 
-            import shutil as _shutil
-            _shutil.rmtree(upload_tmp, ignore_errors=True)
+            shutil.rmtree(upload_tmp, ignore_errors=True)
 
             st.rerun()
 
@@ -1181,14 +1195,6 @@ def main() -> None:
             url_progress_bar = st.progress(0.0)
             url_stage_text = st.empty()
 
-            stage_messages = [
-                "Probing URL...",
-                "Downloading video...",
-                "Transcribing audio...",
-                "Correcting transcript...",
-                "Selecting best clips with AI...",
-            ]
-            stage_idx = [0]
 
             def _url_analysis_cb(current: int, total: int, stage: str) -> None:
                 val = 0.10
@@ -1197,8 +1203,7 @@ def main() -> None:
                 elif "Downloading" in stage:
                     val = 0.15
                 elif "Transcribing audio:" in stage:
-                    import re as _re
-                    m = _re.search(r"\((\d+)%\)", stage)
+                    m = re.search(r"\((\d+)%\)", stage)
                     if m:
                         pct_val = int(m.group(1)) / 100.0
                         val = min(0.70, 0.20 + 0.50 * pct_val)

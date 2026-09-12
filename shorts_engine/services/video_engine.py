@@ -263,6 +263,8 @@ def crop_to_9_16(
     target_height: int = 1920,
     crop_x_offset: int | None = None,
     crop_x_expr: str | None = None,
+    crop_y_offset: int | None = None,
+    crop_y_expr: str | None = None,
 ) -> Path:
     """
     Scale and crop *input_path* to exactly *target_width* × *target_height* (9:16).
@@ -283,6 +285,8 @@ def crop_to_9_16(
         target_height: Output height in pixels (default 1920).
         crop_x_offset: Optional fixed horizontal pixel offset.
         crop_x_expr:   Optional dynamic FFmpeg time expression for speaker tracking.
+        crop_y_offset: Optional fixed vertical pixel offset.
+        crop_y_expr:   Optional dynamic FFmpeg time expression for speaker vertical tracking.
 
     Returns:
         The written *output_path*.
@@ -302,9 +306,17 @@ def crop_to_9_16(
     else:
         x_expr = f"(iw-{target_width})/2"
 
+    if crop_y_expr is not None and crop_y_expr.strip():
+        raw_y_expr = crop_y_expr.strip()
+        y_expr = f"'{raw_y_expr}'" if ("," in raw_y_expr and not raw_y_expr.startswith("'")) else raw_y_expr
+    elif crop_y_offset is not None:
+        y_expr = str(crop_y_offset)
+    else:
+        y_expr = f"(ih-{target_height})/2"
+
     vf = (
         f"scale=w={target_width}:h={target_height}:force_original_aspect_ratio=increase,"
-        f"crop={target_width}:{target_height}:{x_expr}:(ih-{target_height})/2,"
+        f"crop={target_width}:{target_height}:{x_expr}:{y_expr},"
         f"setsar=1"
     )
 

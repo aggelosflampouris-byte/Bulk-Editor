@@ -13,6 +13,7 @@ This module has zero FFmpeg or transcription dependencies.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -27,10 +28,10 @@ logger = logging.getLogger(__name__)
 # ── Constants ──────────────────────────────────────────────────────────────────
 
 _GEMINI_MODELS = (
-    "gemini-3.5-flash",
-    "gemini-3.7-flash",
     "gemini-3.6-flash",
-    "gemini-flash-latest",
+    "gemini-3.5-flash-lite",
+    "gemini-3.7-flash",
+    "gemini-3.5-flash",
 )
 _MAX_OUTPUT_TOKENS = 4096
 
@@ -44,25 +45,29 @@ def _call_gemini_with_fallback(
     Attempt content generation across known Flash models in fallback order.
     Catches 404 (model deprecated) and 503 (high demand) to ensure resilience.
     """
-    # Disable thinking tokens if unconfigured so output tokens aren't consumed by thought mode
-    if getattr(config, "thinking_config", None) is None:
-        try:
-            config.thinking_config = genai_types.ThinkingConfig(thinking_budget=0)
-        except Exception:
-            pass
 
     last_err: Exception | None = None
     for model in _GEMINI_MODELS:
-        try:
-            response = client.models.generate_content(
-                model=model,
-                contents=contents,
-                config=config,
-            )
-            return response.text or ""
-        except Exception as exc:
-            logger.warning("Gemini model '%s' failed: %s — trying fallback...", model, exc)
-            last_err = exc
+        attempts_for_model = 2
+        for attempt in range(attempts_for_model):
+            try:
+                response = client.models.generate_content(
+                    model=model,
+                    contents=contents,
+                    config=config,
+                )
+                return response.text or ""
+            except Exception as exc:
+                last_err = exc
+                err_str = str(exc)
+                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "Quota exceeded" in err_str:
+                    if attempt < attempts_for_model - 1:
+                        import time
+                        logger.warning("Gemini Rate Limit hit on %s. Waiting 45s before retry...", model)
+                        time.sleep(45)
+                        continue
+                logger.warning("Gemini model '%s' failed: %s — trying fallback...", model, exc)
+                break
     if last_err is not None:
         raise last_err
     raise RuntimeError("No Gemini models available.")
@@ -80,8 +85,11 @@ Respond ONLY with a valid JSON object — no markdown, no code fences, no \
 explanation. The JSON must have exactly these keys:
 
 {{
-  "title": "<Greek title, max 60 characters, engaging and curiosity-inducing, 1-2 strategic emojis allowed>",
+  "title": "<Greek title, max 60 chars. MUST BE AN ORIGINAL PHRASE that summarizes the core topic. DO NOT USE DIRECT QUOTES. 1-2 strategic emojis allowed>",
+  "alt_titles": ["<Alternative title 1>", "<Alternative title 2>"],
+  "primary_keyword": "<1-2 words Greek keyword that represents the core topic, exactly as it might appear in the transcript>",
   "description": "<Greek description, max 5000 characters, structured with hook in first 2 lines, core value in the rest, CTA and 3-5 trending hashtags at the end, 1-2 strategic emojis allowed>",
+  "pinned_comment": "<An engaging, controversial, or question-based Greek comment to pin at the top of the comments section to drive engagement>",
   "tags": ["<tag 1>", "<tag 2>", ..., "<tag 16>"]
 }}
 
@@ -93,14 +101,14 @@ TITLE & STYLE RULES (CRITICAL):
   * You may use third-person ("Τι αποκαλύπτουν τα στοιχεία...") or curiosity-driven hooks ("Ο λόγος που...").
   * Avoid cheap clickbait, but ensure the title creates a strong curiosity gap.
 - EMOJIS ALLOWED: You MAY use 1 or 2 highly relevant emojis (e.g., 🤯, 🔥, 📈, 🚨) to act as visual pattern interrupts and increase CTR. Do not overuse them.
-- NOT A DIRECT QUOTE: The title must capture the core topic, thesis, or value proposition — not a flat excerpt or quote from the transcript. Max 60 characters.
+- NO DIRECT QUOTES (CRITICAL): The title and alt_titles MUST be completely original, punchy phrases that act as a hook or summary. They MUST NEVER be sentences copied from the transcript. Max 60 characters.
 
 DESCRIPTION & TAGS RULES:
 - description must follow the 3-part structure:
   1. Lines 1–2: High-impact hook summarizing the core takeaway with primary search keywords.
   2. Lines 3–4: Analytical value expansion / key topics explored.
   3. Call to Action (CTA) + 3–5 relevant Greek hashtags (e.g. #Shorts #Ελλάδα).
-- tags must be 12 to 18 high-performing keywords and search phrases (mix of Greek search queries, entity/speaker names, and topic categories). NO '#' prefix.
+- tags must be 12 to 18 high-performing keywords and search phrases (mix of Greek search queries, entity/speaker names, topic categories, and TREND-JACKING keywords related to the broader category even if not explicitly mentioned). NO '#' prefix.
 - Do NOT include any text outside the JSON object.
 
 Transcript:
@@ -117,6 +125,9 @@ class SeoMetadata:
     title: str
     description: str
     tags: tuple[str, ...]  # Immutable sequence of SEO tags
+    primary_keyword: str
+    pinned_comment: str
+    alt_titles: tuple[str, ...]
 
     @property
     def youtube_tags_display(self) -> str:
@@ -149,6 +160,9 @@ class SeoMetadata:
                 "shorts", "greek", "viral", "trending", "reels",
                 "video", "fyp", "explore", "content", "greece",
             ]),
+            primary_keyword="shorts",
+            pinned_comment="Ποια είναι η δική σας άποψη; Γράψτε στα σχόλια! 👇",
+            alt_titles=tuple(["Greek Short (Alt 1)", "Greek Short (Alt 2)"]),
         )
 
 
@@ -332,6 +346,15 @@ def _validate_seo_dict(data: dict) -> SeoMetadata:
         if cleaned and cleaned not in tags:
             tags.append(cleaned)
 
+    # Parse new advanced SEO fields with safe fallbacks
+    primary_keyword = str(data.get("primary_keyword", "")).strip()
+    pinned_comment = str(data.get("pinned_comment", "")).strip()
+
+    raw_alt_titles = data.get("alt_titles", [])
+    if not isinstance(raw_alt_titles, list):
+        raw_alt_titles = []
+    alt_titles_list = [str(t).strip()[:60] for t in raw_alt_titles if str(t).strip()]
+    
     # Pad with essential category tags if fewer than 10 tags provided
     _PADDING_TAGS = [
         "shorts", "greek", "viral", "trending", "reels",
@@ -339,14 +362,21 @@ def _validate_seo_dict(data: dict) -> SeoMetadata:
     ]
     if len(tags) > 20:
         tags = tags[:20]
-    while len(tags) < 10:
-        for pad in _PADDING_TAGS:
-            if pad not in tags:
-                tags.append(pad)
-            if len(tags) >= 10:
+    elif len(tags) < 10:
+        for p in _PADDING_TAGS:
+            if p not in tags:
+                tags.append(p)
+            if len(tags) >= 12:
                 break
 
-    return SeoMetadata(title=title, description=description, tags=tuple(tags))
+    return SeoMetadata(
+        title=title,
+        description=description,
+        tags=tuple(tags),
+        primary_keyword=primary_keyword,
+        pinned_comment=pinned_comment,
+        alt_titles=tuple(alt_titles_list),
+    )
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────
@@ -384,6 +414,18 @@ def generate_seo(
         source_title=source_title or "Unknown",
     )
 
+    # Memory Optimization: Check cache first
+    try:
+        from services.cache_manager import load_cache_pickle, save_cache_pickle
+    except ImportError:
+        from shorts_engine.services.cache_manager import load_cache_pickle, save_cache_pickle
+
+    # Hash the full prompt so we never store multi-KB strings as dict/file keys.
+    cache_key = hashlib.md5(f"{prompt}_{source_title}".encode("utf-8")).hexdigest()
+    cached_seo = load_cache_pickle("seo_metadata", cache_key)
+    if cached_seo is not None:
+        return cached_seo
+
     logger.info("Calling Gemini for SEO metadata...")
     try:
         client = genai.Client(api_key=api_key)
@@ -408,6 +450,7 @@ def generate_seo(
         return SeoMetadata.fallback(transcript_text)
 
     logger.info("SEO metadata generated: title='%s', %d tags.", seo.title, len(seo.tags))
+    save_cache_pickle("seo_metadata", cache_key, seo)
     return seo
 
 
@@ -419,12 +462,15 @@ def seo_to_dict(seo: SeoMetadata) -> dict[str, object]:
         seo: SeoMetadata instance.
 
     Returns:
-        Dict with string keys: 'title', 'description', 'tags'.
+        Dict with all SeoMetadata fields serialised to JSON-safe types.
     """
     return {
         "title": seo.title,
         "description": seo.description,
         "tags": list(seo.tags),
+        "primary_keyword": seo.primary_keyword,
+        "pinned_comment": seo.pinned_comment,
+        "alt_titles": list(seo.alt_titles),
     }
 
 
@@ -534,20 +580,25 @@ _CORRECTION_PROMPT = """\
 You are a professional Greek language editor and proofreader.
 
 The following lines are raw speech-to-text transcript segments from Greek \
-audio transcribed by Whisper. They often contain speech-to-text phonetic \
+audio transcribed by Whisper. They often contain severe speech-to-text phonetic \
 errors, wrong word boundaries, missing/wrong diacritics (τόνοι), or grammar mistakes.
 
 Common Whisper Greek errors to ALWAYS correct:
+- Phonetic misinterpretations: Fix words that sound similar but make no sense in the context of the sentence.
+- Repetitions / Hallucinations: Remove unnatural repeating phrases or stuttering if they are clearly AI glitches.
 - Passive verb endings misheard as separate words (e.g. "Χαίρο με" / "χαίρο με" -> "Χαίρομαι" / "χαίρομαι", "σκέφτο με" -> "σκέφτομαι")
 - Verb forms: "είσαστε" -> "είστε", "βλέπωμε" -> "βλέπουμε"
 - "ό,τι" vs "ότι", "πως" vs "πώς", "που" vs "πού"
 - Missing accent marks (τόνοι) and spelling errors
+- Fix Capitalization at the start of sentences and proper nouns.
+
+CRITICAL: The 'small' Whisper model often hallucinates complete gibberish or redundant phrases (e.g., "Καλημέρες ημέρες σε όλους"). If a phrase is clearly a hallucination, DO NOT try to literally preserve the hallucinated words. Aggressively rewrite it into the simplest, most natural Greek equivalent (e.g., "Καλημέρα σε όλους").
 
 Correct EACH line so it reads as accurate, natural, grammatically correct Greek. Follow these rules:
 1. Output the EXACT SAME number of lines as input — one corrected line per input line.
 2. Do NOT merge or split lines.
 3. Do NOT add unnecessary punctuation; keep subtitles clean and natural.
-4. Do NOT change the speaker's intended meaning.
+4. Do NOT change the speaker's intended meaning, but aggressively fix nonsense.
 5. If a line is already correct, output it unchanged.
 6. Output ONLY the corrected lines, nothing else.
 
@@ -655,7 +706,14 @@ def correct_transcript_greek(
         logger.warning("Gemini transcript correction failed: %s — using original.", exc)
         return segments
 
-    corrected_lines = [line.strip() for line in raw.splitlines() if line.strip()]
+    # Strip potential markdown fences (e.g. ```text ... ```)
+    raw_cleaned = raw.strip()
+    if raw_cleaned.startswith("```"):
+        raw_cleaned = "\n".join(raw_cleaned.split("\n")[1:])
+    if raw_cleaned.endswith("```"):
+        raw_cleaned = "\n".join(raw_cleaned.split("\n")[:-1])
+    
+    corrected_lines = [line.strip() for line in raw_cleaned.splitlines() if line.strip()]
 
     # Validate: must have same count as input batch
     if len(corrected_lines) != len(input_lines_batch):

@@ -21,12 +21,12 @@ from typing import TYPE_CHECKING
 
 from google import genai
 from google.genai import types as genai_types
-
 try:
     from services.seo_generator import (
         SeoMetadata,
         _call_gemini_with_fallback,  # reuse the model-fallback logic
         _validate_seo_dict,
+        generate_seo,
     )
     from services.timeline_utils import format_transcript_with_timestamps
 except ImportError:
@@ -34,6 +34,7 @@ except ImportError:
         SeoMetadata,
         _call_gemini_with_fallback,
         _validate_seo_dict,
+        generate_seo,
     )
     from shorts_engine.services.timeline_utils import format_transcript_with_timestamps
 
@@ -73,7 +74,7 @@ or analysis. Zero rambling or fluff.
 or clear resolution. Never cut mid-sentence or mid-thought.
 
 CONSTRAINTS:
-- You MUST select AT LEAST {min_clips} clips and at most {max_clips} clips (aim for 5-8 clips if the video duration allows).
+- You MUST select AT LEAST {min_clips} clips and at most {max_clips} clips (aim for {max_clips} clips if the video duration allows).
 - Each clip's duration (end_time - start_time) MUST be between {min_dur} and \
 {max_dur} seconds (inclusive). The ideal sweet spot is 35–50 seconds.
 - Each clip must be self-contained: it must have a clear hook, development, \
@@ -101,10 +102,12 @@ is an array. Each array element must have exactly these keys:
       "hook_summary": "<1–2 sentence English explanation of why this clip's hook \
 and structure will maximize retention and CTR on YouTube Shorts>",
       "seo": {{
-        "title":       "<Greek title, max 60 chars, engaging and curiosity-inducing, 1-2 strategic emojis allowed>",
-        "description": "<Greek description, concise max 500 chars, structured with \
-hook in first 2 lines, core value in the rest, CTA and 3–5 trending hashtags at the end, 1-2 strategic emojis allowed>",
-        "tags":        ["<tag 1>", ..., "<tag 16>"]
+        "title": "<Greek title, max 60 chars. MUST BE AN ORIGINAL PHRASE that summarizes the core topic. DO NOT USE DIRECT QUOTES. 1-2 strategic emojis allowed>",
+        "alt_titles": ["<Alternative title 1>", "<Alternative title 2>"],
+        "primary_keyword": "<1-2 words Greek keyword that represents the core topic, exactly as it might appear in the transcript>",
+        "description": "<Greek description, concise max 500 chars, structured with hook in first 2 lines, core value in the rest, CTA and 3-5 trending hashtags at the end, 1-2 strategic emojis allowed>",
+        "pinned_comment": "<An engaging, controversial, or question-based Greek comment to pin at the top of the comments section to drive engagement>",
+        "tags": ["<tag 1>", ..., "<tag 16>"]
       }},
       "broll_query": "<2–5 word English Pexels search query for stock footage \
 matching what the speaker is talking about in THIS clip>"
@@ -120,12 +123,9 @@ SEO & TITLE RULES (CRITICAL):
   * You may use third-person ("Τι αποκαλύπτουν τα στοιχεία...") or curiosity-driven hooks ("Ο λόγος που...").
   * Avoid cheap clickbait, but ensure the title creates a strong curiosity gap.
 - EMOJIS ALLOWED: You MAY use 1 or 2 highly relevant emojis (e.g., 🤯, 🔥, 📈, 🚨) to act as visual pattern interrupts and increase CTR. Do not overuse them.
-- NOT A DIRECT QUOTE: Max 60 characters. Must capture the core topic or thesis, NOT a flat transcript excerpt.
+- NO DIRECT QUOTES (CRITICAL): The title and alt_titles MUST be completely original, punchy phrases that act as a hook or summary. They MUST NEVER be sentences copied from the transcript. Max 60 characters.
 - description must follow the 3-part structure (Hook -> Value -> CTA + hashtags like #Shorts #Ελλάδα).
-- tags must be a list of 12 to 18 high-performing keywords and search phrases \
-optimized for the YouTube search algorithm (mix of Greek search queries, \
-entities/names mentioned, topic keywords, and 1-2 broad category/shorts terms). \
-Do NOT include '#' symbol prefix in any tag.
+- tags must be a list of 12 to 18 high-performing keywords and search phrases optimized for the YouTube search algorithm (mix of Greek search queries, entities/names mentioned, topic keywords, and TREND-JACKING broad category terms even if not explicitly mentioned). Do NOT include '#' symbol prefix in any tag.
 - broll_query must describe a concrete visual scene, not an abstract concept.
 - Do NOT output anything outside the JSON object.
 
@@ -341,6 +341,8 @@ def _supplement_clips(
     target_count: int,
     min_dur: float,
     max_dur: float,
+    api_key: str | None = None,
+    source_title: str = "",
 ) -> list[ClipCandidate]:
     """
     Generate supplementary non-overlapping clips to guarantee minimum clip count.
@@ -382,8 +384,13 @@ def _supplement_clips(
             if cand_e - cand_s >= effective_min:
                 idx = len(result) + 1
                 excerpt_segs = [s for s in segments if s.end >= cand_s and s.start <= cand_e]
-                excerpt_text = " ".join(s.text.strip() for s in excerpt_segs)[:200] or f"Clip #{idx}"
-                seo = SeoMetadata.fallback(excerpt_text)
+                full_excerpt_text = " ".join(s.text.strip() for s in excerpt_segs)
+                if api_key and full_excerpt_text:
+                    import time
+                    time.sleep(2)  # Avoid rate limiting
+                    seo = generate_seo(full_excerpt_text, api_key, source_title=source_title)
+                else:
+                    seo = SeoMetadata.fallback(full_excerpt_text[:200] or f"Clip #{idx}")
                 result.append(
                     ClipCandidate(
                         index=idx,
@@ -410,8 +417,13 @@ def _supplement_clips(
                 cand_s = max(source_start, cand_e - effective_min)
             idx = len(result) + 1
             excerpt_segs = [s for s in segments if s.end >= cand_s and s.start <= cand_e]
-            excerpt_text = " ".join(s.text.strip() for s in excerpt_segs)[:200] or f"Clip #{idx}"
-            seo = SeoMetadata.fallback(excerpt_text)
+            full_excerpt_text = " ".join(s.text.strip() for s in excerpt_segs)
+            if api_key and full_excerpt_text:
+                import time
+                time.sleep(2)  # Avoid rate limiting
+                seo = generate_seo(full_excerpt_text, api_key, source_title=source_title)
+            else:
+                seo = SeoMetadata.fallback(full_excerpt_text[:200] or f"Clip #{idx}")
             result.append(
                 ClipCandidate(
                     index=idx,
@@ -444,6 +456,8 @@ def _build_fallback_clips(
     min_dur: float,
     max_dur: float,
     min_clips: int = 3,
+    api_key: str | None = None,
+    source_title: str = "",
 ) -> list[ClipCandidate]:
     """
     Generate evenly-distributed clips as a fallback when the Gemini call fails.
@@ -491,8 +505,13 @@ def _build_fallback_clips(
             clip_start = max(source_start, clip_end - effective_min)
 
         excerpt_segs = [s for s in segments if s.end >= clip_start and s.start <= clip_end]
-        excerpt_text = " ".join(s.text.strip() for s in excerpt_segs)[:200] or f"Clip {i + 1}"
-        seo = SeoMetadata.fallback(excerpt_text)
+        full_excerpt_text = " ".join(s.text.strip() for s in excerpt_segs)
+        if api_key and full_excerpt_text:
+            import time
+            time.sleep(2)  # Avoid rate limiting
+            seo = generate_seo(full_excerpt_text, api_key, source_title=source_title)
+        else:
+            seo = SeoMetadata.fallback(full_excerpt_text[:200] or f"Clip {i + 1}")
         candidates.append(
             ClipCandidate(
                 index=i + 1,
@@ -554,6 +573,21 @@ def select_clips(
         return _build_fallback_clips(segments, max_clips, min_dur, max_dur, min_clips=min_clips)
 
     transcript_block = format_transcript_with_timestamps(segments)
+
+    # Memory Optimization: Check cache first
+    try:
+        from services.cache_manager import load_cache_pickle, save_cache_pickle
+    except ImportError:
+        from shorts_engine.services.cache_manager import load_cache_pickle, save_cache_pickle
+
+    import hashlib
+    cache_hash = hashlib.md5(transcript_block.encode("utf-8")).hexdigest()
+    cache_key = f"{source_title}_{cache_hash}_{max_clips}_{min_dur}_{max_dur}"
+    cached_candidates = load_cache_pickle("select_clips", cache_key)
+    if cached_candidates is not None:
+        logger.info("Loaded %d clip candidates from cache.", len(cached_candidates))
+        return cached_candidates
+
     prompt = _CLIP_SELECTION_PROMPT.format(
         source_title=source_title or "Unknown",
         min_clips=min_clips,
@@ -582,13 +616,19 @@ def select_clips(
         )
     except Exception as exc:
         logger.error("Gemini clip selection API call failed: %s — using fallback.", exc)
-        return _build_fallback_clips(segments, max_clips, min_dur, max_dur, min_clips=min_clips)
+        return _build_fallback_clips(
+            segments, max_clips, min_dur, max_dur, min_clips=min_clips,
+            api_key=gemini_api_key, source_title=source_title
+        )
 
     try:
         raw_clips = _parse_clips_json(raw_text)
     except ValueError as exc:
         logger.error("Clip JSON parse failed: %s — using fallback.", exc)
-        return _build_fallback_clips(segments, max_clips, min_dur, max_dur, min_clips=min_clips)
+        return _build_fallback_clips(
+            segments, max_clips, min_dur, max_dur, min_clips=min_clips,
+            api_key=gemini_api_key, source_title=source_title
+        )
 
     # Parse and validate each clip; skip malformed ones
     candidates: list[ClipCandidate] = []
@@ -627,6 +667,8 @@ def select_clips(
             target_count=target_min,
             min_dur=min_dur,
             max_dur=max_dur,
+            api_key=gemini_api_key,
+            source_title=source_title,
         )
 
     # Secondary guarantee: if still below target_min, top up directly with fallback clips
@@ -652,4 +694,9 @@ def select_clips(
         "Clip selection complete: %d clips selected (satisfies min_clips=%d).",
         len(deduplicated), min_clips,
     )
-    return deduplicated[:max_clips]
+    final_clips = deduplicated[:max_clips]
+    try:
+        save_cache_pickle("select_clips", cache_key, final_clips)
+    except NameError:
+        pass
+    return final_clips

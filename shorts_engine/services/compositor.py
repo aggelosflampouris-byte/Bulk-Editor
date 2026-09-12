@@ -23,26 +23,6 @@ from moviepy.video.fx import FadeIn, FadeOut, Resize
 
 logger = logging.getLogger(__name__)
 
-def apply_ken_burns(clip, duration: float, zoom_factor: float = 1.15):
-    """
-    Apply a slow zoom-in effect to a clip (typically an image).
-    """
-    clip = clip.with_duration(duration)
-    
-    def crop_center(image, scale):
-        h, w = image.shape[:2]
-        new_w, new_h = int(w / scale), int(h / scale)
-        x1, y1 = (w - new_w) // 2, (h - new_h) // 2
-        cropped = image[y1:y1+new_h, x1:x1+new_w]
-        return cv2.resize(cropped, (w, h), interpolation=cv2.INTER_LINEAR)
-
-    def image_transform(get_frame, t):
-        frame = get_frame(t)
-        scale = 1.0 + ((zoom_factor - 1.0) * (t / duration))
-        return crop_center(frame, scale)
-
-    return clip.transform(image_transform)
-
 def compute_zoom_intervals(
     duration: float,
     segments: list | None = None,
@@ -156,44 +136,12 @@ def apply_dynamic_zoom_ffmpeg(
     return output_path
 
 
-def apply_dynamic_speech_zoom(clip, duration: float, segments: list, clip_start_offset: float = 0.0, zoom_factor: float = 1.15):
-    """
-    Apply a dynamic zoom-in and zoom-out effect to the main speaker based on speech segments.
-    Alternates zoom on every spoken sentence/segment to simulate engaging jump cuts.
-    """
-    clip = clip.with_duration(duration)
-    zoom_intervals = compute_zoom_intervals(duration, segments, clip_start_offset)
-
-    def crop_center(image, scale):
-        if scale == 1.0:
-            return image
-        h, w = image.shape[:2]
-        new_w, new_h = int(w / scale), int(h / scale)
-        x1, y1 = (w - new_w) // 2, (h - new_h) // 2
-        cropped = image[y1:y1+new_h, x1:x1+new_w]
-        import cv2
-        return cv2.resize(cropped, (w, h), interpolation=cv2.INTER_LINEAR)
-
-    def image_transform(get_frame, t):
-        frame = get_frame(t)
-        scale = 1.0
-        for (z_start, z_end) in zoom_intervals:
-            if z_start <= t <= z_end:
-                scale = zoom_factor
-                break
-        return crop_center(frame, scale)
-
-    return clip.transform(image_transform)
-
-
 def compose_timeline(
     main_video_path: Path,
     output_path: Path,
-    broll_image_path: Path | None = None,
+    broll_video_path: Path | None = None,
     broll_start: float = 0.0,
     broll_duration: float = 3.0,
-    bg_music_path: Path | None = None,
-    text_overlay_path: Path | None = None,
     target_width: int = 1080,
     target_height: int = 1920,
     segments: list | None = None,
@@ -204,12 +152,8 @@ def compose_timeline(
     """
     logger.info("Compositing timeline for %s", main_video_path.name)
 
-    # Fast path: If only dynamic zoom on main speaker is needed (no B-roll, no custom overlays, no separate bg_music in MoviePy)
-    if (
-        (not broll_image_path or not broll_image_path.exists())
-        and (not text_overlay_path or not text_overlay_path.exists())
-        and (not bg_music_path or not bg_music_path.exists())
-    ):
+    # Fast path: If only dynamic zoom on main speaker is needed (no B-roll)
+    if not broll_video_path or not broll_video_path.exists():
         try:
             from services.video_engine import probe_duration
             dur = probe_duration(main_video_path)
@@ -223,32 +167,21 @@ def compose_timeline(
                 zoom_factor=1.15,
             )
         except Exception as exc:
-            logger.warning("Fast FFmpeg dynamic zoom failed (%s), falling back to MoviePy...", exc)
+            logger.error("FFmpeg dynamic zoom failed: %s", exc)
+            raise
 
     # Layer 0: Main Speaker
     main_clip = VideoFileClip(str(main_video_path))
     duration = main_clip.duration
     
-    if segments:
-        logger.info("Applying dynamic speech zoom to main speaker...")
-        main_clip = apply_dynamic_speech_zoom(main_clip, duration, segments, clip_start_offset, zoom_factor=1.15)
-        
     layers = [main_clip]
     
-    # Layer 1: B-Roll (with Ken Burns)
+    # Layer 1: B-Roll Video
     broll_clip = None
-    if broll_image_path and broll_image_path.exists():
-        logger.info("Adding B-Roll layer: %s", broll_image_path.name)
-        if broll_image_path.suffix.lower() in [".jpg", ".jpeg", ".png", ".webp"]:
-            broll_clip = ImageClip(str(broll_image_path))
-            broll_clip = Resize(width=target_width).apply(broll_clip)
-            broll_clip = apply_ken_burns(broll_clip, duration=broll_duration, zoom_factor=1.15)
-        else:
-            broll_clip = VideoFileClip(str(broll_image_path))
-            broll_clip = Resize(width=target_width).apply(broll_clip)
-            # Center crop height
-            # Note: in MoviePy v2 cropping is a bit complex, but simple resizing works if ratio matches.
-            # Assuming broll is already somewhat 16:9 or 9:16
+    if broll_video_path and broll_video_path.exists():
+        logger.info("Adding B-Roll layer: %s", broll_video_path.name)
+        broll_clip = VideoFileClip(str(broll_video_path))
+        broll_clip = Resize(width=target_width).apply(broll_clip)
             
         broll_clip = broll_clip.with_start(broll_start).with_position("center")
         
@@ -257,37 +190,12 @@ def compose_timeline(
         broll_clip = FadeOut(0.3).apply(broll_clip)
         layers.append(broll_clip)
         
-    # Layer 2: Text / Subtitles Overlay
-    text_clip = None
-    if text_overlay_path and text_overlay_path.exists():
-        logger.info("Adding Text layer: %s", text_overlay_path.name)
-        text_clip = VideoFileClip(str(text_overlay_path), has_mask=True)
-        text_clip = text_clip.with_position("center")
-        layers.append(text_clip)
-        
     final_video = CompositeVideoClip(layers, size=(target_width, target_height))
     
-    # Audio compositing
+    # Audio compositing (preserve original audio only, background mixed elsewhere)
     audio_layers = []
     if main_clip.audio:
         audio_layers.append(main_clip.audio)
-        
-    if bg_music_path and bg_music_path.exists():
-        logger.info("Adding Background Music layer: %s", bg_music_path.name)
-        bg_audio = AudioFileClip(str(bg_music_path))
-        
-        if bg_audio.duration < duration:
-            # Loop music (a bit complex in MoviePy without LoopAudio, so we'll just trim for now or use loop)
-            from moviepy.audio.fx import AudioLoop
-            bg_audio = AudioLoop(duration=duration).apply(bg_audio)
-        else:
-            bg_audio = bg_audio.with_duration(duration)
-            
-        bg_audio = MultiplyVolume(0.1).apply(bg_audio)
-        bg_audio = AudioFadeIn(1.0).apply(bg_audio)
-        bg_audio = AudioFadeOut(2.0).apply(bg_audio)
-        
-        audio_layers.append(bg_audio)
         
     if audio_layers:
         final_audio = CompositeAudioClip(audio_layers)
@@ -306,6 +214,5 @@ def compose_timeline(
     
     main_clip.close()
     if broll_clip: broll_clip.close()
-    if text_clip: text_clip.close()
         
     return output_path

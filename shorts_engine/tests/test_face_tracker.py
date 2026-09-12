@@ -7,7 +7,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from shorts_engine.services.face_tracker import calculate_active_speaker_crop_x
+from shorts_engine.services.face_tracker import track_active_speaker
 from shorts_engine.services.video_engine import crop_to_9_16, probe_resolution
 
 
@@ -28,13 +28,14 @@ def _generate_synthetic_video(path: Path, width: int, height: int, duration: flo
 def test_face_tracker_landscape_fallback_center_crop(tmp_path):
     # Plain solid red landscape video (1920x1080) — no human faces present
     landscape_video = _generate_synthetic_video(tmp_path / "landscape.mp4", 1920, 1080, duration=1.0)
-    crop_x = calculate_active_speaker_crop_x(
+    tracking_info = track_active_speaker(
         video_path=landscape_video,
         source_width=1920,
         source_height=1080,
         target_width=1080,
         target_height=1920,
     )
+    crop_x = tracking_info.static_crop_x
 
     assert isinstance(crop_x, int)
     # Scaled width = 1920 * (1920 / 1080) = 3413 px

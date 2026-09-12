@@ -12,6 +12,7 @@ This module has zero FFmpeg or HTTP dependencies.
 from __future__ import annotations
 
 import logging
+import string
 from collections.abc import Callable
 from pathlib import Path
 
@@ -74,10 +75,10 @@ def transcribe(
 
     Args:
         video_path:    Absolute path to the input video file.
-        model_size:    Whisper model variant (tiny/base/small/medium/large-v3).
-        device:        Compute device — always "cpu" for this deployment.
-        compute_type:  Quantisation level — "int8" is optimal for CPU.
-        beam_size:     Beam search size (1 = greedy search, 3x faster on CPU).
+        model_size:    Size of the whisper model to use (e.g. 'base', 'large-v2').
+        device:        Device to run on ('cpu' or 'cuda').
+        compute_type:  Quantization to use (e.g. 'int8', 'float16').
+        beam_size:     Beam search size.
         progress_cb:   Optional callback invoked per decoded segment: (fraction, msg).
 
     Returns:
@@ -85,10 +86,21 @@ def transcribe(
 
     Raises:
         FileNotFoundError: If video_path does not exist.
-        RuntimeError:      If the WhisperModel fails to load or transcribe.
+        RuntimeError:      If the Cloud API fails to load or transcribe.
     """
     if not video_path.is_file():
         raise FileNotFoundError(f"Video file not found: {video_path}")
+
+    # Memory Optimization: Check cache first
+    try:
+        from services.cache_manager import load_cache_pickle, save_cache_pickle
+    except ImportError:
+        from shorts_engine.services.cache_manager import load_cache_pickle, save_cache_pickle
+
+    cache_key = f"{video_path.name}_{model_size}_{device}_{compute_type}_{beam_size}"
+    cached_segments = load_cache_pickle("transcription", cache_key)
+    if cached_segments is not None:
+        return cached_segments
 
     logger.info("Loading WhisperModel (size=%s, device=%s)", model_size, device)
     try:
@@ -107,7 +119,7 @@ def transcribe(
             word_timestamps=True,
             vad_filter=True,
             vad_parameters={"min_silence_duration_ms": 300},
-            initial_prompt="Γεια σας. Σήμερα θα μιλήσουμε για ένα πολύ ενδιαφέρον θέμα. Ας ξεκινήσουμε.",
+            initial_prompt="Γεια σας! Σήμερα, θα συζητήσουμε και θα αναλύσουμε πώς λειτουργεί αυτό. Είστε έτοιμοι; Ας ξεκινήσουμε, λοιπόν, αμέσως τώρα.",
             condition_on_previous_text=False,
         )
     except Exception as exc:
@@ -149,6 +161,10 @@ def transcribe(
             )
 
     logger.info("Transcription complete — %d segments extracted.", len(segments))
+    
+    # Save to cache
+    save_cache_pickle("transcription", cache_key, segments)
+
     return segments
 
 
@@ -191,7 +207,11 @@ def _escape_ass_text(text: str) -> str:
     return text
 
 
-def _build_karaoke_text(words: list[tuple[float, float, str]], seg_start: float) -> str:
+def _build_karaoke_text(
+    words: list[tuple[float, float, str]],
+    seg_start: float,
+    primary_keyword: str | None = None,
+) -> str:
     """
     Build an ASS karaoke text string with per-word {\\k} timing tags.
 
@@ -199,22 +219,46 @@ def _build_karaoke_text(words: list[tuple[float, float, str]], seg_start: float)
     in yellow while being spoken and returns to white afterwards.  Between
     words, {\\rDefault} resets the style to white.
 
+    If a word matches the primary_keyword (ignoring case/punctuation), it
+    receives a static color override {\\c&H00FFFF&} (Yellow) when returning to Default.
+
     The {\\k} tag duration is the time the highlighted word is displayed
     (in centiseconds, i.e. hundredths of a second).
 
     Args:
-        words:     List of (word_start, word_end, word_text) tuples.
-        seg_start: Segment start time in seconds (used to compute relative offsets).
+        words:           List of (word_start, word_end, word_text) tuples.
+        seg_start:       Segment start time in seconds (used to compute relative offsets).
+        primary_keyword: Optional keyword to permanently highlight.
 
     Returns:
         ASS dialogue Text field string with inline karaoke override tags.
     """
     parts: list[str] = []
+    
+    # Pre-clean the keyword for faster matching
+    clean_keyword = ""
+    if primary_keyword:
+        clean_keyword = primary_keyword.translate(str.maketrans('', '', string.punctuation)).lower().strip()
+        
     for w_start, w_end, w_text in words:
         duration_cs = max(1, int(round((w_end - w_start) * 100)))
         safe = _escape_ass_text(w_text)
-        # Switch to Highlight style for the active word, then reset to Default
-        parts.append(f"{{\\rHighlight\\k{duration_cs}}}{safe}{{\\rDefault}}")
+        
+        # Check if this word matches the primary keyword
+        is_keyword = False
+        if clean_keyword:
+            clean_word = w_text.translate(str.maketrans('', '', string.punctuation)).lower().strip()
+            if clean_word and (clean_word == clean_keyword or clean_word in clean_keyword.split()):
+                is_keyword = True
+                
+        # Switch to Highlight style for the active word
+        # Then reset to Default. If it's a keyword, inject a static color override (Green) after resetting.
+        if is_keyword:
+            # &H00FF00& is Green in ASS (BGR)
+            parts.append(f"{{\\rHighlight\\k{duration_cs}}}{safe}{{\\rDefault\\c&H00FF00&}}")
+        else:
+            parts.append(f"{{\\rHighlight\\k{duration_cs}}}{safe}{{\\rDefault}}")
+            
     return " ".join(parts)
 
 
@@ -222,6 +266,7 @@ def segments_to_ass(
     segments: list[TranscriptionSegment],
     style_line: str | None = None,
     highlight_style_line: str | None = None,
+    primary_keyword: str | None = None,
 ) -> str:
     """
     Render a full ASS subtitle file string from a list of segments.
@@ -234,6 +279,7 @@ def segments_to_ass(
         segments:             Ordered list of TranscriptionSegment objects.
         style_line:           Override the default ASS style line.
         highlight_style_line: Override the highlight ASS style line.
+        primary_keyword:      Optional keyword to statically highlight (e.g. Green).
 
     Returns:
         Complete ASS file content as a string, ready to be written to disk.
@@ -247,19 +293,40 @@ def segments_to_ass(
 
     dialogue_lines: list[str] = []
     for seg in segments:
-        start = _seconds_to_ass_time(seg.start)
-        end = _seconds_to_ass_time(seg.end)
-
         if seg.words:
-            # Word-level karaoke highlight
-            text_field = _build_karaoke_text(seg.words, seg.start)
+            # Chunk words into smaller blocks (max 5 words)
+            current_chunk = []
+            for word in seg.words:
+                current_chunk.append(word)
+                if len(current_chunk) >= 5:
+                    start_sec = current_chunk[0][0]
+                    end_sec = current_chunk[-1][1]
+                    start = _seconds_to_ass_time(start_sec)
+                    end = _seconds_to_ass_time(end_sec)
+                    text_field = _build_karaoke_text(current_chunk, start_sec, primary_keyword)
+                    dialogue_lines.append(
+                        f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text_field}"
+                    )
+                    current_chunk = []
+            
+            # Add remaining words in the segment
+            if current_chunk:
+                start_sec = current_chunk[0][0]
+                end_sec = current_chunk[-1][1]
+                start = _seconds_to_ass_time(start_sec)
+                end = _seconds_to_ass_time(end_sec)
+                text_field = _build_karaoke_text(current_chunk, start_sec, primary_keyword)
+                dialogue_lines.append(
+                    f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text_field}"
+                )
         else:
             # Fallback: plain text
+            start = _seconds_to_ass_time(seg.start)
+            end = _seconds_to_ass_time(seg.end)
             text_field = _escape_ass_text(seg.text)
-
-        dialogue_lines.append(
-            f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text_field}"
-        )
+            dialogue_lines.append(
+                f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text_field}"
+            )
 
     return ASS_HEADER_TEMPLATE.format(
         style_line=effective_style,
@@ -273,6 +340,7 @@ def write_ass_file(
     output_path: Path,
     style_line: str | None = None,
     highlight_style_line: str | None = None,
+    primary_keyword: str | None = None,
 ) -> Path:
     """
     Generate and write an ASS subtitle file for the given segments.
@@ -282,6 +350,7 @@ def write_ass_file(
         output_path:          Destination path for the .ass file.
         style_line:           Optional style override (see segments_to_ass).
         highlight_style_line: Optional highlight style override.
+        primary_keyword:      Optional keyword to statically highlight (e.g. Green).
 
     Returns:
         The resolved, written output_path.
@@ -289,7 +358,12 @@ def write_ass_file(
     Raises:
         OSError: If the file cannot be written.
     """
-    ass_content = segments_to_ass(segments, style_line, highlight_style_line)
+    ass_content = segments_to_ass(
+        segments,
+        style_line=style_line,
+        highlight_style_line=highlight_style_line,
+        primary_keyword=primary_keyword,
+    )
 
     # ASS files must be UTF-8 encoded to preserve Greek glyphs
     output_path.write_text(ass_content, encoding="utf-8")

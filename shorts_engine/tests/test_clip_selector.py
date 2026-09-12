@@ -131,7 +131,13 @@ def test_select_clips_gemini_single_clip_supplements_to_minimum_three():
         '"broll_query": "greek business"}]}'
     )
     with patch("shorts_engine.services.clip_selector.genai.Client"), \
-         patch("shorts_engine.services.clip_selector._call_gemini_with_fallback", return_value=single_clip_response):
+         patch("shorts_engine.services.clip_selector._call_gemini_with_fallback", return_value=single_clip_response), \
+         patch("shorts_engine.services.clip_selector.generate_seo") as mock_generate_seo:
+        
+        # Mock generate_seo to return a valid SeoMetadata so the test doesn't fail
+        from shorts_engine.services.seo_generator import SeoMetadata
+        mock_generate_seo.return_value = SeoMetadata.fallback("Mocked SEO")
+
         clips = select_clips(
             segments=segments,
             gemini_api_key="valid_fake_key",

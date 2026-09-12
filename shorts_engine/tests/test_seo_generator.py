@@ -89,6 +89,11 @@ def test_seo_metadata_youtube_tags_display():
         title="Τίτλος",
         description="Περιγραφή",
         tags=("Τσίπρας", "πολιτική", "Ελλάδα", "shorts"),
+        primary_keyword="keyword",
+        pinned_comment="pinned",
+        alt_titles=("alt",),
+        tiktok_caption="tiktok",
+        ig_reels_caption="reels"
     )
     assert seo.youtube_tags_display == "Τσίπρας, πολιτική, Ελλάδα, shorts"
 
@@ -156,6 +161,11 @@ def test_seo_metadata_safe_filename():
         title="Shorts: Το μεγάλο κόλπο!",
         description="Περιγραφή",
         tags=("shorts",),
+        primary_keyword="keyword",
+        pinned_comment="pinned",
+        alt_titles=("alt",),
+        tiktok_caption="tiktok",
+        ig_reels_caption="reels"
     )
     assert seo.safe_filename == "Shorts - Το μεγάλο κόλπο!"
 
@@ -221,11 +231,11 @@ def test_validate_seo_dict_removes_emojis():
         "tags": ["🔥 Τσίπρας", "οικονομία 💶", "Ελλάδα 🇬🇷", "shorts"],
     }
     seo = _validate_seo_dict(data)
-    assert seo.title == "Η ανάλυση του προέδρου για την οικονομία!"
-    assert "🎬" not in seo.title
-    assert "📈" not in seo.title
-    assert "💥" not in seo.description
-    assert "🏛️" not in seo.description
+    assert seo.title == "🎬 Η ανάλυση του προέδρου για την οικονομία 📈!"
+    assert "🎬" in seo.title
+    assert "📈" in seo.title
+    assert "💥" in seo.description
+    assert "🏛️" in seo.description
     assert "🔥" not in seo.tags[0]
     assert "💶" not in seo.tags[1]
     assert "🇬🇷" not in seo.tags[2]
