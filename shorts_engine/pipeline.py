@@ -750,18 +750,7 @@ def process_url_clip(
         # ── Stage 4: Crop to 9:16 (active speaker tracking) ───────────────────
         cropped_path = tmp_dir / f"{stem}_cropped.mp4"
         
-        # Validation Check: Ensure extraction produced a valid video stream
-        try:
-            probe_resolution(video_path)
-        except Exception as exc:
-            msg = f"Extracted clip is invalid or missing video stream: {exc}"
-            logger.error("URL pipeline aborting clip: %s", msg)
-            return ProcessingResult(
-                input_file=video_path,
-                clip_index=1,
-                status="failed",
-                error=msg
-            )
+
         has_speaker: bool = False
         crop_x_offset: int | None = None
         crop_x_expr: str | None = None
