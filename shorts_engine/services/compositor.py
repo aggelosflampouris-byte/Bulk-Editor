@@ -27,7 +27,7 @@ def compute_zoom_intervals(
     duration: float,
     segments: list | None = None,
     clip_start_offset: float = 0.0,
-    chunk_target: float = 3.5,
+    chunk_target: float = 2.5,
 ) -> list[tuple[float, float]]:
     """
     Compute alternating punch-in zoom intervals (3.0s - 4.5s) for high-retention jump cuts.
@@ -167,7 +167,7 @@ def compose_timeline(
                 zoom_intervals=zoom_intervals,
                 target_width=target_width,
                 target_height=target_height,
-                zoom_factor=1.15,
+                zoom_factor=1.25,
             )
         else:
             # We have B-roll, but we still want punch-ins on the main video
@@ -178,7 +178,7 @@ def compose_timeline(
                 zoom_intervals=zoom_intervals,
                 target_width=target_width,
                 target_height=target_height,
-                zoom_factor=1.15,
+                zoom_factor=1.25,
             )
             main_video_path = zoomed_main_path
     except Exception as exc:

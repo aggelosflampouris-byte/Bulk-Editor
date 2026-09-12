@@ -5,7 +5,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # Default smoothing factor for Exponential Moving Average (0 < alpha <= 1)
-_DEFAULT_EMA_ALPHA = 0.20
+_DEFAULT_EMA_ALPHA = 0.10
 _DEFAULT_SAMPLE_INTERVAL_SECONDS = 0.25  # Sample 4 frames per second for high-speed tracking
 _MIN_SPEAKER_PRESENCE_RATIO = 0.15       # At least 15% of frames must contain a speaker to flag has_speaker
 
@@ -130,7 +130,7 @@ def track_active_speaker(
             if frame_idx % frame_step == 0:
                 total_sampled += 1
                 t_sec = frame_idx / fps
-                results = model(frame, classes=[0], verbose=False)
+                results = model(frame, classes=[0], conf=0.6, verbose=False)
                 boxes = results[0].boxes if results else None
                 if boxes and len(boxes) > 0:
                     best_box = max(

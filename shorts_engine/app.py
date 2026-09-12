@@ -309,7 +309,7 @@ def _render_sidebar() -> Settings:
         model_size = st.selectbox(
             "Whisper Model Size",
             options=["tiny", "base", "small", "medium", "large-v3"],
-            index=2,  # default: small
+            index=4,  # default: large-v3
             help=(
                 "faster-whisper-large-v3 delivers highest Greek accuracy and millisecond timestamps.\n"
                 "Use small or base for fast 1–2 minute previews on CPU for long YouTube videos."
