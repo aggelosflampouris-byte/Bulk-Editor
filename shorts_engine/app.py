@@ -407,13 +407,39 @@ def _render_sidebar() -> Settings:
 
         st.markdown("---")
         st.markdown("### SEO Settings")
-        brand_voice = st.text_input(
-            "Brand Voice / Persona",
+        
+        seo_preset = st.selectbox(
+            "Virality Preset",
+            options=["None", "Politics/Economy", "Society", "Science", "Technology"],
+            index=0,
+            help="Select a high-virality persona preset tailored to your content's niche.",
+            key="seo_preset_select",
+        )
+        
+        custom_brand_voice = st.text_input(
+            "Custom Brand Voice / Persona (Optional)",
             value="",
-            placeholder="e.g. Sarcastic, authoritative, funny gamer...",
-            help="Inject your specific channel personality into the AI generation for titles and descriptions.",
+            placeholder="e.g. Sarcastic, funny gamer...",
+            help="Inject your specific channel personality. This will be combined with the preset if selected.",
             key="brand_voice_input",
         )
+        
+        # Combine preset and custom voice
+        preset_mapping = {
+            "None": "",
+            "Politics/Economy": "Highly authoritative, analytical, and slightly polarizing. Focus on hidden agendas, economic impact, and hard truths. Tone should be serious, urgent, and provocative.",
+            "Society": "Relatable, empathetic, and thought-provoking. Focus on human behavior, social dynamics, and everyday realities. Tone should spark intense debate and personal reflection.",
+            "Science": "Educational, mind-blowing, and highly factual. Focus on explaining complex concepts simply, debunking myths, and highlighting future implications. Tone should be awe-inspiring and authoritative.",
+            "Technology": "Forward-looking, fast-paced, and analytical. Focus on innovation, disruption, and how tech changes daily life. Tone should be cutting-edge, enthusiastic, and slightly urgent."
+        }
+        
+        selected_preset = preset_mapping.get(seo_preset, "")
+        if selected_preset and custom_brand_voice.strip():
+            final_brand_voice = f"{selected_preset} ADDITIONALLY: {custom_brand_voice.strip()}"
+        elif selected_preset:
+            final_brand_voice = selected_preset
+        else:
+            final_brand_voice = custom_brand_voice.strip()
 
         st.markdown("---")
         st.markdown("### Clip Selection (URL Mode)")
@@ -587,7 +613,7 @@ def _render_sidebar() -> Settings:
         max_clips=int(max_clips),
         clip_min_duration=float(clip_min_dur),
         clip_max_duration=float(max(clip_max_dur, clip_min_dur + 5)),
-        brand_voice=brand_voice.strip(),
+        brand_voice=final_brand_voice,
         outro_path=outro_path,
         output_dir=resolved_output_dir,
     )
