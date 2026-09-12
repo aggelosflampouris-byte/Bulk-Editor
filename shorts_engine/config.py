@@ -243,6 +243,10 @@ class Settings:
     clip_max_duration: float = 50.0
     # Reject source videos longer than this many seconds (2 hours default)
     max_source_duration_seconds: int = 7200
+    
+    # ── SEO Engine ─────────────────────────────────────────────
+    # Optional Brand Voice injection to tailor Gemini's writing tone
+    brand_voice: str = ""
 
     # ── Background Music ──────────────────────────────────────
     # Enable subtle background audio bed

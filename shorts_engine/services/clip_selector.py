@@ -343,6 +343,7 @@ def _supplement_clips(
     max_dur: float,
     api_key: str | None = None,
     source_title: str = "",
+    brand_voice: str = "",
 ) -> list[ClipCandidate]:
     """
     Generate supplementary non-overlapping clips to guarantee minimum clip count.
@@ -388,7 +389,7 @@ def _supplement_clips(
                 if api_key and full_excerpt_text:
                     import time
                     time.sleep(2)  # Avoid rate limiting
-                    seo = generate_seo(full_excerpt_text, api_key, source_title=source_title)
+                    seo = generate_seo(full_excerpt_text, api_key, source_title=source_title, brand_voice=brand_voice)
                 else:
                     seo = SeoMetadata.fallback(full_excerpt_text[:200] or f"Clip #{idx}")
                 result.append(
@@ -421,7 +422,7 @@ def _supplement_clips(
             if api_key and full_excerpt_text:
                 import time
                 time.sleep(2)  # Avoid rate limiting
-                seo = generate_seo(full_excerpt_text, api_key, source_title=source_title)
+                seo = generate_seo(full_excerpt_text, api_key, source_title=source_title, brand_voice=brand_voice)
             else:
                 seo = SeoMetadata.fallback(full_excerpt_text[:200] or f"Clip #{idx}")
             result.append(
@@ -458,6 +459,7 @@ def _build_fallback_clips(
     min_clips: int = 3,
     api_key: str | None = None,
     source_title: str = "",
+    brand_voice: str = "",
 ) -> list[ClipCandidate]:
     """
     Generate evenly-distributed clips as a fallback when the Gemini call fails.
@@ -509,7 +511,7 @@ def _build_fallback_clips(
         if api_key and full_excerpt_text:
             import time
             time.sleep(2)  # Avoid rate limiting
-            seo = generate_seo(full_excerpt_text, api_key, source_title=source_title)
+            seo = generate_seo(full_excerpt_text, api_key, source_title=source_title, brand_voice=brand_voice)
         else:
             seo = SeoMetadata.fallback(full_excerpt_text[:200] or f"Clip {i + 1}")
         candidates.append(
@@ -537,6 +539,7 @@ def select_clips(
     min_dur: float = 35.0,
     max_dur: float = 50.0,
     source_title: str = "",
+    brand_voice: str = "",
 ) -> list[ClipCandidate]:
     """
     Use Gemini to select the most viral-worthy clips from a transcript.
@@ -570,7 +573,7 @@ def select_clips(
 
     if not gemini_api_key or not gemini_api_key.strip():
         logger.warning("Gemini API key absent — using fallback clip distribution.")
-        return _build_fallback_clips(segments, max_clips, min_dur, max_dur, min_clips=min_clips)
+        return _build_fallback_clips(segments, max_clips, min_dur, max_dur, min_clips=min_clips, brand_voice=brand_voice)
 
     transcript_block = format_transcript_with_timestamps(segments)
 
@@ -618,7 +621,7 @@ def select_clips(
         logger.error("Gemini clip selection API call failed: %s — using fallback.", exc)
         return _build_fallback_clips(
             segments, max_clips, min_dur, max_dur, min_clips=min_clips,
-            api_key=gemini_api_key, source_title=source_title
+            api_key=gemini_api_key, source_title=source_title, brand_voice=brand_voice
         )
 
     try:
@@ -627,7 +630,7 @@ def select_clips(
         logger.error("Clip JSON parse failed: %s — using fallback.", exc)
         return _build_fallback_clips(
             segments, max_clips, min_dur, max_dur, min_clips=min_clips,
-            api_key=gemini_api_key, source_title=source_title
+            api_key=gemini_api_key, source_title=source_title, brand_voice=brand_voice
         )
 
     # Parse and validate each clip; skip malformed ones
@@ -639,7 +642,7 @@ def select_clips(
 
     if not candidates:
         logger.warning("No valid clips parsed from Gemini response — using fallback.")
-        return _build_fallback_clips(segments, max_clips, min_dur, max_dur, min_clips=min_clips)
+        return _build_fallback_clips(segments, max_clips, min_dur, max_dur, min_clips=min_clips, api_key=gemini_api_key, source_title=source_title, brand_voice=brand_voice)
 
     # Remove overlapping clips (keep the earlier one in the ranked order)
     deduplicated: list[ClipCandidate] = []
@@ -669,12 +672,13 @@ def select_clips(
             max_dur=max_dur,
             api_key=gemini_api_key,
             source_title=source_title,
+            brand_voice=brand_voice,
         )
 
     # Secondary guarantee: if still below target_min, top up directly with fallback clips
     if len(deduplicated) < target_min:
         fallback_clips = _build_fallback_clips(
-            segments, max_clips, min_dur, max_dur, min_clips=target_min
+            segments, max_clips, min_dur, max_dur, min_clips=target_min, api_key=gemini_api_key, source_title=source_title, brand_voice=brand_voice
         )
         for fb in fallback_clips:
             if len(deduplicated) >= target_min:

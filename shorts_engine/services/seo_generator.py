@@ -79,6 +79,8 @@ You are an expert editorial strategist and YouTube Shorts SEO specialist for Gre
 Given the following transcript and source context, generate an authoritative, high-CTR, \
 highly engaging SEO package matching the prestige, subject matter, and visual image of the video.
 
+{brand_voice_injection}
+
 SOURCE VIDEO CONTEXT / TITLE: {source_title}
 
 Respond ONLY with a valid JSON object — no markdown, no code fences, no \
@@ -86,10 +88,12 @@ explanation. The JSON must have exactly these keys:
 
 {{
   "title": "<Greek title, max 60 chars. MUST BE AN ORIGINAL PHRASE that summarizes the core topic. DO NOT USE DIRECT QUOTES. 1-2 strategic emojis allowed>",
-  "alt_titles": ["<Alternative title 1>", "<Alternative title 2>"],
+  "curiosity_title": "<Greek title focusing purely on the curiosity gap/mystery>",
+  "authority_title": "<Greek title focusing on authority, facts, or ultimate solutions>",
+  "contrarian_title": "<Greek title focusing on a controversial, edgy, or 'why you are wrong' angle>",
   "primary_keyword": "<1-2 words Greek keyword that represents the core topic, exactly as it might appear in the transcript>",
   "description": "<Greek description, max 5000 characters, structured with hook in first 2 lines, core value in the rest, CTA and 3-5 trending hashtags at the end, 1-2 strategic emojis allowed>",
-  "pinned_comment": "<An engaging, controversial, or question-based Greek comment to pin at the top of the comments section to drive engagement>",
+  "pinned_comment": "<An Engagement Trap Greek comment to pin at the top of the comments section. It MUST ask a polarizing question, state a strong opinion, or use a fill-in-the-blank prompt designed specifically to farm comments and boost the YouTube algorithm>",
   "tags": ["<tag 1>", "<tag 2>", ..., "<tag 16>"]
 }}
 
@@ -101,7 +105,7 @@ TITLE & STYLE RULES (CRITICAL):
   * You may use third-person ("Τι αποκαλύπτουν τα στοιχεία...") or curiosity-driven hooks ("Ο λόγος που...").
   * Avoid cheap clickbait, but ensure the title creates a strong curiosity gap.
 - EMOJIS ALLOWED: You MAY use 1 or 2 highly relevant emojis (e.g., 🤯, 🔥, 📈, 🚨) to act as visual pattern interrupts and increase CTR. Do not overuse them.
-- NO DIRECT QUOTES (CRITICAL): The title and alt_titles MUST be completely original, punchy phrases that act as a hook or summary. They MUST NEVER be sentences copied from the transcript. Max 60 characters.
+- NO DIRECT QUOTES (CRITICAL): The titles MUST be completely original, punchy phrases that act as a hook or summary. They MUST NEVER be sentences copied from the transcript. Max 60 characters.
 
 DESCRIPTION & TAGS RULES:
 - description must follow the 3-part structure:
@@ -115,6 +119,28 @@ Transcript:
 {transcript}
 """
 
+_CRITIC_PROMPT = """\
+You are an elite YouTube Shorts SEO Critic. Your job is to review a generated title and description \
+for a Greek YouTube Short and determine if it has high viral potential, strong Click-Through Rate (CTR) potential, \
+and a compelling curiosity gap.
+
+Score the Title's CTR potential from 1 to 10.
+If the score is below 7, provide specific instructions on how to rewrite the Title and Description to make it more viral.
+If the score is 7 or higher, you can just say "Score: X. Looks great."
+
+Review the following:
+Title: {title}
+Description: {description}
+
+JSON Output Schema:
+{{
+  "score": <int>,
+  "feedback": "<string explanation or rewrite instructions>"
+}}
+Respond ONLY with valid JSON.
+"""
+
+
 
 # ── Public Types ───────────────────────────────────────────────────────────────
 
@@ -127,7 +153,9 @@ class SeoMetadata:
     tags: tuple[str, ...]  # Immutable sequence of SEO tags
     primary_keyword: str
     pinned_comment: str
-    alt_titles: tuple[str, ...]
+    curiosity_title: str
+    authority_title: str
+    contrarian_title: str
 
     @property
     def youtube_tags_display(self) -> str:
@@ -162,7 +190,9 @@ class SeoMetadata:
             ]),
             primary_keyword="shorts",
             pinned_comment="Ποια είναι η δική σας άποψη; Γράψτε στα σχόλια! 👇",
-            alt_titles=tuple(["Greek Short (Alt 1)", "Greek Short (Alt 2)"]),
+            curiosity_title="Greek Short (Curiosity)",
+            authority_title="Greek Short (Authority)",
+            contrarian_title="Greek Short (Contrarian)",
         )
 
 
@@ -349,12 +379,10 @@ def _validate_seo_dict(data: dict) -> SeoMetadata:
     # Parse new advanced SEO fields with safe fallbacks
     primary_keyword = str(data.get("primary_keyword", "")).strip()
     pinned_comment = str(data.get("pinned_comment", "")).strip()
+    curiosity_title = str(data.get("curiosity_title", "")).strip()[:60]
+    authority_title = str(data.get("authority_title", "")).strip()[:60]
+    contrarian_title = str(data.get("contrarian_title", "")).strip()[:60]
 
-    raw_alt_titles = data.get("alt_titles", [])
-    if not isinstance(raw_alt_titles, list):
-        raw_alt_titles = []
-    alt_titles_list = [str(t).strip()[:60] for t in raw_alt_titles if str(t).strip()]
-    
     # Pad with essential category tags if fewer than 10 tags provided
     _PADDING_TAGS = [
         "shorts", "greek", "viral", "trending", "reels",
@@ -375,7 +403,9 @@ def _validate_seo_dict(data: dict) -> SeoMetadata:
         tags=tuple(tags),
         primary_keyword=primary_keyword,
         pinned_comment=pinned_comment,
-        alt_titles=tuple(alt_titles_list),
+        curiosity_title=curiosity_title,
+        authority_title=authority_title,
+        contrarian_title=contrarian_title,
     )
 
 
@@ -385,16 +415,9 @@ def generate_seo(
     transcript_text: str,
     api_key: str,
     source_title: str = "",
+    brand_voice: str = "",
 ) -> SeoMetadata:
     """
-    Generate YouTube Shorts SEO metadata from a Greek transcript using Gemini.
-
-    If the API call fails for any reason (network, quota, parse error), a
-    graceful fallback SeoMetadata is returned rather than propagating an
-    exception, so the pipeline can still deliver a processed video.
-
-    Args:
-        transcript_text: Full Greek transcript text for the Short.
         api_key:         Google Gemini API key.
         source_title:    Optional source video title or topic context.
 
@@ -409,9 +432,14 @@ def generate_seo(
         logger.warning("Transcript is empty — returning fallback SEO metadata.")
         return SeoMetadata.fallback("")
 
+    brand_voice_injection = ""
+    if brand_voice:
+        brand_voice_injection = f"CRITICAL BRAND VOICE RULES:\n- Ensure the tone matches this persona perfectly: '{brand_voice}'"
+
     prompt = _PROMPT_TEMPLATE.format(
         transcript=transcript_text,
         source_title=source_title or "Unknown",
+        brand_voice_injection=brand_voice_injection,
     )
 
     # Memory Optimization: Check cache first
@@ -449,6 +477,41 @@ def generate_seo(
         logger.error("SEO JSON parse/validate failed: %s — using fallback SEO.", exc)
         return SeoMetadata.fallback(transcript_text)
 
+    # ── Virality Critic Loop ──
+    critic_prompt = _CRITIC_PROMPT.format(title=seo.title, description=seo.description)
+    try:
+        critic_raw = client.models.generate_content(
+            model="gemini-3.5-flash-lite",
+            contents=critic_prompt,
+            config=genai_types.GenerateContentConfig(
+                temperature=0.2,
+                response_mime_type="application/json",
+            )
+        ).text.strip()
+        critic_data = _extract_json_from_response(critic_raw)
+        score = critic_data.get("score", 10)
+        feedback = critic_data.get("feedback", "")
+        
+        if score < 7:
+            logger.warning("Critic scored SEO %d/10. Feedback: %s. Regenerating...", score, feedback)
+            # Regenerate once with feedback
+            regen_prompt = prompt + f"\n\nCRITIC FEEDBACK FROM PREVIOUS ATTEMPT (Address this!):\n{feedback}"
+            regen_raw = _call_gemini_with_fallback(
+                client=client,
+                contents=regen_prompt,
+                config=genai_types.GenerateContentConfig(
+                    max_output_tokens=_MAX_OUTPUT_TOKENS,
+                    temperature=0.7,  # Higher temp for creative rewrite
+                    response_mime_type="application/json",
+                ),
+            )
+            regen_data = _extract_json_from_response(regen_raw)
+            seo = _validate_seo_dict(regen_data)
+        else:
+            logger.info("Critic approved SEO (Score: %d/10).", score)
+    except Exception as exc:
+        logger.warning("Critic loop failed or skipped: %s", exc)
+
     logger.info("SEO metadata generated: title='%s', %d tags.", seo.title, len(seo.tags))
     save_cache_pickle("seo_metadata", cache_key, seo)
     return seo
@@ -470,7 +533,9 @@ def seo_to_dict(seo: SeoMetadata) -> dict[str, object]:
         "tags": list(seo.tags),
         "primary_keyword": seo.primary_keyword,
         "pinned_comment": seo.pinned_comment,
-        "alt_titles": list(seo.alt_titles),
+        "curiosity_title": seo.curiosity_title,
+        "authority_title": seo.authority_title,
+        "contrarian_title": seo.contrarian_title,
     }
 
 

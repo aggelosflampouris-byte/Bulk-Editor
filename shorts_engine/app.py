@@ -406,6 +406,16 @@ def _render_sidebar() -> Settings:
         )
 
         st.markdown("---")
+        st.markdown("### SEO Settings")
+        brand_voice = st.text_input(
+            "Brand Voice / Persona",
+            value="",
+            placeholder="e.g. Sarcastic, authoritative, funny gamer...",
+            help="Inject your specific channel personality into the AI generation for titles and descriptions.",
+            key="brand_voice_input",
+        )
+
+        st.markdown("---")
         st.markdown("### Clip Selection (URL Mode)")
         max_clips = st.slider(
             "Max Clips per Video",
@@ -577,6 +587,7 @@ def _render_sidebar() -> Settings:
         max_clips=int(max_clips),
         clip_min_duration=float(clip_min_dur),
         clip_max_duration=float(max(clip_max_dur, clip_min_dur + 5)),
+        brand_voice=brand_voice.strip(),
         outro_path=outro_path,
         output_dir=resolved_output_dir,
     )
@@ -688,9 +699,9 @@ def _render_result_card(result: ProcessingResult, index: int) -> None:
                 if result.seo:
                     st.markdown("**SEO Metadata**")
                     st.markdown(f"**Title:** {result.seo.title}")
-                    if result.seo.alt_titles:
-                        alt_titles_str = ' | '.join(result.seo.alt_titles)
-                        st.markdown(f"**Alt Titles:** *{alt_titles_str}*")
+                    st.markdown(f"**Curiosity Angle:** *{result.seo.curiosity_title}*")
+                    st.markdown(f"**Authority Angle:** *{result.seo.authority_title}*")
+                    st.markdown(f"**Contrarian Angle:** *{result.seo.contrarian_title}*")
                     if result.seo.primary_keyword:
                         st.markdown(f"**Primary Keyword:** `{result.seo.primary_keyword}`")
 
@@ -858,9 +869,9 @@ def _render_url_candidate_table(candidates: list[ClipCandidate]) -> list[int]:
             st.markdown(f"**B-Roll query:** `{clip.broll_query}`")
             st.markdown(f"**Primary Keyword:** `{clip.seo.primary_keyword}`")
             st.markdown(f"**AI Title:** {clip.seo.title}")
-            if clip.seo.alt_titles:
-                alt_titles_str = ' | '.join(clip.seo.alt_titles)
-                st.markdown(f"**Alt Titles:** *{alt_titles_str}*")
+            st.markdown(f"**Curiosity Angle:** *{clip.seo.curiosity_title}*")
+            st.markdown(f"**Authority Angle:** *{clip.seo.authority_title}*")
+            st.markdown(f"**Contrarian Angle:** *{clip.seo.contrarian_title}*")
             st.markdown(f"**Description:** {clip.seo.description}")
             if clip.seo.pinned_comment:
                 st.markdown("**Pinned Comment:**")

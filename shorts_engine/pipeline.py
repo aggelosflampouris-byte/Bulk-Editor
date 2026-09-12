@@ -196,6 +196,7 @@ def process_single(
             transcript_text,
             settings.gemini_api_key,
             source_title=video_path.stem,
+            brand_voice=settings.brand_voice,
         )
 
         # Write ASS subtitle file to scratch dir
@@ -533,6 +534,7 @@ def _run_batch_impl(
                     min_dur=settings.clip_min_duration,
                     max_dur=settings.clip_max_duration,
                     source_title=video_path.stem,
+                    brand_voice=settings.brand_voice,
                 )
 
                 snapped: list[ClipCandidate] = []
