@@ -16,6 +16,7 @@ import json
 import logging
 import math
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -139,7 +140,7 @@ def _run_ytdlp_metadata(channel_url: str, max_videos: int) -> list[dict[str, Any
     No media is ever downloaded — this is metadata-only.
     """
     cmd = [
-        "yt-dlp",
+        sys.executable, "-m", "yt_dlp",
         "--flat-playlist",
         "--dump-json",
         "--no-warnings",
