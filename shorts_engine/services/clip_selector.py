@@ -103,7 +103,9 @@ is an array. Each array element must have exactly these keys:
 and structure will maximize retention and CTR on YouTube Shorts>",
       "seo": {{
         "title": "<Greek title, max 60 chars. MUST BE AN ORIGINAL PHRASE that summarizes the core topic. DO NOT USE DIRECT QUOTES. 1-2 strategic emojis allowed>",
-        "alt_titles": ["<Alternative title 1>", "<Alternative title 2>"],
+        "curiosity_title": "<Greek title focusing purely on the curiosity gap/mystery>",
+        "authority_title": "<Greek title focusing on authority, facts, or ultimate solutions>",
+        "contrarian_title": "<Greek title focusing on a controversial, edgy, or 'why you are wrong' angle>",
         "primary_keyword": "<1-2 words Greek keyword that represents the core topic, exactly as it might appear in the transcript>",
         "description": "<Greek description, concise max 500 chars, structured with hook in first 2 lines, core value in the rest, CTA and 3-5 trending hashtags at the end, 1-2 strategic emojis allowed>",
         "pinned_comment": "<An engaging, controversial, or question-based Greek comment to pin at the top of the comments section to drive engagement>",

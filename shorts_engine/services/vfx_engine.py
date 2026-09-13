@@ -84,14 +84,14 @@ class VfxPreset(Enum):
     # unsharp compensates for H.264 encoding softness on faces and text.
     SUBTLE = (
         "eq=contrast=1.03:saturation=1.10,"
-        "curves=preset=stronger_contrast,"
+        "curves=preset=strong_contrast,"
         "unsharp=luma_msize_x=3:luma_msize_y=3:luma_amount=0.4"
     )
 
     # Punchy, saturated look for high-energy moments.
     VIBRANCE = (
         "eq=contrast=1.05:saturation=1.30:brightness=0.02,"
-        "curves=preset=stronger_contrast,"
+        "curves=preset=strong_contrast,"
         "unsharp=luma_msize_x=3:luma_msize_y=3:luma_amount=0.5,"
         "vignette=PI/4"
     )
@@ -100,7 +100,7 @@ class VfxPreset(Enum):
     WARMTH = (
         "eq=contrast=1.04:saturation=1.15,"
         "colorbalance=rs=0.05:gs=0.02:bs=-0.08:rm=0.03:gm=0.00:bm=-0.05,"
-        "curves=preset=stronger_contrast,"
+        "curves=preset=strong_contrast,"
         "unsharp=luma_msize_x=3:luma_msize_y=3:luma_amount=0.4"
     )
 
@@ -108,14 +108,14 @@ class VfxPreset(Enum):
     CINEMATIC = (
         "eq=contrast=1.10:saturation=0.85,"
         "colorbalance=rs=-0.05:gs=0.00:bs=0.08,"
-        "curves=preset=stronger_contrast,"
+        "curves=preset=strong_contrast,"
         "unsharp=luma_msize_x=5:luma_msize_y=5:luma_amount=0.6"
     )
 
     # Desaturated, high-contrast dramatic look for suspense.
     DRAMATIC = (
         "eq=contrast=1.15:saturation=0.75:gamma=0.95,"
-        "curves=preset=stronger_contrast,"
+        "curves=preset=strong_contrast,"
         "unsharp=luma_msize_x=5:luma_msize_y=5:luma_amount=0.7,"
         "vignette=PI/5"
     )
