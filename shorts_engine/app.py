@@ -326,6 +326,23 @@ def _render_sidebar() -> Settings:
             ),
             key="whisper_beam_size_select",
         )
+        whisper_context_hint = st.selectbox(
+            "Domain Context",
+            options=["", "politics", "society", "science", "technology"],
+            index=0,
+            format_func=lambda x: {
+                "": "Generic (auto-detect)",
+                "politics": "🏛️ Politics / Economy",
+                "society": "👥 Society",
+                "science": "🔬 Science",
+                "technology": "💻 Technology",
+            }.get(x, x),
+            help=(
+                "Inject domain vocabulary into the Whisper transcription prompt for higher accuracy.\n"
+                "Select the topic closest to your video's content."
+            ),
+            key="whisper_context_hint_select",
+        )
 
         st.markdown("---")
         st.markdown("### Content Analysis & Hooks")
@@ -610,6 +627,7 @@ def _render_sidebar() -> Settings:
     return Settings(
         whisper_model_size=str(model_size),
         whisper_beam_size=int(whisper_beam_size),
+        whisper_context_hint=str(whisper_context_hint),
 
         enable_face_tracking=bool(enable_face_tracking),
         enable_vfx=bool(enable_vfx),
@@ -1026,7 +1044,7 @@ def main() -> None:
         st.stop()
 
     # ── Tabs ───────────────────────────────────────────────────────────────────
-    tab_upload, tab_url = st.tabs(["File Upload", "Video URL"])
+    tab_upload, tab_url, tab_channel = st.tabs(["File Upload", "Video URL", "📊 Channel Analyzer"])
 
     # ══════════════════════════════════════════════════════════════════════════
     # TAB 1 — FILE UPLOAD (existing behaviour, untouched)
@@ -1205,6 +1223,7 @@ def main() -> None:
                 placeholder="https://www.youtube.com/watch?v=...",
                 key="url_input",
                 label_visibility="collapsed",
+                value=st.session_state.pop("queued_url", ""),
             )
 
             settings_errors_url = settings.validate()
@@ -1404,6 +1423,166 @@ def main() -> None:
             _render_url_results(url_results, candidates)
 
 
+    # ══════════════════════════════════════════════════════════════════════════
+    # TAB 3 — CHANNEL ANALYZER
+    # ══════════════════════════════════════════════════════════════════════════
+    with tab_channel:
+        _, main_col, _ = st.columns([1, 6, 1])
+        with main_col:
+            st.markdown("### 📊 YouTube Channel Analyzer")
+            st.markdown(
+                "Connect any YouTube channel to discover your top-performing content, "
+                "identify gaps, and find the best videos to extract Shorts from. "
+                "No API key required — powered by **yt-dlp** metadata scraping."
+            )
+
+            channel_url_input = st.text_input(
+                "Channel URL or @handle",
+                placeholder="https://www.youtube.com/@channelname   or   @channelname",
+                key="channel_url_input",
+                help="Paste a YouTube channel URL, @handle, or playlist URL. Public channels only.",
+            )
+
+            col_scan, col_n = st.columns([3, 1])
+            with col_scan:
+                scan_clicked = st.button(
+                    "🔍 Scan Channel",
+                    key="scan_channel_btn",
+                    use_container_width=True,
+                    type="primary",
+                )
+            with col_n:
+                max_videos_scan = st.number_input(
+                    "Max videos",
+                    min_value=5,
+                    max_value=100,
+                    value=30,
+                    step=5,
+                    key="channel_max_videos",
+                    help="Number of recent videos to analyse (more = slower scan).",
+                )
+
+            # Scan & analyze
+            if scan_clicked and channel_url_input.strip():
+                _settings = _build_settings()
+                if not _settings.gemini_api_key:
+                    st.error("A Gemini API key is required for the AI analysis. Add it to the sidebar.")
+                else:
+                    with st.spinner("Fetching channel metadata via yt-dlp..."):
+                        try:
+                            from services.channel_analyzer import (
+                                ChannelInsights,
+                                analyze_channel,
+                                fetch_channel_videos,
+                            )
+                            _url = channel_url_input.strip()
+                            # Normalise @handle to full URL
+                            if _url.startswith("@"):
+                                _url = f"https://www.youtube.com/{_url}"
+
+                            videos = fetch_channel_videos(_url, max_videos=int(max_videos_scan))
+                            st.session_state["channel_videos"] = videos
+                            st.session_state["channel_url"] = _url
+
+                        except Exception as exc:
+                            st.error(f"**Channel scan failed:** {exc}")
+                            st.session_state["channel_videos"] = []
+
+                    if st.session_state.get("channel_videos"):
+                        with st.spinner("Running AI analysis with Gemini..."):
+                            try:
+                                insights = analyze_channel(
+                                    st.session_state["channel_videos"],
+                                    st.session_state["channel_url"],
+                                    gemini_api_key=_settings.gemini_api_key,
+                                )
+                                st.session_state["channel_insights"] = insights
+                            except Exception as exc:
+                                st.error(f"**AI analysis failed:** {exc}")
+
+            # Render insights
+            insights_data = st.session_state.get("channel_insights")
+            if insights_data:
+                from services.channel_analyzer import ChannelInsights
+                ins: ChannelInsights = insights_data
+
+                st.markdown("---")
+                st.markdown(
+                    f"**{ins.total_videos_analysed} videos analysed** from `{ins.channel_url}`"
+                )
+
+                # AI Analysis Cards
+                if ins.analysis_error:
+                    st.warning(f"AI analysis partially failed: {ins.analysis_error}")
+
+                if ins.topic_clusters or ins.content_gaps:
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        st.markdown("#### 🗂️ Topic Clusters")
+                        st.info(ins.topic_clusters or "—")
+                        st.markdown("#### 📅 Best Upload Window")
+                        st.info(ins.best_upload_window or "—")
+                    with c2:
+                        st.markdown("#### 🕳️ Content Gaps")
+                        st.warning(ins.content_gaps or "—")
+                        st.markdown("#### 🔥 Virality Patterns")
+                        st.success(ins.virality_patterns or "—")
+
+                    st.markdown("#### 🎬 Short Recommendations")
+                    st.markdown(ins.short_recommendations or "—")
+
+                # Top Videos Table
+                st.markdown("---")
+                st.markdown("#### 📈 Top Performing Videos")
+                if ins.top_videos:
+                    import pandas as pd
+                    top_df = pd.DataFrame([
+                        {
+                            "Title": v.title[:60],
+                            "Views": f"{v.view_count:,}",
+                            "Duration": v.duration_display,
+                            "Uploaded": v.upload_date_display,
+                            "URL": v.url,
+                        }
+                        for v in ins.top_videos
+                    ])
+                    st.dataframe(top_df, use_container_width=True, hide_index=True)
+
+                # Short Candidates
+                st.markdown("---")
+                st.markdown("#### ✂️ Recommended for Short Extraction")
+                if ins.short_candidates:
+                    for i, v in enumerate(ins.short_candidates, 1):
+                        with st.container():
+                            cc1, cc2 = st.columns([5, 1])
+                            with cc1:
+                                st.markdown(
+                                    f"**{i}. {v.title}** &nbsp;&nbsp; "
+                                    f"`{v.duration_display}` · "
+                                    f"{v.view_count:,} views · "
+                                    f"[Open ↗]({v.url})",
+                                    unsafe_allow_html=True,
+                                )
+                            with cc2:
+                                if st.button(
+                                    "Add to Queue",
+                                    key=f"queue_candidate_{i}",
+                                    help="Send this video URL to the Video URL tab for processing.",
+                                ):
+                                    st.session_state["queued_url"] = v.url
+                                    st.success(f"Queued: {v.title[:40]}... → switch to the Video URL tab!")
+                else:
+                    st.info("No long-form videos found suitable for Short extraction in this batch.")
+
+            elif not scan_clicked:
+                st.markdown("""
+            <div style="text-align:center;padding:3rem 0;border:1px dashed #27272a;border-radius:6px;margin-top:1rem;">
+                <p style="font-size:0.88rem;color:#71717a;margin:0;">
+                    Enter a channel URL above and click Scan Channel to get started
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
+
+
 if __name__ == "__main__":
     main()
-

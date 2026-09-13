@@ -176,6 +176,8 @@ def process_single(
             compute_type=settings.whisper_compute_type,
             beam_size=settings.whisper_beam_size,
             progress_cb=_item_transcribe_cb,
+            context_hint=settings.whisper_context_hint or None,
+            source_title=stem,
         )
         transcript_text: str = full_transcript_text(segments)
         logger.info("Transcript (%d chars): %s...", len(transcript_text), transcript_text[:80])
@@ -519,6 +521,8 @@ def _run_batch_impl(
                     compute_type=settings.whisper_compute_type,
                     beam_size=settings.whisper_beam_size,
                     progress_cb=_item_transcribe_cb,
+                    context_hint=settings.whisper_context_hint or None,
+                    source_title=video_path.stem,
                 )
 
                 if not all_segments:

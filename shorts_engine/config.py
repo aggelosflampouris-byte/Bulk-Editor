@@ -143,14 +143,13 @@ def assert_system_binaries() -> None:
 #   ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow,
 #   Alignment, MarginL, MarginR, MarginV, Encoding
 ASS_STYLE_LINE: str = (
-    "Style: Default,Impact,64,&H00000000,&H00000000,&H00000000,&H00FFFFFF,"
+    "Style: Default,Impact,72,&H00000000,&H00000000,&H00000000,&H00FFFFFF,"
     "-1,0,0,0,100,100,0,0,3,4,0,2,80,80,540,1"
 )
 
-# Highlight style — SecondaryColour is unused here because we inject karaoke.
-# PrimaryColour is Red (&H000000FF) with a White Box.
+# Highlight style — PrimaryColour is Red (&H000000FF) with White Box, font size 72.
 ASS_HIGHLIGHT_STYLE_LINE: str = (
-    "Style: Highlight,Impact,64,&H000000FF,&H00000000,&H00000000,&H00FFFFFF,"
+    "Style: Highlight,Impact,72,&H000000FF,&H00000000,&H00000000,&H00FFFFFF,"
     "-1,0,0,0,100,100,0,0,3,4,0,2,80,80,540,1"
 )
 
@@ -204,6 +203,9 @@ class Settings:
     whisper_compute_type: str = "int8"
     # Beam search size (5 = full beam search for highest accuracy)
     whisper_beam_size: int = 5
+    # Domain context hint for Whisper initial_prompt enrichment.
+    # Options: 'politics' | 'society' | 'science' | 'technology' | '' (generic)
+    whisper_context_hint: str = ""
 
 
 

@@ -57,6 +57,57 @@ class TranscriptionSegment:
         return f"TranscriptionSegment(start={self.start:.2f}, end={self.end:.2f}, text={self.text!r})"
 
 
+# Domain-specific Greek vocabulary injected into the Whisper initial_prompt
+# to anchor the decoder to the correct vocabulary before transcription starts.
+_DOMAIN_PROMPTS: dict[str, str] = {
+    "politics": (
+        "Πολιτική, κυβέρνηση, βουλή, πρωθυπουργός, υπουργός, εκλογές, κόμμα, ψηφοφορία, "
+        "οικονομία, προϋπολογισμός, ΕΕ, ΝΑΤΟ, διπλωματία, νόμος, ψήφος."
+    ),
+    "society": (
+        "Κοινωνία, άνθρωποι, ζωή, οικογένεια, νέοι, εκπαίδευση, υγεία, εργασία, "
+        "δικαιώματα, ισότητα, φτώχεια, μετανάστευση, πολιτισμός, παράδοση."
+    ),
+    "science": (
+        "Επιστήμη, έρευνα, τεχνολογία, εφεύρεση, ανακάλυψη, φυσική, χημεία, βιολογία, "
+        "διάστημα, κλίμα, περιβάλλον, ΑΙ, αλγόριθμος, δεδομένα."
+    ),
+    "technology": (
+        "Τεχνολογία, ψηφιακός, AI, τεχνητή νοημοσύνη, software, hardware, startup, "
+        "blockchain, crypto, metaverse, app, platform, data, cloud."
+    ),
+}
+
+_DEFAULT_WHISPER_PROMPT: str = (
+    "Γεια σας. Σήμερα θα μιλήσουμε για ένα σημαντικό θέμα που αφορά την Ελλάδα. "
+    "Ας αναλύσουμε τα γεγονότα με σαφήνεια."
+)
+
+
+def _build_whisper_prompt(context_hint: str | None, source_title: str | None) -> str:
+    """
+    Build a domain-enriched Whisper initial_prompt that anchors the decoder
+    to the correct Greek vocabulary before transcription starts.
+
+    The hint is matched against known domain keys (politics, society, science,
+    technology). If no domain is matched, a high-quality generic Greek prompt
+    is returned.
+    """
+    parts: list[str] = []
+    if source_title:
+        # Lead with the video title to anchor proper nouns and names
+        parts.append(f"Θέμα: {source_title.strip()}.")
+
+    if context_hint:
+        key = context_hint.lower().strip()
+        domain_vocab = _DOMAIN_PROMPTS.get(key)
+        if domain_vocab:
+            parts.append(domain_vocab)
+
+    parts.append(_DEFAULT_WHISPER_PROMPT)
+    return " ".join(parts)
+
+
 # ── Core API ───────────────────────────────────────────────────────────────────
 
 def transcribe(
@@ -66,6 +117,8 @@ def transcribe(
     compute_type: str = "int8",
     beam_size: int = 1,
     progress_cb: Callable[[float, str], None] | None = None,
+    context_hint: str | None = None,
+    source_title: str | None = None,
 ) -> list[TranscriptionSegment]:
     """
     Transcribe Greek speech from *video_path* using faster-whisper.
@@ -75,18 +128,23 @@ def transcribe(
 
     Args:
         video_path:    Absolute path to the input video file.
-        model_size:    Size of the whisper model to use (e.g. 'base', 'large-v2').
+        model_size:    Size of the whisper model to use (e.g. 'base', 'large-v3').
         device:        Device to run on ('cpu' or 'cuda').
-        compute_type:  Quantization to use (e.g. 'int8', 'float16').
+        compute_type:  Quantization type (e.g. 'int8', 'float16').
         beam_size:     Beam search size.
         progress_cb:   Optional callback invoked per decoded segment: (fraction, msg).
+        context_hint:  Optional domain key ('politics', 'society', 'science', 'technology')
+                       used to inject domain-specific vocabulary into the Whisper prompt
+                       for improved accuracy on specialised Greek speech.
+        source_title:  Optional video title string prepended to the Whisper prompt
+                       to anchor proper nouns and channel-specific terminology.
 
     Returns:
         Ordered list of TranscriptionSegment objects.
 
     Raises:
         FileNotFoundError: If video_path does not exist.
-        RuntimeError:      If the Cloud API fails to load or transcribe.
+        RuntimeError:      If the model fails to load or transcription fails.
     """
     if not video_path.is_file():
         raise FileNotFoundError(f"Video file not found: {video_path}")
@@ -111,6 +169,8 @@ def transcribe(
         ) from exc
 
     logger.info("Transcribing '%s' (language=el, beam_size=%d)...", video_path.name, beam_size)
+    initial_prompt = _build_whisper_prompt(context_hint, source_title)
+    logger.debug("Whisper initial_prompt: %s", initial_prompt[:120])
     try:
         raw_segments, _info = model.transcribe(
             str(video_path),
@@ -118,9 +178,12 @@ def transcribe(
             beam_size=beam_size,
             word_timestamps=True,
             vad_filter=True,
-            vad_parameters={"min_silence_duration_ms": 300},
-            initial_prompt="Γεια σας! Σήμερα, θα συζητήσουμε και θα αναλύσουμε πώς λειτουργεί αυτό. Είστε έτοιμοι; Ας ξεκινήσουμε, λοιπόν, αμέσως τώρα.",
+            # Raised from 300ms: prevents splitting Greek sentences mid-breath
+            vad_parameters={"min_silence_duration_ms": 500},
+            initial_prompt=initial_prompt,
             condition_on_previous_text=False,
+            # temperature=0 forces greedy decoding — most deterministic and accurate
+            temperature=0.0,
         )
     except Exception as exc:
         raise RuntimeError(
@@ -243,22 +306,32 @@ def _build_karaoke_text(
     for w_start, w_end, w_text in words:
         duration_cs = max(1, int(round((w_end - w_start) * 100)))
         safe = _escape_ass_text(w_text)
-        
+
         # Check if this word matches the primary keyword
         is_keyword = False
         if clean_keyword:
             clean_word = w_text.translate(str.maketrans('', '', string.punctuation)).lower().strip()
             if clean_word and (clean_word == clean_keyword or clean_word in clean_keyword.split()):
                 is_keyword = True
-                
-        # Switch to Highlight style for the active word
-        # Then reset to Default. If it's a keyword, inject a static color override (Green) after resetting.
+
+        # Active-word pop: scale to 110% while spoken, reset after.
+        # This is the MrBeast-style caption animation that draws the eye.
+        # \fscx / \fscy are ASS spec-compliant and supported by libass (FFmpeg).
+        pop_on = r"{\fscx110\fscy110}"
+        pop_off = r"{\fscx100\fscy100}"
+
         if is_keyword:
-            # &H00FF00& is Green in ASS (BGR)
-            parts.append(f"{{\\rHighlight\\k{duration_cs}}}{safe}{{\\rDefault\\c&H00FF00&}}")
+            # &H00FF00& is Green in ASS (BGR) — permanent keyword highlight
+            parts.append(
+                f"{{\\rHighlight\\k{duration_cs}}}{pop_on}{safe}{pop_off}"
+                f"{{\\rDefault\\c&H00FF00&}}"
+            )
         else:
-            parts.append(f"{{\\rHighlight\\k{duration_cs}}}{safe}{{\\rDefault}}")
-            
+            parts.append(
+                f"{{\\rHighlight\\k{duration_cs}}}{pop_on}{safe}{pop_off}"
+                f"{{\\rDefault}}"
+            )
+
     return " ".join(parts)
 
 
@@ -294,31 +367,41 @@ def segments_to_ass(
     dialogue_lines: list[str] = []
     for seg in segments:
         if seg.words:
-            # Chunk words into smaller blocks (max 5 words)
-            current_chunk = []
+            # Chunk words into small blocks: max 3 words OR 28 chars (whichever comes first)
+            # This produces sharp, punchy one-thought-at-a-time captions.
+            current_chunk: list[tuple[float, float, str]] = []
+            current_char_len = 0
+            _MAX_WORDS = 3
+            _MAX_CHARS = 28
+
+            def _flush_chunk(
+                chunk: list[tuple[float, float, str]],
+                primary_keyword: str | None,
+            ) -> str:
+                start_sec = chunk[0][0]
+                end_sec = chunk[-1][1]
+                t_start = _seconds_to_ass_time(start_sec)
+                t_end = _seconds_to_ass_time(end_sec)
+                text_field = _build_karaoke_text(chunk, start_sec, primary_keyword)
+                return f"Dialogue: 0,{t_start},{t_end},Default,,0,0,0,,{text_field}"
+
             for word in seg.words:
-                current_chunk.append(word)
-                if len(current_chunk) >= 5:
-                    start_sec = current_chunk[0][0]
-                    end_sec = current_chunk[-1][1]
-                    start = _seconds_to_ass_time(start_sec)
-                    end = _seconds_to_ass_time(end_sec)
-                    text_field = _build_karaoke_text(current_chunk, start_sec, primary_keyword)
-                    dialogue_lines.append(
-                        f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text_field}"
-                    )
+                w_text = word[2]
+                word_len = len(w_text.strip())
+                # Flush if adding this word would exceed either limit
+                if current_chunk and (
+                    len(current_chunk) >= _MAX_WORDS
+                    or current_char_len + word_len + 1 > _MAX_CHARS
+                ):
+                    dialogue_lines.append(_flush_chunk(current_chunk, primary_keyword))
                     current_chunk = []
-            
-            # Add remaining words in the segment
+                    current_char_len = 0
+                current_chunk.append(word)
+                current_char_len += word_len + 1  # +1 for space
+
+            # Flush any remaining words in the segment
             if current_chunk:
-                start_sec = current_chunk[0][0]
-                end_sec = current_chunk[-1][1]
-                start = _seconds_to_ass_time(start_sec)
-                end = _seconds_to_ass_time(end_sec)
-                text_field = _build_karaoke_text(current_chunk, start_sec, primary_keyword)
-                dialogue_lines.append(
-                    f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text_field}"
-                )
+                dialogue_lines.append(_flush_chunk(current_chunk, primary_keyword))
         else:
             # Fallback: plain text
             start = _seconds_to_ass_time(seg.start)
