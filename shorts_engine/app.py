@@ -1197,10 +1197,6 @@ def main() -> None:
                 for err in settings_errors_url:
                     st.warning(err)
 
-            if st.session_state.pop("queued_url_autostart", False) and url_input.strip():
-                st.session_state["url_is_analyzing"] = True
-                st.rerun()
-
             col_a, col_b = st.columns([1, 4])
             with col_a:
                 analyze_clicked = st.button(
@@ -1510,18 +1506,13 @@ def main() -> None:
                             clip_col, _ = st.columns([2, 5])
                             with clip_col:
                                 if st.button(
-                                    "🎬 Start Clipping",
+                                    "🎬 Send to Video URL Tab",
                                     key=f"clip_viral_{v.video_id}",
                                     type="primary",
                                     use_container_width=True,
                                 ):
-                                    # Store the URL and trigger the URL pipeline tab
                                     st.session_state["queued_url"] = v.url
-                                    st.session_state["queued_url_autostart"] = True
-                                    st.success(
-                                        f"✅ **{v.title[:50]}** added to queue. "
-                                        "Switch to the **Video URL** tab to start processing!"
-                                    )
+                                    st.toast("✅ URL queued! Switch to the **Video URL** tab at the top.", icon="🚀")
                 else:
                     st.info(
                         "No videos uploaded in the last 3 weeks were found that are suitable "
@@ -1545,12 +1536,12 @@ def main() -> None:
                                     )
                                 with cc2:
                                     if st.button(
-                                        "Add to Queue",
+                                        "Send to URL Tab",
                                         key=f"queue_candidate_{i}",
                                         help="Send this video URL to the Video URL tab for processing.",
                                     ):
                                         st.session_state["queued_url"] = v.url
-                                        st.success(f"Queued: {v.title[:40]}... → switch to the Video URL tab!")
+                                        st.toast("✅ URL queued! Switch to the **Video URL** tab at the top.", icon="🚀")
                     else:
                         st.info("No long-form videos found suitable for Short extraction in this batch.")
 
