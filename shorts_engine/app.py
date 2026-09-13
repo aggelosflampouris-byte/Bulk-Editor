@@ -1193,11 +1193,13 @@ def main() -> None:
                 "detect the most energetic speaking segments, and prepare candidates for you."
             )
 
+            if "queued_url" in st.session_state:
+                st.session_state["url_input"] = st.session_state.pop("queued_url")
+
             url_input = st.text_input(
                 "Video URL",
                 placeholder="https://www.youtube.com/watch?v=...",
                 key="url_input",
-                value=st.session_state.pop("queued_url", ""),
             )
 
             settings_errors_url = settings.validate()
