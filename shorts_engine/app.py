@@ -1517,16 +1517,18 @@ def main() -> None:
                             )
                             clip_col, _ = st.columns([2, 5])
                             with clip_col:
-                                if st.button(
+                                def _on_clip_click(url=v.url):
+                                    st.session_state["queued_url"] = url
+                                    st.session_state["queued_url_autostart"] = True
+                                    st.session_state["active_tab"] = "Video URL"
+
+                                st.button(
                                     "🎬 Start Clipping",
                                     key=f"clip_viral_{v.video_id}",
                                     type="primary",
                                     use_container_width=True,
-                                ):
-                                    st.session_state["queued_url"] = v.url
-                                    st.session_state["queued_url_autostart"] = True
-                                    st.session_state["active_tab"] = "Video URL"
-                                    st.rerun()
+                                    on_click=_on_clip_click,
+                                )
                 else:
                     st.info(
                         "No videos uploaded in the last 3 weeks were found that are suitable "
@@ -1549,14 +1551,16 @@ def main() -> None:
                                         unsafe_allow_html=True,
                                     )
                                 with cc2:
-                                    if st.button(
+                                    def _on_queue_click(url=v.url):
+                                        st.session_state["queued_url"] = url
+                                        st.session_state["active_tab"] = "Video URL"
+
+                                    st.button(
                                         "Send to URL Tab",
                                         key=f"queue_candidate_{i}",
                                         help="Send this video URL to the Video URL tab for processing.",
-                                    ):
-                                        st.session_state["queued_url"] = v.url
-                                        st.session_state["active_tab"] = "Video URL"
-                                        st.rerun()
+                                        on_click=_on_queue_click,
+                                    )
                     else:
                         st.info("No long-form videos found suitable for Short extraction in this batch.")
 
