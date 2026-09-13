@@ -104,6 +104,12 @@ class NicheInsights:
     # Viral recent videos (uploaded within the last 3 weeks, high virality score)
     viral_recent: list["ViralRecentVideo"] = field(default_factory=list)
 
+    # Competitor viral recent videos (discovered via automated search)
+    competitor_viral_recent: list["ViralRecentVideo"] = field(default_factory=list)
+
+    # The AI-deduced search query used to find competitors
+    suggested_search_query: str = ""
+
     # Raw error message if analysis partially failed
     analysis_error: str = ""
 
@@ -250,6 +256,7 @@ VIDEOS (most recent or top ranked):
 Based on this data, provide a strategic analysis of this niche in JSON format with exactly these keys:
 
 {{
+  "suggested_search_query": "<2-4 word YouTube search query that perfectly captures the overarching niche of these videos>",
   "topic_clusters": "<2-3 sentences identifying the main recurring topic categories in this niche>",
   "content_gaps": "<2-3 sentences describing underserved topics relative to their potential in this niche>",
   "best_upload_window": "<1-2 sentences on what frequency or timing correlates with higher views>",
@@ -490,6 +497,25 @@ def analyze_niche(
                 ]
                 if ai_candidates:
                     insights.short_candidates = ai_candidates
+
+            insights.suggested_search_query = parsed.get("suggested_search_query", "").strip()
+
+            # Competitor Discovery
+            # If the user scanned a specific channel, run an automated background search
+            # on the AI-deduced niche keyword to find viral recent videos from competitors.
+            is_channel_scan = query.startswith("http") or query.startswith("@")
+            if is_channel_scan and insights.suggested_search_query:
+                try:
+                    logger.info("Executing competitor discovery for niche: %s", insights.suggested_search_query)
+                    # This search uses the "This Month" filter automatically because it's a keyword
+                    competitor_videos = fetch_youtube_videos(insights.suggested_search_query, max_videos=30)
+                    if competitor_videos:
+                        insights.competitor_viral_recent = find_viral_recent_videos(
+                            competitor_videos,
+                            channel_avg_views=channel_avg_views,
+                        )
+                except Exception as comp_exc:
+                    logger.warning("Competitor discovery failed: %s", comp_exc)
 
     except Exception as exc:
         error_msg = f"Gemini analysis failed: {exc}"

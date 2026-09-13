@@ -1479,8 +1479,13 @@ def main() -> None:
                     "extract Shorts immediately."
                 )
 
-                if ins.viral_recent:
-                    for vrv in ins.viral_recent:
+                viral_list = ins.viral_recent
+                if ins.competitor_viral_recent:
+                    viral_list = ins.competitor_viral_recent
+                    st.info(f"**Competitor Discovery:** Sourced viral videos across YouTube for the AI-detected niche: `{ins.suggested_search_query}`")
+
+                if viral_list:
+                    for vrv in viral_list:
                         v = vrv.video
                         with st.container():
                             st.markdown(
