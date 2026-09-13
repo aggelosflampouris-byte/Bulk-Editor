@@ -1148,81 +1148,47 @@ def main() -> None:
 
             progress_bar.progress(1.0)
             stage_text.markdown("**Batch complete.**")
-            st.session_state["results"] = results
-            st.session_state["is_processing"] = False
+            if st.session_state.get("upload_is_rendering"):
+                render_progress = st.progress(0.0)
+                render_stage_text = st.empty()
 
-            shutil.rmtree(upload_tmp, ignore_errors=True)
+                def _upload_progress_cb(idx: int, total: int, stage: str):
+                    pct = idx / total if total > 0 else 0
+                    render_progress.progress(pct, text=f"Processing {idx}/{total}: {stage}")
+                    render_stage_text.markdown(f"**{stage}**")
 
-            st.rerun()
+                try:
+                    with st.spinner("Processing uploads..."):
+                        run_batch(uploaded_files, settings, _upload_progress_cb)
+                    render_progress.progress(1.0, text="100% — All done.")
+                    render_stage_text.markdown("**Batch completed successfully.**")
+                    st.session_state["upload_is_rendering"] = False
+                    st.success("All videos rendered and saved to Output Directory.")
 
-        # ── Upload Results ─────────────────────────────────────────────────────
-        results: list[ProcessingResult] = st.session_state.get("results", [])
-        if results:
-            n_success = sum(1 for r in results if r.success)
-            n_fail = len(results) - n_success
+                except (ValueError, RuntimeError) as exc:
+                    render_progress.progress(0.0)
+                    render_stage_text.empty()
+                    st.error(f"**Rendering failed:** {exc}")
+                    st.session_state["upload_is_rendering"] = False
 
-            st.markdown("### Results")
-            cols = st.columns(3)
-            with cols[0]:
-                st.markdown(
-                    f'<div class="metric-value" style="color:#22c55e">{n_success}</div>'
-                    f'<div class="metric-label">Succeeded</div>',
-                    unsafe_allow_html=True,
-                )
-            with cols[1]:
-                color = "#ef4444" if n_fail > 0 else "#71717a"
-                st.markdown(
-                    f'<div class="metric-value" style="color:{color}">{n_fail}</div>'
-                    f'<div class="metric-label">Failed</div>',
-                    unsafe_allow_html=True,
-                )
-            with cols[2]:
-                st.markdown(
-                    f'<div class="metric-value">{len(results)}</div>'
-                    f'<div class="metric-label">Total Processed</div>',
-                    unsafe_allow_html=True,
-                )
-
-            completion_ratio = n_success / max(len(results), 1)
-            st.progress(
-                value=completion_ratio,
-                text=f"Batch Completion: {n_success}/{len(results)} clips processed ({int(completion_ratio * 100)}%)",
-            )
-
-            st.markdown("")
-            for idx, result in enumerate(results):
-                _render_result_card(result, idx)
-
-        elif not uploaded_files:
-            st.markdown("""
-            <div style="text-align:center;padding:3rem 0;border:1px dashed #27272a;border-radius:6px;margin-top:1rem;">
-                <p style="font-size:0.88rem;color:#71717a;margin:0;">
-                    Upload Greek video clips above to get started
-                </p>
-            </div>
-            """, unsafe_allow_html=True)
+                st.rerun()
 
     # ══════════════════════════════════════════════════════════════════════════
     # TAB 2 — VIDEO URL
     # ══════════════════════════════════════════════════════════════════════════
     with tab_url:
-        _, url_col, _ = st.columns([1, 6, 1])
-        with url_col:
-
-            st.markdown("### Video URL")
+        _, main_col, _ = st.columns([1, 6, 1])
+        with main_col:
+            st.markdown("### Process from URL")
             st.markdown(
-                "<div style='font-size:0.85rem;color:#71717a;margin-bottom:0.8rem;'>"
-                "Supports YouTube, Vimeo, and direct MP4 links. "
-                "The engine transcribes the video and detects the most engaging clips."
-                "</div>",
-                unsafe_allow_html=True,
+                "Paste a YouTube, TikTok, or Instagram link. The engine will download it, "
+                "detect the most energetic speaking segments, and prepare candidates for you."
             )
 
             url_input = st.text_input(
                 "Video URL",
                 placeholder="https://www.youtube.com/watch?v=...",
                 key="url_input",
-                label_visibility="collapsed",
                 value=st.session_state.pop("queued_url", ""),
             )
 
@@ -1231,162 +1197,120 @@ def main() -> None:
                 for err in settings_errors_url:
                     st.warning(err)
 
-            # ── Stage 1: Analyze Button ────────────────────────────────────────
-            col_analyze, col_url_clear = st.columns([3, 1])
-            with col_analyze:
+            if st.session_state.pop("queued_url_autostart", False) and url_input.strip():
+                st.session_state["url_is_analyzing"] = True
+                st.rerun()
+
+            col_a, col_b = st.columns([1, 4])
+            with col_a:
                 analyze_clicked = st.button(
-                    "Analyze Video",
-                    type="primary",
-                    disabled=(
-                        not url_input.strip()
-                        or bool(settings_errors_url)
-                        or st.session_state["url_is_analyzing"]
-                        or st.session_state["url_is_rendering"]
-                    ),
+                    "🔍 Analyze Video",
+                    key="analyze_url_btn",
                     use_container_width=True,
-                    key="analyze_button",
+                    type="primary",
+                    disabled=bool(settings_errors_url) or not url_input.strip()
                 )
-            with col_url_clear:
-                if st.button("Clear", use_container_width=True, key="url_clear_button"):
-                    for key in [
-                        "url_candidates", "url_results", "url_is_analyzing",
-                        "url_is_rendering", "url_meta_title", "url_meta_channel",
-                        "url_meta_duration", "url_selected_indices",
-                    ]:
-                        st.session_state[key] = [] if "candidates" in key or "results" in key or "indices" in key else (False if "is_" in key else "")
-                    st.rerun()
 
-        # ── Analyze Execution (outside column for full-width progress) ─────────
-        if analyze_clicked and url_input.strip() and not settings_errors_url:
-            st.session_state["url_is_analyzing"] = True
-            st.session_state["url_candidates"] = []
-            st.session_state["url_results"] = []
+            if analyze_clicked and url_input.strip() and not settings_errors_url:
+                st.session_state["url_is_analyzing"] = True
 
-            st.markdown("### Analyzing Video...")
-            url_progress_bar = st.progress(0.0)
-            url_stage_text = st.empty()
+            if st.session_state.get("url_is_analyzing"):
+                url_progress_bar = st.progress(0.0)
+                url_stage_text = st.empty()
 
-
-            def _url_analysis_cb(current: int, total: int, stage: str) -> None:
-                val = 0.10
-                if "Probing" in stage:
-                    val = 0.05
-                elif "Downloading" in stage:
-                    val = 0.15
-                elif "Transcribing audio:" in stage:
-                    m = re.search(r"\((\d+)%\)", stage)
-                    if m:
-                        pct_val = int(m.group(1)) / 100.0
-                        val = min(0.70, 0.20 + 0.50 * pct_val)
-                    else:
+                def _url_analysis_cb(idx: int, total: int, stage: str):
+                    # For a single video analysis, map stages to approximate percentages
+                    val = 0.0
+                    if "Downloading" in stage:
+                        import re
+                        m = re.search(r'\[(.*?)%\]', stage)
+                        if m:
+                            try:
+                                pct_val = float(m.group(1)) / 100.0
+                            except ValueError:
+                                pct_val = 0.0
+                            val = min(0.70, 0.20 + 0.50 * pct_val)
+                        else:
+                            val = 0.20
+                    elif "Transcribing" in stage:
                         val = 0.20
-                elif "Transcribing" in stage:
-                    val = 0.20
-                elif "Correcting" in stage:
-                    val = 0.75
-                elif "Selecting" in stage:
-                    val = 0.85
-                pct = int(val * 100)
-                url_progress_bar.progress(val, text=f"Analyzing video ({pct}%): {stage}")
-                url_stage_text.markdown(f"**{stage}**")
+                    elif "Correcting" in stage:
+                        val = 0.75
+                    elif "Selecting" in stage:
+                        val = 0.85
+                    pct = int(val * 100)
+                    url_progress_bar.progress(val, text=f"Analyzing video ({pct}%): {stage}")
+                    url_stage_text.markdown(f"**{stage}**")
 
-            try:
-                with st.spinner("Analyzing video (this may take several minutes)..."):
-                    candidates, _no_results = run_url_pipeline(
-                        url=url_input.strip(),
-                        settings=settings,
-                        clip_indices=[],  # Empty = select clips but don't render yet
-                        progress_cb=_url_analysis_cb,
+                try:
+                    with st.spinner("Analyzing video (this may take several minutes)..."):
+                        candidates, _no_results = run_url_pipeline(
+                            url=url_input.strip(),
+                            settings=settings,
+                            clip_indices=[],  # Empty = select clips but don't render yet
+                            progress_cb=_url_analysis_cb,
+                        )
+
+                    url_progress_bar.progress(1.0, text="100% — Analysis complete.")
+                    url_stage_text.markdown("**Analysis complete. Review clips below.**")
+                    st.session_state["url_candidates"] = candidates
+                    st.session_state["url_is_analyzing"] = False
+
+                    if candidates:
+                        st.session_state["url_selected_indices"] = [c.index for c in candidates]
+
+                except (ValueError, RuntimeError) as exc:
+                    url_progress_bar.progress(0.0)
+                    url_stage_text.empty()
+                    st.error(f"**Analysis failed:** {exc}")
+                    st.session_state["url_is_analyzing"] = False
+
+                st.rerun()
+
+            # ── Display Analysis Results & Candidate Table ─────────────────────────
+            candidates: list[ClipCandidate] = st.session_state.get("url_candidates", [])
+            if candidates:
+                st.markdown("---")
+                st.markdown(f"### {len(candidates)} Clip Candidates Found (Minimum: 3)")
+
+                selected_indices = _render_url_candidate_table(candidates)
+
+                st.session_state["url_selected_indices"] = selected_indices
+
+                st.markdown("---")
+                st.markdown("### Render Selected")
+                
+                n_selected = len(selected_indices)
+                min_required = settings.min_clips
+                
+                render_col1, render_col2 = st.columns([1, 4])
+                with render_col1:
+                    render_clicked = st.button(
+                        f"🚀 Render {n_selected} Clips",
+                        key="render_url_btn",
+                        use_container_width=True,
+                        type="primary",
+                        disabled=n_selected < min_required or not url_input.strip()
                     )
+                with render_col2:
+                    if n_selected < min_required:
+                        st.warning(f"Please select at least {min_required} clips to proceed.")
 
-                url_progress_bar.progress(1.0, text="100% — Analysis complete.")
-                url_stage_text.markdown("**Analysis complete. Review clips below.**")
-                st.session_state["url_candidates"] = candidates
-                st.session_state["url_is_analyzing"] = False
-
-                # Capture source metadata from the pipeline's probe step
-                # (stored in progress callback side-effects; use first candidate as proxy)
-                if candidates:
-                    st.session_state["url_selected_indices"] = [c.index for c in candidates]
-
-            except (ValueError, RuntimeError) as exc:
-                url_progress_bar.progress(0.0)
-                url_stage_text.empty()
-                st.error(f"**Analysis failed:** {exc}")
-                st.session_state["url_is_analyzing"] = False
-
-            st.rerun()
-
-        # ── Display Analysis Results & Candidate Table ─────────────────────────
-        candidates: list[ClipCandidate] = st.session_state.get("url_candidates", [])
-        if candidates:
-            st.markdown("---")
-            st.markdown(f"### {len(candidates)} Clip Candidates Found (Minimum: 3)")
-
-            selected_indices = _render_url_candidate_table(candidates)
-
-            # Update session state with current checkbox state
-            st.session_state["url_selected_indices"] = selected_indices
-
-            st.markdown("")
-            n_selected = len(selected_indices)
-            min_required = min(3, len(candidates))
-
-            # ── Stage 2: Render Button ─────────────────────────────────────────
-            col_render, _ = st.columns([3, 1])
-            with col_render:
-                render_clicked = st.button(
-                    f"Generate {n_selected} Short{'s' if n_selected != 1 else ''}",
-                    type="primary",
-                    disabled=(
-                        n_selected < min_required
-                        or st.session_state["url_is_rendering"]
-                        or not url_input.strip()
-                    ),
-                    use_container_width=True,
-                    key="render_button",
-                )
-
-            if n_selected < min_required:
-                st.warning(f"⚠️ A minimum of {min_required} clips must be selected to render (currently selected: {n_selected}).")
-
-            # ── Render Execution ───────────────────────────────────────────────
-            if render_clicked and n_selected >= min_required and url_input.strip():
-                st.session_state["url_is_rendering"] = True
-                st.session_state["url_results"] = []
-
-                st.markdown("### Rendering Clips...")
+                if render_clicked and n_selected >= min_required and url_input.strip():
+                    st.session_state["url_is_rendering"] = True
+                    st.session_state["url_results"] = []
+                    
+            if st.session_state.get("url_is_rendering"):
                 render_progress = st.progress(0.0)
                 render_stage_text = st.empty()
 
-                def _render_cb(current: int, total: int, stage: str) -> None:
-                    sub_stage = 0.50
-                    stage_lower = stage.lower()
-                    if "slicing" in stage_lower:
-                        sub_stage = 0.10
-                    elif "building subtitles" in stage_lower:
-                        sub_stage = 0.25
-                    elif "searching b-roll" in stage_lower:
-                        sub_stage = 0.40
-                    elif "downloading b-roll" in stage_lower:
-                        sub_stage = 0.55
-                    elif "crop" in stage_lower or "framing" in stage_lower:
-                        sub_stage = 0.70
-                    elif "overlay" in stage_lower or "b-roll" in stage_lower:
-                        sub_stage = 0.85
-                    elif "burning subtitles" in stage_lower:
-                        sub_stage = 0.95
-
-                    fraction = (current + sub_stage) / max(total, 1)
-                    pct = int(min(fraction, 0.99) * 100)
-                    render_progress.progress(
-                        min(fraction, 0.99),
-                        text=f"Rendering ({pct}%): [{current + 1}/{total}] {stage}",
-                    )
-                    render_stage_text.markdown(f"**[{current + 1}/{total}]** {stage}")
+                def _url_render_cb(idx: int, total: int, stage: str):
+                    pct = idx / total if total > 0 else 0.0
+                    render_progress.progress(pct, text=f"Rendering {idx}/{total}: {stage}")
+                    render_stage_text.markdown(f"**{stage}**")
 
                 try:
-                    with st.spinner("Rendering selected clips..."):
+                    with st.spinner("Rendering final Shorts..."):
                         _all_candidates, render_results = run_url_pipeline(
                             url=url_input.strip(),
                             settings=settings,
@@ -1407,20 +1331,20 @@ def main() -> None:
 
                 st.rerun()
 
-        elif not url_input.strip() and not st.session_state.get("url_is_analyzing"):
-            st.markdown("""
-            <div style="text-align:center;padding:3rem 0;border:1px dashed #27272a;border-radius:6px;margin-top:1rem;">
-                <p style="font-size:0.88rem;color:#71717a;margin:0;">
-                    Paste a video URL above and click Analyze Video to get started
-                </p>
-            </div>
-            """, unsafe_allow_html=True)
+            elif not url_input.strip() and not st.session_state.get("url_is_analyzing"):
+                st.markdown("""
+                <div style="text-align:center;padding:3rem 0;border:1px dashed #27272a;border-radius:6px;margin-top:1rem;">
+                    <p style="font-size:0.88rem;color:#71717a;margin:0;">
+                        Paste a video URL above and click Analyze Video to get started
+                    </p>
+                </div>
+                """, unsafe_allow_html=True)
 
-        # ── URL Pipeline Results ───────────────────────────────────────────────
-        url_results: list[ProcessingResult] = st.session_state.get("url_results", [])
-        if url_results:
-            st.markdown("---")
-            _render_url_results(url_results, candidates)
+            # ── URL Pipeline Results ───────────────────────────────────────────────
+            url_results: list[ProcessingResult] = st.session_state.get("url_results", [])
+            if url_results:
+                st.markdown("---")
+                _render_url_results(url_results, candidates)
 
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -1446,7 +1370,7 @@ def main() -> None:
             col_scan, col_n = st.columns([3, 1])
             with col_scan:
                 scan_clicked = st.button(
-                    "🔍 Scan Channel",
+                    "🔍 Search Niche / Channel",
                     key="scan_channel_btn",
                     use_container_width=True,
                     type="primary",
@@ -1470,16 +1394,15 @@ def main() -> None:
                     with st.spinner("Fetching channel metadata via yt-dlp..."):
                         try:
                             from services.channel_analyzer import (
-                                ChannelInsights,
-                                analyze_channel,
-                                fetch_channel_videos,
+                                NicheInsights,
+                                analyze_niche,
+                                fetch_youtube_videos,
                             )
                             _url = channel_url_input.strip()
-                            # Normalise @handle to full URL
                             if _url.startswith("@"):
                                 _url = f"https://www.youtube.com/{_url}"
 
-                            videos = fetch_channel_videos(_url, max_videos=int(max_videos_scan))
+                            videos = fetch_youtube_videos(_url, max_videos=int(max_videos_scan))
                             st.session_state["channel_videos"] = videos
                             st.session_state["channel_url"] = _url
 
@@ -1490,7 +1413,7 @@ def main() -> None:
                     if st.session_state.get("channel_videos"):
                         with st.spinner("Running AI analysis with Gemini..."):
                             try:
-                                insights = analyze_channel(
+                                insights = analyze_niche(
                                     st.session_state["channel_videos"],
                                     st.session_state["channel_url"],
                                     gemini_api_key=settings.gemini_api_key,
@@ -1502,12 +1425,12 @@ def main() -> None:
             # Render insights
             insights_data = st.session_state.get("channel_insights")
             if insights_data:
-                from services.channel_analyzer import ChannelInsights
-                ins: ChannelInsights = insights_data
+                from services.channel_analyzer import NicheInsights
+                ins: NicheInsights = insights_data
 
                 st.markdown("---")
                 st.markdown(
-                    f"**{ins.total_videos_analysed} videos analysed** from `{ins.channel_url}`"
+                    f"**{ins.total_videos_analysed} videos analysed** for `{ins.query}`"
                 )
 
                 # AI Analysis Cards
@@ -1630,7 +1553,7 @@ def main() -> None:
                 st.markdown("""
             <div style="text-align:center;padding:3rem 0;border:1px dashed #27272a;border-radius:6px;margin-top:1rem;">
                 <p style="font-size:0.88rem;color:#71717a;margin:0;">
-                    Enter a channel URL above and click Scan Channel to get started
+                    Enter a search query or channel URL above and click Search Niche to get started
                 </p>
             </div>
             """, unsafe_allow_html=True)

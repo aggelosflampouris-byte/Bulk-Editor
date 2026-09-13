@@ -81,11 +81,11 @@ class VideoMeta:
 
 
 @dataclass
-class ChannelInsights:
+class NicheInsights:
     """
-    Structured analysis of a YouTube channel's content performance.
+    Structured analysis of a YouTube niche or channel's content performance.
     """
-    channel_url: str
+    query: str
     total_videos_analysed: int
 
     # Top performing by view count
@@ -134,11 +134,17 @@ class ViralRecentVideo:
 # ── Internal Helpers ───────────────────────────────────────────────────────────
 
 
-def _run_ytdlp_metadata(channel_url: str, max_videos: int) -> list[dict[str, Any]]:
+def _run_ytdlp_metadata(query: str, max_videos: int) -> list[dict[str, Any]]:
     """
-    Run yt-dlp in flat-playlist mode to extract video metadata without downloading.
+    Run yt-dlp to extract video metadata without downloading.
+    If query is a URL or @handle, it fetches a flat-playlist (channel).
+    Otherwise, it performs a YouTube search.
     No media is ever downloaded — this is metadata-only.
     """
+    target = query
+    if not query.startswith("http") and not query.startswith("@"):
+        target = f"ytsearch{max_videos}:{query}"
+
     cmd = [
         sys.executable, "-m", "yt_dlp",
         "--flat-playlist",
@@ -146,10 +152,10 @@ def _run_ytdlp_metadata(channel_url: str, max_videos: int) -> list[dict[str, Any
         "--no-warnings",
         "--playlist-end", str(max_videos),
         "--extractor-args", "youtubetab:approximate_date",
-        channel_url,
+        target,
     ]
 
-    logger.info("Running yt-dlp metadata fetch for: %s (max %d videos)", channel_url, max_videos)
+    logger.info("Running yt-dlp metadata fetch for: %s (max %d videos)", target, max_videos)
     try:
         result = subprocess.run(
             cmd,
@@ -166,7 +172,7 @@ def _run_ytdlp_metadata(channel_url: str, max_videos: int) -> list[dict[str, Any
         ) from exc
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(
-            f"yt-dlp timed out after {_YTDLP_TIMEOUT_SECONDS}s for URL: {channel_url}"
+            f"yt-dlp timed out after {_YTDLP_TIMEOUT_SECONDS}s for query: {target}"
         ) from exc
 
     if result.returncode not in (0, 1):
@@ -217,7 +223,7 @@ def _parse_video_meta(entry: dict[str, Any]) -> VideoMeta | None:
     )
 
 
-def _build_analysis_prompt(videos: list[VideoMeta], channel_url: str) -> str:
+def _build_analysis_prompt(videos: list[VideoMeta], query: str) -> str:
     """Build a structured Gemini prompt from the video metadata list."""
     video_lines: list[str] = []
     for i, v in enumerate(videos, 1):
@@ -231,22 +237,21 @@ def _build_analysis_prompt(videos: list[VideoMeta], channel_url: str) -> str:
     videos_block = "\n".join(video_lines)
 
     return f"""\
-You are a YouTube content strategy expert specialising in Greek-language channels.
+You are a YouTube content strategy expert specialising in Greek-language content.
 
-Below is a list of the most recent videos from a YouTube channel.
-Channel URL: {channel_url}
+Below is a list of the top recent videos for the search query/niche: "{query}"
 
-VIDEOS (most recent first):
+VIDEOS (most recent or top ranked):
 {videos_block}
 
-Based on this data, provide a strategic analysis in JSON format with exactly these keys:
+Based on this data, provide a strategic analysis of this niche in JSON format with exactly these keys:
 
 {{
-  "topic_clusters": "<2-3 sentences identifying the main recurring topic categories>",
-  "content_gaps": "<2-3 sentences describing underserved topics relative to their potential>",
-  "best_upload_window": "<1-2 sentences on which days/frequency correlate with higher views>",
-  "virality_patterns": "<2-3 sentences on what makes top-performing videos different>",
-  "short_recommendations": "<3-5 sentences recommending video topics/styles for YouTube Shorts>",
+  "topic_clusters": "<2-3 sentences identifying the main recurring topic categories in this niche>",
+  "content_gaps": "<2-3 sentences describing underserved topics relative to their potential in this niche>",
+  "best_upload_window": "<1-2 sentences on what frequency or timing correlates with higher views>",
+  "virality_patterns": "<2-3 sentences on what makes top-performing videos in this niche stand out>",
+  "short_recommendations": "<3-5 sentences recommending specific video topics/styles for YouTube Shorts to dominate this niche>",
   "top_short_candidate_ids": ["<video_id_1>", "<video_id_2>", "<video_id_3>"]
 }}
 
@@ -352,25 +357,26 @@ def find_viral_recent_videos(
     return labelled
 
 
-def fetch_channel_videos(
-    channel_url: str,
+def fetch_youtube_videos(
+    query: str,
     max_videos: int = _DEFAULT_MAX_VIDEOS,
 ) -> list[VideoMeta]:
     """
-    Fetch and parse video metadata from a YouTube channel using yt-dlp.
+    Fetch and parse video metadata from YouTube using yt-dlp.
+    Supports channel URLs, @handles, or plain search queries.
 
     Args:
-        channel_url: Full channel URL, @handle, or playlist URL.
+        query:       Search term (e.g. "Greek politics"), channel URL, or @handle.
         max_videos:  Maximum number of recent videos to fetch (default: 30).
 
     Returns:
-        Ordered list of VideoMeta objects (most recent first).
+        Ordered list of VideoMeta objects.
 
     Raises:
-        RuntimeError: If yt-dlp is unavailable or the URL fails completely.
+        RuntimeError: If yt-dlp is unavailable or the query fails completely.
         ValueError:   If no valid videos could be parsed from the response.
     """
-    raw_entries = _run_ytdlp_metadata(channel_url, max_videos)
+    raw_entries = _run_ytdlp_metadata(query, max_videos)
 
     videos: list[VideoMeta] = []
     for entry in raw_entries:
@@ -380,31 +386,31 @@ def fetch_channel_videos(
 
     if not videos:
         raise ValueError(
-            f"No valid videos found for channel: {channel_url}. "
-            "Check that the URL is correct and the channel is public."
+            f"No valid videos found for query: {query}. "
+            "Check that the query is correct and not blocked."
         )
 
     return videos
 
 
-def analyze_channel(
+def analyze_niche(
     videos: list[VideoMeta],
-    channel_url: str,
+    query: str,
     gemini_api_key: str,
-) -> ChannelInsights:
+) -> NicheInsights:
     """
-    Run Gemini analysis on the fetched video metadata to produce ChannelInsights.
+    Run Gemini analysis on the fetched video metadata to produce NicheInsights.
 
     The short_candidates field is always populated from heuristics so the caller
     gets useful output even if the Gemini call fails.
 
     Args:
-        videos:          List of VideoMeta objects from fetch_channel_videos().
-        channel_url:     Original channel URL (for attribution in the report).
+        videos:          List of VideoMeta objects from fetch_youtube_videos().
+        query:           Original search query or channel URL.
         gemini_api_key:  Google Gemini API key.
 
     Returns:
-        A populated ChannelInsights object.
+        A populated NicheInsights object.
     """
     # Heuristic candidates: long-form, high view count
     short_candidates = sorted(
@@ -424,8 +430,8 @@ def analyze_channel(
         channel_avg_views=channel_avg_views,
     )
 
-    insights = ChannelInsights(
-        channel_url=channel_url,
+    insights = NicheInsights(
+        query=query,
         total_videos_analysed=len(videos),
         top_videos=top_videos,
         short_candidates=short_candidates,
@@ -438,7 +444,7 @@ def analyze_channel(
         from google.genai import types as genai_types
 
         client = genai.Client(api_key=gemini_api_key)
-        prompt = _build_analysis_prompt(videos, channel_url)
+        prompt = _build_analysis_prompt(videos, query)
 
         config = genai_types.GenerateContentConfig(
             temperature=0.4,
