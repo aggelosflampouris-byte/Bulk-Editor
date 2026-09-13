@@ -143,7 +143,10 @@ def _run_ytdlp_metadata(query: str, max_videos: int) -> list[dict[str, Any]]:
     """
     target = query
     if not query.startswith("http") and not query.startswith("@"):
-        target = f"ytsearch{max_videos}:{query}"
+        import urllib.parse
+        encoded = urllib.parse.quote_plus(query)
+        # sp=EgIIBA%253D%253D is YouTube's "Upload Date: This Month" filter
+        target = f"https://www.youtube.com/results?search_query={encoded}&sp=EgIIBA%253D%253D"
 
     cmd = [
         sys.executable, "-m", "yt_dlp",
