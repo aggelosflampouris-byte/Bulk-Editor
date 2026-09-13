@@ -1325,7 +1325,7 @@ def main() -> None:
                             url=url_input.strip(),
                             settings=settings,
                             clip_indices=selected_indices,
-                            progress_cb=_render_cb,
+                            progress_cb=_url_render_cb,
                         )
 
                     render_progress.progress(1.0, text="100% — All clips rendered.")
