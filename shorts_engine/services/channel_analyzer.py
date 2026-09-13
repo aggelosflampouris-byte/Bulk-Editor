@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import subprocess
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -99,8 +100,34 @@ class ChannelInsights:
     # Videos recommended for Short extraction
     short_candidates: list[VideoMeta] = field(default_factory=list)
 
+    # Viral recent videos (uploaded within the last 3 weeks, high virality score)
+    viral_recent: list["ViralRecentVideo"] = field(default_factory=list)
+
     # Raw error message if analysis partially failed
     analysis_error: str = ""
+
+
+@dataclass(frozen=True)
+class ViralRecentVideo:
+    """
+    A recently uploaded video (≤ 3 weeks old) with a computed virality score,
+    ranked as a high-priority candidate for Short extraction.
+
+    Virality Score formula:
+        base     = log10(max(views, 1))
+        recency  = max(0, 1 - days_old / 21)   # decays linearly: 1.0 → 0.0
+        engmt    = likes / max(views, 1)         # engagement ratio 0.0 → 1.0
+        score    = base * (1 + recency) * (1 + engmt * 10)
+    A higher score = more viral AND more recent.
+    """
+    video: VideoMeta
+    days_old: int
+    virality_score: float
+    virality_label: str  # 'Hot 🔥', 'Rising 📈', or 'Trending ⚡'
+
+    @property
+    def score_display(self) -> str:
+        return f"{self.virality_score:.1f}"
 
 
 # ── Internal Helpers ───────────────────────────────────────────────────────────
@@ -228,6 +255,101 @@ Respond ONLY with the JSON object. No markdown, no code fences.
 
 # ── Public API ─────────────────────────────────────────────────────────────────
 
+_RECENCY_WINDOW_DAYS: int = 21  # 3 weeks
+
+
+def find_viral_recent_videos(
+    videos: list[VideoMeta],
+    channel_avg_views: float | None = None,
+    max_results: int = 10,
+) -> list[ViralRecentVideo]:
+    """
+    Filter the channel's videos to those uploaded within the last 3 weeks and
+    rank them by a composite virality score.
+
+    Virality Score formula (all components are non-negative):
+        base    = log10(max(views, 1))
+        recency = max(0, 1 - days_old / 21)   # linear decay: 1.0 (today) → 0.0 (21 days)
+        engmt   = likes / max(views, 1)        # engagement ratio
+        score   = base * (1 + recency) * (1 + engmt * 10)
+
+    The recency multiplier ensures a video uploaded yesterday with 10k views scores
+    higher than one uploaded 20 days ago with 15k views, reflecting the YouTube
+    algorithm's preference for fresh content with fast early engagement.
+
+    Args:
+        videos:            Full list of VideoMeta from fetch_channel_videos().
+        channel_avg_views: Optional channel average views (unused in current formula but
+                           available for future relative scoring).
+        max_results:       Maximum number of candidates to return (default: 10).
+
+    Returns:
+        List of ViralRecentVideo ordered by virality_score descending.
+        Empty list if no videos were uploaded in the last 3 weeks.
+    """
+    now = datetime.now(tz=timezone.utc)
+    candidates: list[ViralRecentVideo] = []
+
+    for v in videos:
+        if not v.upload_date or len(v.upload_date) < 8:
+            continue
+
+        try:
+            upload_dt = datetime.strptime(v.upload_date, "%Y%m%d").replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+
+        days_old = (now - upload_dt).days
+        if days_old > _RECENCY_WINDOW_DAYS or days_old < 0:
+            continue
+
+        # Must be long enough to extract Shorts from
+        if not v.is_short_candidate:
+            continue
+
+        # Compute virality score
+        base = math.log10(max(v.view_count, 1))
+        recency = max(0.0, 1.0 - days_old / _RECENCY_WINDOW_DAYS)
+        engmt = v.like_count / max(v.view_count, 1)
+        score = base * (1.0 + recency) * (1.0 + engmt * 10.0)
+
+        # Classify label based on score percentile (computed post-sort)
+        candidates.append(
+            ViralRecentVideo(
+                video=v,
+                days_old=days_old,
+                virality_score=round(score, 2),
+                virality_label="",  # filled after sorting
+            )
+        )
+
+    # Sort by score descending
+    candidates.sort(key=lambda c: c.virality_score, reverse=True)
+
+    # Assign labels based on rank
+    labelled: list[ViralRecentVideo] = []
+    for rank, c in enumerate(candidates[:max_results]):
+        if rank == 0:
+            label = "Hot 🔥"
+        elif rank <= 2:
+            label = "Rising 📈"
+        else:
+            label = "Trending ⚡"
+        labelled.append(
+            ViralRecentVideo(
+                video=c.video,
+                days_old=c.days_old,
+                virality_score=c.virality_score,
+                virality_label=label,
+            )
+        )
+
+    logger.info(
+        "find_viral_recent_videos: %d / %d videos qualify as recent viral candidates.",
+        len(labelled), len(videos),
+    )
+    return labelled
+
 
 def fetch_channel_videos(
     channel_url: str,
@@ -292,11 +414,21 @@ def analyze_channel(
 
     top_videos = sorted(videos, key=lambda v: v.view_count, reverse=True)[:10]
 
+    # Always compute viral recent picks — independent of Gemini outcome
+    channel_avg_views = (
+        sum(v.view_count for v in videos) / len(videos) if videos else 0.0
+    )
+    viral_recent = find_viral_recent_videos(
+        videos,
+        channel_avg_views=channel_avg_views,
+    )
+
     insights = ChannelInsights(
         channel_url=channel_url,
         total_videos_analysed=len(videos),
         top_videos=top_videos,
         short_candidates=short_candidates,
+        viral_recent=viral_recent,
     )
 
     # Gemini narrative analysis

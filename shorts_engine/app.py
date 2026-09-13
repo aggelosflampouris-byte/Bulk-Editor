@@ -1548,31 +1548,84 @@ def main() -> None:
                     ])
                     st.dataframe(top_df, use_container_width=True, hide_index=True)
 
-                # Short Candidates
+                # ── Viral Recent Picks (Primary Feature) ──────────────────
                 st.markdown("---")
-                st.markdown("#### ✂️ Recommended for Short Extraction")
-                if ins.short_candidates:
-                    for i, v in enumerate(ins.short_candidates, 1):
+                st.markdown("#### 🔥 Recent Viral Picks — Last 3 Weeks")
+                st.caption(
+                    "Videos uploaded within the last 21 days, scored by virality "
+                    "(views × recency × engagement rate). Click **Start Clipping** to "
+                    "extract Shorts immediately."
+                )
+
+                if ins.viral_recent:
+                    for vrv in ins.viral_recent:
+                        v = vrv.video
                         with st.container():
-                            cc1, cc2 = st.columns([5, 1])
-                            with cc1:
-                                st.markdown(
-                                    f"**{i}. {v.title}** &nbsp;&nbsp; "
-                                    f"`{v.duration_display}` · "
-                                    f"{v.view_count:,} views · "
-                                    f"[Open ↗]({v.url})",
-                                    unsafe_allow_html=True,
-                                )
-                            with cc2:
+                            st.markdown(
+                                f"""
+<div style="border:1px solid #27272a;border-radius:8px;padding:14px 18px;margin-bottom:10px;background:#111113;">
+  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+    <span style="font-size:1.05rem;font-weight:600;color:#f4f4f5;flex:1;">{v.title}</span>
+    <span style="background:#3f3f46;color:#a1a1aa;border-radius:4px;padding:2px 8px;font-size:0.75rem;">{vrv.virality_label}</span>
+  </div>
+  <div style="margin-top:6px;font-size:0.78rem;color:#71717a;">
+    ⏱ {v.duration_display} &nbsp;·&nbsp;
+    👁 {v.view_count:,} views &nbsp;·&nbsp;
+    👍 {v.like_count:,} likes &nbsp;·&nbsp;
+    📅 {vrv.days_old} day{"s" if vrv.days_old != 1 else ""} ago &nbsp;·&nbsp;
+    ⚡ Virality score: <strong style="color:#f4f4f5;">{vrv.score_display}</strong>
+    &nbsp;<a href="{v.url}" target="_blank" style="color:#6366f1;">[Open ↗]</a>
+  </div>
+</div>
+""",
+                                unsafe_allow_html=True,
+                            )
+                            clip_col, _ = st.columns([2, 5])
+                            with clip_col:
                                 if st.button(
-                                    "Add to Queue",
-                                    key=f"queue_candidate_{i}",
-                                    help="Send this video URL to the Video URL tab for processing.",
+                                    "🎬 Start Clipping",
+                                    key=f"clip_viral_{v.video_id}",
+                                    type="primary",
+                                    use_container_width=True,
                                 ):
+                                    # Store the URL and trigger the URL pipeline tab
                                     st.session_state["queued_url"] = v.url
-                                    st.success(f"Queued: {v.title[:40]}... → switch to the Video URL tab!")
+                                    st.session_state["queued_url_autostart"] = True
+                                    st.success(
+                                        f"✅ **{v.title[:50]}** added to queue. "
+                                        "Switch to the **Video URL** tab to start processing!"
+                                    )
                 else:
-                    st.info("No long-form videos found suitable for Short extraction in this batch.")
+                    st.info(
+                        "No videos uploaded in the last 3 weeks were found that are suitable "
+                        "for Short extraction. This may happen if the channel hasn't posted "
+                        "recently, or if recent uploads are already Shorts (< 5 min)."
+                    )
+
+                # ── All-Time Short Candidates (Secondary) ──────────────────
+                with st.expander("✂️ All-Time Best for Short Extraction", expanded=False):
+                    if ins.short_candidates:
+                        for i, v in enumerate(ins.short_candidates, 1):
+                            with st.container():
+                                cc1, cc2 = st.columns([5, 1])
+                                with cc1:
+                                    st.markdown(
+                                        f"**{i}. {v.title}** &nbsp;&nbsp; "
+                                        f"`{v.duration_display}` · "
+                                        f"{v.view_count:,} views · "
+                                        f"[Open ↗]({v.url})",
+                                        unsafe_allow_html=True,
+                                    )
+                                with cc2:
+                                    if st.button(
+                                        "Add to Queue",
+                                        key=f"queue_candidate_{i}",
+                                        help="Send this video URL to the Video URL tab for processing.",
+                                    ):
+                                        st.session_state["queued_url"] = v.url
+                                        st.success(f"Queued: {v.title[:40]}... → switch to the Video URL tab!")
+                    else:
+                        st.info("No long-form videos found suitable for Short extraction in this batch.")
 
             elif not scan_clicked:
                 st.markdown("""
@@ -1582,6 +1635,7 @@ def main() -> None:
                 </p>
             </div>
             """, unsafe_allow_html=True)
+
 
 
 if __name__ == "__main__":
