@@ -1044,12 +1044,20 @@ def main() -> None:
         st.stop()
 
     # ── Tabs ───────────────────────────────────────────────────────────────────
-    tab_upload, tab_url, tab_channel = st.tabs(["File Upload", "Video URL", "📊 Channel Analyzer"])
+    if "active_tab" not in st.session_state:
+        st.session_state["active_tab"] = "File Upload"
+
+    active_tab = st.segmented_control(
+        "Navigation",
+        ["File Upload", "Video URL", "📊 Niche Explorer"],
+        key="active_tab",
+        label_visibility="collapsed"
+    )
 
     # ══════════════════════════════════════════════════════════════════════════
     # TAB 1 — FILE UPLOAD (existing behaviour, untouched)
     # ══════════════════════════════════════════════════════════════════════════
-    with tab_upload:
+    if active_tab == "File Upload":
         _, main_col, _ = st.columns([1, 6, 1])
         with main_col:
 
@@ -1176,7 +1184,7 @@ def main() -> None:
     # ══════════════════════════════════════════════════════════════════════════
     # TAB 2 — VIDEO URL
     # ══════════════════════════════════════════════════════════════════════════
-    with tab_url:
+    elif active_tab == "Video URL":
         _, main_col, _ = st.columns([1, 6, 1])
         with main_col:
             st.markdown("### Process from URL")
@@ -1196,6 +1204,10 @@ def main() -> None:
             if settings_errors_url:
                 for err in settings_errors_url:
                     st.warning(err)
+
+            if st.session_state.pop("queued_url_autostart", False) and url_input.strip():
+                st.session_state["url_is_analyzing"] = True
+                st.rerun()
 
             col_a, col_b = st.columns([1, 4])
             with col_a:
@@ -1344,9 +1356,9 @@ def main() -> None:
 
 
     # ══════════════════════════════════════════════════════════════════════════
-    # TAB 3 — CHANNEL ANALYZER
+    # TAB 3 — NICHE EXPLORER
     # ══════════════════════════════════════════════════════════════════════════
-    with tab_channel:
+    elif active_tab == "📊 Niche Explorer":
         _, main_col, _ = st.columns([1, 6, 1])
         with main_col:
             st.markdown("### 📊 YouTube Channel Analyzer")
@@ -1506,13 +1518,15 @@ def main() -> None:
                             clip_col, _ = st.columns([2, 5])
                             with clip_col:
                                 if st.button(
-                                    "🎬 Send to Video URL Tab",
+                                    "🎬 Start Clipping",
                                     key=f"clip_viral_{v.video_id}",
                                     type="primary",
                                     use_container_width=True,
                                 ):
                                     st.session_state["queued_url"] = v.url
-                                    st.toast("✅ URL queued! Switch to the **Video URL** tab at the top.", icon="🚀")
+                                    st.session_state["queued_url_autostart"] = True
+                                    st.session_state["active_tab"] = "Video URL"
+                                    st.rerun()
                 else:
                     st.info(
                         "No videos uploaded in the last 3 weeks were found that are suitable "
@@ -1541,7 +1555,8 @@ def main() -> None:
                                         help="Send this video URL to the Video URL tab for processing.",
                                     ):
                                         st.session_state["queued_url"] = v.url
-                                        st.toast("✅ URL queued! Switch to the **Video URL** tab at the top.", icon="🚀")
+                                        st.session_state["active_tab"] = "Video URL"
+                                        st.rerun()
                     else:
                         st.info("No long-form videos found suitable for Short extraction in this batch.")
 
