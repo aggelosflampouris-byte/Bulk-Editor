@@ -367,12 +367,12 @@ def segments_to_ass(
     dialogue_lines: list[str] = []
     for seg in segments:
         if seg.words:
-            # Chunk words into small blocks: max 3 words OR 28 chars (whichever comes first)
+            # Chunk words into small blocks: max 6 words OR 45 chars (whichever comes first)
             # This produces sharp, punchy one-thought-at-a-time captions.
             current_chunk: list[tuple[float, float, str]] = []
             current_char_len = 0
-            _MAX_WORDS = 3
-            _MAX_CHARS = 28
+            _MAX_WORDS = 6
+            _MAX_CHARS = 45
 
             def _flush_chunk(
                 chunk: list[tuple[float, float, str]],

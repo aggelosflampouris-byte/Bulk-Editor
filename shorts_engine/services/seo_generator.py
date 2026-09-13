@@ -687,6 +687,8 @@ def align_words_with_corrected_text(
     or words split/joined), the segment duration is proportionally distributed
     across the new words weighted by character length.
     """
+    import difflib
+
     new_words = corrected_text.strip().split()
     if not new_words:
         return original_words
@@ -694,20 +696,58 @@ def align_words_with_corrected_text(
     if original_words and len(original_words) == len(new_words):
         return [(w[0], w[1], nw) for w, nw in zip(original_words, new_words)]
 
-    total_chars = max(1, sum(len(w) for w in new_words))
-    total_duration = max(0.1, seg_end - seg_start)
+    # Use difflib to map the new words to the original words by string similarity
+    orig_texts = [w[2].lower() for w in original_words]
+    new_texts = [nw.lower() for nw in new_words]
 
+    sm = difflib.SequenceMatcher(None, orig_texts, new_texts)
     aligned: list[tuple[float, float, str]] = []
-    current_time = seg_start
-    for i, nw in enumerate(new_words):
-        if i == len(new_words) - 1:
-            w_end = seg_end
-        else:
-            w_dur = (len(nw) / total_chars) * total_duration
-            w_end = current_time + w_dur
-        aligned.append((round(current_time, 3), round(w_end, 3), nw))
-        current_time = w_end
+    
+    # We will compute an average word duration from the original words as a fallback
+    avg_duration = 0.3
+    if original_words:
+        avg_duration = max(0.1, (seg_end - seg_start) / len(original_words))
 
+    # To track the last known valid time
+    current_time = seg_start
+
+    for op, i1, i2, j1, j2 in sm.get_opcodes():
+        if op == 'equal' or op == 'replace':
+            # Map the new words to the old words proportionally within this block
+            block_orig_words = original_words[i1:i2]
+            block_new_words = new_words[j1:j2]
+            
+            if not block_orig_words or not block_new_words:
+                continue
+                
+            block_start = block_orig_words[0][0]
+            block_end = block_orig_words[-1][1]
+            block_duration = block_end - block_start
+            
+            # Update current time
+            current_time = block_start
+            
+            # Distribute time among new words in this block
+            for w_idx, nw in enumerate(block_new_words):
+                w_dur = block_duration / len(block_new_words)
+                w_end = current_time + w_dur
+                aligned.append((round(current_time, 3), round(w_end, 3), nw))
+                current_time = w_end
+
+        elif op == 'insert':
+            # We have new words inserted without replacing any old words.
+            # Give each new word the avg_duration starting from current_time.
+            for nw in new_words[j1:j2]:
+                w_end = current_time + avg_duration
+                aligned.append((round(current_time, 3), round(w_end, 3), nw))
+                current_time = w_end
+                
+        # op == 'delete' means old words were deleted, so we just skip them and don't add to aligned.
+
+    # Ensure the final word ends correctly within segment limits if possible
+    # We don't strictly enforce seg_end here since words might legitimately overrun,
+    # but we could clamp it if needed. For now, trust the relative mapping.
+    
     return aligned
 
 
