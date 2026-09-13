@@ -1464,8 +1464,7 @@ def main() -> None:
 
             # Scan & analyze
             if scan_clicked and channel_url_input.strip():
-                _settings = _build_settings()
-                if not _settings.gemini_api_key:
+                if not settings.gemini_api_key:
                     st.error("A Gemini API key is required for the AI analysis. Add it to the sidebar.")
                 else:
                     with st.spinner("Fetching channel metadata via yt-dlp..."):
@@ -1494,7 +1493,7 @@ def main() -> None:
                                 insights = analyze_channel(
                                     st.session_state["channel_videos"],
                                     st.session_state["channel_url"],
-                                    gemini_api_key=_settings.gemini_api_key,
+                                    gemini_api_key=settings.gemini_api_key,
                                 )
                                 st.session_state["channel_insights"] = insights
                             except Exception as exc:
