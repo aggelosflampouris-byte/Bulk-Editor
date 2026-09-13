@@ -193,6 +193,12 @@ class Settings:
     gemini_api_key: str = field(
         default_factory=lambda: os.environ.get("GEMINI_API_KEY", "")
     )
+    
+    # ── Connected Channel ──────────────────────────────────────
+    # Primary channel URL loaded from .env (e.g. for Niche Explorer default)
+    connected_channel: str = field(
+        default_factory=lambda: os.environ.get("CONNECTED_CHANNEL", "")
+    )
 
     # ── Transcription ──────────────────────────────────────────
     # Whisper model size: tiny | base | small | medium | large-v3

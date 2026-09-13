@@ -1372,6 +1372,7 @@ def main() -> None:
 
             channel_url_input = st.text_input(
                 "Channel URL or @handle",
+                value=settings.connected_channel,
                 placeholder="https://www.youtube.com/@channelname   or   @channelname",
                 key="channel_url_input",
                 help="Paste a YouTube channel URL, @handle, or playlist URL. Public channels only.",
