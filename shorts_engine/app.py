@@ -1747,7 +1747,7 @@ def main() -> None:
                             "Select a clip to configure and upload."
                         )
 
-                        for clip_path in all_clips:
+                        for idx, clip_path in enumerate(all_clips):
                             # Attempt to load companion SEO JSON
                             seo_stem = clip_path.stem.replace("_short", "")
                             seo_json_path = clip_path.parent / f"seo_{seo_stem}.json"
@@ -1764,19 +1764,19 @@ def main() -> None:
                                     "Title",
                                     value=seo_data.get("title", clip_path.stem)[:100],
                                     max_chars=100,
-                                    key=f"yt_title_{clip_path.name}",
+                                    key=f"yt_title_{idx}_{clip_path.name}",
                                 )
                                 upload_desc = st.text_area(
                                     "Description",
                                     value=seo_data.get("description", "")[:5000],
                                     height=120,
-                                    key=f"yt_desc_{clip_path.name}",
+                                    key=f"yt_desc_{idx}_{clip_path.name}",
                                 )
                                 raw_tags = seo_data.get("tags", [])
                                 upload_tags_str = st.text_input(
                                     "Tags (comma-separated)",
                                     value=", ".join(raw_tags) if raw_tags else "",
-                                    key=f"yt_tags_{clip_path.name}",
+                                    key=f"yt_tags_{idx}_{clip_path.name}",
                                     help="Paste YouTube tags separated by commas. Max 500 chars total.",
                                 )
 
@@ -1784,7 +1784,7 @@ def main() -> None:
                                     "Publish Mode",
                                     ["Publish Now", "Schedule"],
                                     horizontal=True,
-                                    key=f"yt_mode_{clip_path.name}",
+                                    key=f"yt_mode_{idx}_{clip_path.name}",
                                 )
 
                                 scheduled_dt = None
@@ -1793,12 +1793,12 @@ def main() -> None:
                                     sched_date = st.date_input(
                                         "Publish Date (UTC)",
                                         value=_date.today(),
-                                        key=f"yt_date_{clip_path.name}",
+                                        key=f"yt_date_{idx}_{clip_path.name}",
                                     )
                                     sched_time = st.time_input(
                                         "Publish Time (UTC)",
                                         value=_time(9, 0),
-                                        key=f"yt_time_{clip_path.name}",
+                                        key=f"yt_time_{idx}_{clip_path.name}",
                                     )
                                     scheduled_dt = datetime(
                                         sched_date.year, sched_date.month, sched_date.day,
@@ -1808,7 +1808,7 @@ def main() -> None:
 
                                 if st.button(
                                     "🚀 Upload to YouTube" if publish_mode == "Publish Now" else "🗓️ Schedule Upload",
-                                    key=f"yt_upload_{clip_path.name}",
+                                    key=f"yt_upload_{idx}_{clip_path.name}",
                                     type="primary",
                                 ):
                                     try:
