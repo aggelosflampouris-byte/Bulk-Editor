@@ -523,9 +523,16 @@ def analyze_niche(
                     continue
                     
                 import re
+                
+                # Strip markdown code fences if present
                 fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw_text, re.DOTALL)
                 if fenced:
                     raw_text = fenced.group(1)
+                    
+                # Extract the first JSON object block to ignore conversational padding
+                obj_match = re.search(r"\{.*\}", raw_text, re.DOTALL)
+                if obj_match:
+                    raw_text = obj_match.group(0)
                     
                 # strict=False allows unescaped control chars (like \n) inside strings
                 parsed = json.loads(raw_text, strict=False)
@@ -556,13 +563,10 @@ def analyze_niche(
             insights.suggested_search_query = parsed.get("suggested_search_query", "").strip()
 
             # Competitor Discovery
-            # If the user scanned a specific channel, run an automated background search
-            # on the AI-deduced niche keyword to find viral recent videos from competitors.
             is_channel_scan = query.startswith("http") or query.startswith("@")
             if is_channel_scan and insights.suggested_search_query:
                 try:
                     logger.info("Executing competitor discovery for niche: %s", insights.suggested_search_query)
-                    # This search uses the "This Month" filter automatically because it's a keyword
                     competitor_videos = fetch_youtube_videos(insights.suggested_search_query, max_videos=30)
                     if competitor_videos:
                         insights.competitor_viral_recent = find_viral_recent_videos(
@@ -571,6 +575,8 @@ def analyze_niche(
                         )
                 except Exception as comp_exc:
                     logger.warning("Competitor discovery failed: %s", comp_exc)
+        else:
+            insights.analysis_error = "AI models failed to generate valid JSON insights after multiple attempts."
 
     except Exception as exc:
         error_msg = f"Gemini analysis failed: {exc}"
