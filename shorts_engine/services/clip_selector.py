@@ -61,6 +61,7 @@ identify the best moments to extract as standalone YouTube Shorts and craft auth
 SEO metadata that fits the image of the video.
 
 SOURCE TITLE: {source_title}
+CHANNEL NICHE / BRAND VOICE: {channel_niche}
 
 CLIP STRUCTURE & HOOK REQUIREMENTS (CRITICAL):
 - VIRALITY FIRST: Prioritize segments containing high emotion (laughter, surprise, anger), counter-intuitive statements, strong opinions, or highly relatable analogies over plain informational text.
@@ -542,6 +543,7 @@ def select_clips(
     max_dur: float = 50.0,
     source_title: str = "",
     brand_voice: str = "",
+    channel_niche: str = "",
 ) -> list[ClipCandidate]:
     """
     Use Gemini to select the most viral-worthy clips from a transcript.
@@ -562,6 +564,9 @@ def select_clips(
         min_dur:         Minimum clip duration in seconds (default: 35.0).
         max_dur:         Maximum clip duration in seconds (default: 50.0).
         source_title:    Original video title, provided to Gemini for context.
+        brand_voice:     Optional channel persona injected into the Gemini prompt.
+        channel_niche:   Optional niche/domain string (e.g. 'politics') that helps
+                         Gemini write context-aware titles for the channel's brand.
 
     Returns:
         List of ClipCandidate objects, ordered by virality (best first),
@@ -593,8 +598,10 @@ def select_clips(
         logger.info("Loaded %d clip candidates from cache.", len(cached_candidates))
         return cached_candidates
 
+    niche_line = channel_niche.strip() or "Greek news / politics / society"
     prompt = _CLIP_SELECTION_PROMPT.format(
         source_title=source_title or "Unknown",
+        channel_niche=niche_line,
         min_clips=min_clips,
         max_clips=max_clips,
         min_dur=int(min_dur),
