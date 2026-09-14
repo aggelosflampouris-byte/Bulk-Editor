@@ -499,7 +499,7 @@ def analyze_niche(
         )
 
         _MODELS = ("gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.7-flash")
-        raw_text = ""
+        parsed = None
         for model_name in _MODELS:
             try:
                 response = client.models.generate_content(
@@ -508,14 +508,22 @@ def analyze_niche(
                     config=config,
                 )
                 raw_text = response.text or ""
-                if raw_text.strip():
-                    break
+                if not raw_text.strip():
+                    continue
+                    
+                import re
+                fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw_text, re.DOTALL)
+                if fenced:
+                    raw_text = fenced.group(1)
+                    
+                # strict=False allows unescaped control chars (like \n) inside strings
+                parsed = json.loads(raw_text, strict=False)
+                break
             except Exception as model_exc:
-                logger.warning("Channel analyzer: model '%s' failed: %s", model_name, model_exc)
+                logger.warning("Channel analyzer: model '%s' failed or returned invalid JSON: %s", model_name, model_exc)
                 continue
 
-        if raw_text:
-            parsed = json.loads(raw_text)
+        if parsed:
             insights.topic_clusters = parsed.get("topic_clusters", "")
             insights.content_gaps = parsed.get("content_gaps", "")
             insights.best_upload_window = parsed.get("best_upload_window", "")
