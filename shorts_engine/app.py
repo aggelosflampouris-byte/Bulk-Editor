@@ -1365,13 +1365,9 @@ def main() -> None:
                 st.success("✅ **YouTube API Connected:** Pulling deep real-time analytics for your channel.")
                 
                 # Niche Selector & Auto-Picker
-                col_niche, col_btn = st.columns([4, 1])
-                with col_niche:
-                    target_niche = st.text_input("Target Niche / Topic (Optional)", placeholder="e.g. Greek Mythology, Financial Advice", key="target_niche_input")
-                with col_btn:
-                    st.write("") # spacing
-                    st.write("")
-                    auto_pick = st.button("✨ Auto-Pick", use_container_width=True)
+                st.markdown("#### 1. Target Niche")
+                target_niche = st.text_input("Target Niche / Topic (Optional)", placeholder="e.g. Greek Mythology, Financial Advice", key="target_niche_input", label_visibility="collapsed")
+                auto_pick = st.button("✨ Auto-Pick Niche for Me", use_container_width=False)
                 
                 if auto_pick:
                     if not settings.gemini_api_key:
@@ -1396,8 +1392,10 @@ def main() -> None:
                             except Exception as e:
                                 st.error(f"Auto-pick failed: {e}")
 
-                max_videos_mine = st.number_input("Max recent videos to analyze", min_value=5, max_value=100, value=30, step=5, key="channel_max_mine")
+                st.markdown("#### 2. Scan Depth")
+                max_videos_mine = st.number_input("Max recent videos to analyze", min_value=5, max_value=100, value=30, step=5, key="channel_max_mine", label_visibility="collapsed")
                 
+                st.markdown("#### 3. Execution")
                 btn_text = f"🚀 Generate Content Ideas for '{target_niche.strip()}'" if target_niche.strip() else "🚀 Analyze My Channel"
                 analyze_mine_clicked = st.button(btn_text, type="primary", use_container_width=True)
             else:
