@@ -329,7 +329,7 @@ def _render_sidebar() -> Settings:
         )
         whisper_context_hint = st.selectbox(
             "Domain Context",
-            options=["", "politics", "society", "science", "technology"],
+            options=["", "politics", "society", "science", "technology", "entertainment", "business", "education", "lifestyle", "gaming"],
             index=0,
             format_func=lambda x: {
                 "": "Generic (auto-detect)",
@@ -337,9 +337,14 @@ def _render_sidebar() -> Settings:
                 "society": "👥 Society",
                 "science": "🔬 Science",
                 "technology": "💻 Technology",
+                "entertainment": "🎭 Entertainment / Pop Culture",
+                "business": "💼 Business / Finance",
+                "education": "📚 Education / History",
+                "lifestyle": "🌟 Lifestyle / Vlog",
+                "gaming": "🎮 Gaming",
             }.get(x, x),
             help=(
-                "Inject domain vocabulary into the Whisper transcription prompt for higher accuracy.\n"
+                "Inject domain vocabulary into the Whisper transcription prompt and Gemini SEO generator for higher accuracy.\n"
                 "Select the topic closest to your video's content."
             ),
             key="whisper_context_hint_select",
@@ -1341,7 +1346,7 @@ def main() -> None:
     elif active_tab == "📊 Niche Explorer":
         _, main_col, _ = st.columns([1, 6, 1])
         with main_col:
-            st.markdown("### 📊 YouTube Channel Analyzer")
+            st.markdown("### 📊 My Channel Analytics")
             
             # --- AUTH CHECK ---
             try:
@@ -1355,99 +1360,39 @@ def main() -> None:
                 yt_connected = False
             
             analyze_mine_clicked = False
-            scan_clicked = False
-            channel_url_input = ""
             
             if yt_connected:
-                st.success("✅ **Authenticated Channel Connected:** Analyze your own channel using deep real-time APIs, or search competitors via URL.")
-                col_mine, col_other = st.columns(2)
-                
-                with col_mine:
-                    st.markdown("#### 📈 Analyze My Channel")
-                    st.markdown("Uses YouTube Data & Analytics API (Last 30 Days)")
-                    max_videos_mine = st.number_input("Max videos to fetch", min_value=5, max_value=100, value=30, step=5, key="channel_max_mine")
-                    analyze_mine_clicked = st.button("🚀 Analyze My Channel", type="primary", use_container_width=True)
-                
-                with col_other:
-                    st.markdown("#### 🕵️ Competitor Search")
-                    st.markdown("Uses yt-dlp metadata scraping (No API Key)")
-                    channel_url_input = st.text_input(
-                        "Competitor URL / Handle",
-                        value="",
-                        label_visibility="collapsed",
-                        placeholder="https://youtube.com/@competitor"
-                    )
-                    max_videos_scan = st.number_input("Max videos to fetch", min_value=5, max_value=100, value=30, step=5, key="channel_max_scan")
-                    scan_clicked = st.button("🔍 Search Competitor", use_container_width=True)
+                st.success("✅ **YouTube API Connected:** Pulling deep real-time analytics for your channel.")
+                max_videos_mine = st.number_input("Max recent videos to analyze", min_value=5, max_value=100, value=30, step=5, key="channel_max_mine")
+                analyze_mine_clicked = st.button("🚀 Analyze My Channel", type="primary", use_container_width=True)
             else:
+                st.warning("⚠️ **YouTube Account Not Connected**")
                 st.markdown(
-                    "Connect your YouTube channel in the **Upload to YouTube** tab to unlock Deep Analytics, "
-                    "or search a competitor below."
+                    "Please connect your YouTube channel in the **Upload to YouTube** tab to unlock deep channel analytics and AI insights."
                 )
-                channel_url_input = st.text_input(
-                    "Channel URL or @handle",
-                    value=settings.connected_channel,
-                    placeholder="https://www.youtube.com/@channelname   or   @channelname",
-                    key="channel_url_input",
-                )
-                
-                col_scan, col_n = st.columns([3, 1])
-                with col_scan:
-                    scan_clicked = st.button(
-                        "🔍 Search Niche / Channel",
-                        key="scan_channel_btn",
-                        use_container_width=True,
-                        type="primary",
-                    )
-                with col_n:
-                    max_videos_scan = st.number_input(
-                        "Max videos",
-                        min_value=5,
-                        max_value=100,
-                        value=30,
-                        step=5,
-                        key="channel_max_videos_unauth",
-                        help="Number of recent videos to analyse (more = slower scan).",
-                    )
 
             # Scan & analyze
-            if analyze_mine_clicked or (scan_clicked and channel_url_input.strip()):
+            if analyze_mine_clicked:
                 if not settings.gemini_api_key:
                     st.error("A Gemini API key is required for the AI analysis. Add it to the sidebar.")
                 else:
-                    if analyze_mine_clicked:
-                        with st.spinner("Fetching authenticated YouTube Analytics and Data..."):
-                            try:
-                                yt_client = authenticate()
-                                yt_analytics = get_analytics_client()
-                                
-                                channel_info = get_channel_info(yt_client)
-                                channel_name = channel_info.get("title", "My Channel")
-                                
-                                analytics = fetch_channel_analytics(yt_analytics, days=30)
-                                st.session_state["yt_analytics_30d"] = analytics
-                                
-                                videos = fetch_my_recent_videos(yt_client, max_videos=int(max_videos_mine))
-                                st.session_state["channel_videos"] = videos
-                                st.session_state["channel_url"] = f"Authenticated Channel: {channel_name}"
-                            except Exception as exc:
-                                st.error(f"**Analytics scan failed:** {exc}")
-                                st.session_state["channel_videos"] = []
-                    else:
-                        with st.spinner("Fetching channel metadata via yt-dlp..."):
-                            try:
-                                from services.channel_analyzer import fetch_youtube_videos
-                                _url = channel_url_input.strip()
-                                if _url.startswith("@"):
-                                    _url = f"https://www.youtube.com/{_url}"
-
-                                videos = fetch_youtube_videos(_url, max_videos=int(max_videos_scan))
-                                st.session_state["channel_videos"] = videos
-                                st.session_state["channel_url"] = _url
-                                st.session_state["yt_analytics_30d"] = None
-                            except Exception as exc:
-                                st.error(f"**Channel scan failed:** {exc}")
-                                st.session_state["channel_videos"] = []
+                    with st.spinner("Fetching authenticated YouTube Analytics and Data..."):
+                        try:
+                            yt_client = authenticate()
+                            yt_analytics = get_analytics_client()
+                            
+                            channel_info = get_channel_info(yt_client)
+                            channel_name = channel_info.get("title", "My Channel")
+                            
+                            analytics = fetch_channel_analytics(yt_analytics, days=30)
+                            st.session_state["yt_analytics_30d"] = analytics
+                            
+                            videos = fetch_my_recent_videos(yt_client, max_videos=int(max_videos_mine))
+                            st.session_state["channel_videos"] = videos
+                            st.session_state["channel_url"] = f"Authenticated Channel: {channel_name}"
+                        except Exception as exc:
+                            st.error(f"**Analytics scan failed:** {exc}")
+                            st.session_state["channel_videos"] = []
 
                     if st.session_state.get("channel_videos"):
                         with st.spinner("Running AI analysis with Gemini..."):

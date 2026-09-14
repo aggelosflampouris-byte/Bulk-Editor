@@ -598,7 +598,7 @@ def select_clips(
         logger.info("Loaded %d clip candidates from cache.", len(cached_candidates))
         return cached_candidates
 
-    niche_line = channel_niche.strip() or "Greek news / politics / society"
+    niche_line = channel_niche.strip() or "High-value, engaging content across any topic"
     prompt = _CLIP_SELECTION_PROMPT.format(
         source_title=source_title or "Unknown",
         channel_niche=niche_line,
