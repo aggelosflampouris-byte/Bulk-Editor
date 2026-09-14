@@ -1397,7 +1397,9 @@ def main() -> None:
                                 st.error(f"Auto-pick failed: {e}")
 
                 max_videos_mine = st.number_input("Max recent videos to analyze", min_value=5, max_value=100, value=30, step=5, key="channel_max_mine")
-                analyze_mine_clicked = st.button("🚀 Analyze My Channel", type="primary", use_container_width=True)
+                
+                btn_text = f"🚀 Generate Content Ideas for '{target_niche.strip()}'" if target_niche.strip() else "🚀 Analyze My Channel"
+                analyze_mine_clicked = st.button(btn_text, type="primary", use_container_width=True)
             else:
                 st.warning("⚠️ **YouTube Account Not Connected**")
                 st.markdown(
@@ -1591,7 +1593,7 @@ def main() -> None:
                 st.markdown("""
             <div style="text-align:center;padding:3rem 0;border:1px dashed #27272a;border-radius:6px;margin-top:1rem;">
                 <p style="font-size:0.88rem;color:#71717a;margin:0;">
-                    Click 'Analyze My Channel' above to get started
+                    Enter a target niche (optional) and click the primary button above to get started
                 </p>
             </div>
             """, unsafe_allow_html=True)
