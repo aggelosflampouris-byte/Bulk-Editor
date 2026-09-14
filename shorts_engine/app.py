@@ -1553,11 +1553,11 @@ def main() -> None:
                     else:
                         st.info("No long-form videos found suitable for Short extraction in this batch.")
 
-            elif not scan_clicked:
+            elif not analyze_mine_clicked:
                 st.markdown("""
             <div style="text-align:center;padding:3rem 0;border:1px dashed #27272a;border-radius:6px;margin-top:1rem;">
                 <p style="font-size:0.88rem;color:#71717a;margin:0;">
-                    Enter a search query or channel URL above and click Search Niche to get started
+                    Click 'Analyze My Channel' above to get started
                 </p>
             </div>
             """, unsafe_allow_html=True)
