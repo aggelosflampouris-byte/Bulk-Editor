@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 _SCOPES: list[str] = [
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube.readonly",
+    "https://www.googleapis.com/auth/yt-analytics.readonly",
 ]
 
 _PKG_DIR = Path(__file__).parent.parent.resolve()
@@ -169,6 +170,10 @@ def is_authenticated() -> bool:
 
     try:
         creds = Credentials.from_authorized_user_file(str(token_path), _SCOPES)
+        # Check if the token has all the currently requested scopes.
+        if not creds.has_scopes(_SCOPES):
+            return False
+
         if creds.valid:
             return True
         if creds.expired and creds.refresh_token:
@@ -231,6 +236,139 @@ def get_channel_info(youtube_client) -> dict[str, Any]:
         "view_count": int(stats.get("viewCount", 0)),
         "thumbnail_url": thumb,
     }
+
+
+def get_analytics_client():
+    """Build and return an authenticated YouTube Analytics v2 API client."""
+    from google.oauth2.credentials import Credentials
+    from googleapiclient.discovery import build
+
+    token_path = _get_token_path()
+    if not token_path.is_file():
+        raise YouTubeAuthError("Not authenticated.")
+    
+    creds = Credentials.from_authorized_user_file(str(token_path), _SCOPES)
+    return build("youtubeAnalytics", "v2", credentials=creds)
+
+
+def fetch_channel_analytics(youtube_analytics_client, days: int = 30) -> dict[str, Any]:
+    """Fetch channel metrics for the last N days."""
+    from datetime import date, timedelta
+    
+    end_date = date.today()
+    start_date = end_date - timedelta(days=days)
+    
+    try:
+        response = youtube_analytics_client.reports().query(
+            ids="channel==MINE",
+            startDate=start_date.strftime("%Y-%m-%d"),
+            endDate=end_date.strftime("%Y-%m-%d"),
+            metrics="views,estimatedMinutesWatched,averageViewDuration,subscribersGained,likes,comments",
+        ).execute()
+        
+        headers = [col["name"] for col in response.get("columnHeaders", [])]
+        rows = response.get("rows", [])
+        
+        if not rows:
+            return {}
+            
+        data = dict(zip(headers, rows[0]))
+        return {
+            "views": int(data.get("views", 0)),
+            "estimatedMinutesWatched": int(data.get("estimatedMinutesWatched", 0)),
+            "averageViewDuration": int(data.get("averageViewDuration", 0)),
+            "subscribersGained": int(data.get("subscribersGained", 0)),
+            "likes": int(data.get("likes", 0)),
+            "comments": int(data.get("comments", 0)),
+        }
+    except Exception as exc:
+        raise RuntimeError(f"Failed to fetch analytics: {exc}") from exc
+
+
+def fetch_my_recent_videos(youtube_client, max_videos: int = 30):
+    """
+    Fetch the authenticated user's recent videos via the Data API, 
+    bypassing yt-dlp scraping entirely. Returns a list of VideoMeta objects.
+    """
+    import re
+    from services.channel_analyzer import VideoMeta
+
+    def parse_iso_duration(dur: str) -> int:
+        match = re.match(r'^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$', dur)
+        if not match:
+            return 0
+        h, m, s = match.groups()
+        return int(h or 0) * 3600 + int(m or 0) * 60 + int(s or 0)
+
+    try:
+        # 1. Get the channel's "uploads" playlist ID
+        channels_response = youtube_client.channels().list(
+            part="contentDetails",
+            mine=True
+        ).execute()
+        
+        items = channels_response.get("items", [])
+        if not items:
+            return []
+            
+        uploads_playlist_id = items[0]["contentDetails"]["relatedPlaylists"]["uploads"]
+        
+        # 2. Fetch video IDs from the uploads playlist
+        raw_items = []
+        next_page_token = None
+        while len(raw_items) < max_videos:
+            playlist_response = youtube_client.playlistItems().list(
+                part="contentDetails",
+                playlistId=uploads_playlist_id,
+                maxResults=min(50, max_videos - len(raw_items)),
+                pageToken=next_page_token
+            ).execute()
+            
+            video_ids = [item["contentDetails"]["videoId"] for item in playlist_response.get("items", [])]
+            if not video_ids:
+                break
+                
+            # 3. Fetch detailed statistics and snippet for those videos
+            video_response = youtube_client.videos().list(
+                part="snippet,statistics,contentDetails",
+                id=",".join(video_ids)
+            ).execute()
+            
+            for item in video_response.get("items", []):
+                raw_items.append(item)
+                
+            next_page_token = playlist_response.get("nextPageToken")
+            if not next_page_token:
+                break
+                
+        # 4. Map to VideoMeta
+        videos = []
+        for item in raw_items[:max_videos]:
+            vid = item.get("id", "")
+            snippet = item.get("snippet", {})
+            stats = item.get("statistics", {})
+            content = item.get("contentDetails", {})
+            
+            upload_date = snippet.get("publishedAt", "")[:10].replace("-", "")
+            duration_str = content.get("duration", "PT0S")
+            
+            meta = VideoMeta(
+                video_id=vid,
+                title=snippet.get("title", ""),
+                url=f"https://www.youtube.com/watch?v={vid}",
+                view_count=int(stats.get("viewCount", 0)),
+                duration_seconds=parse_iso_duration(duration_str),
+                upload_date=upload_date,
+                like_count=int(stats.get("likeCount", 0)),
+                comment_count=int(stats.get("commentCount", 0)),
+                description=snippet.get("description", "")
+            )
+            videos.append(meta)
+            
+        return videos
+    except Exception as exc:
+        raise RuntimeError(f"Failed to fetch recent videos via API: {exc}") from exc
+
 
 
 # ── Upload ─────────────────────────────────────────────────────────────────────

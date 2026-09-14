@@ -232,7 +232,7 @@ def _parse_video_meta(entry: dict[str, Any]) -> VideoMeta | None:
     )
 
 
-def _build_analysis_prompt(videos: list[VideoMeta], query: str) -> str:
+def _build_analysis_prompt(videos: list[VideoMeta], query: str, analytics_data: dict[str, Any] | None = None) -> str:
     """Build a structured Gemini prompt from the video metadata list."""
     video_lines: list[str] = []
     for i, v in enumerate(videos, 1):
@@ -244,12 +244,26 @@ def _build_analysis_prompt(videos: list[VideoMeta], query: str) -> str:
         video_lines.append(line)
 
     videos_block = "\n".join(video_lines)
+    
+    analytics_context = ""
+    if analytics_data:
+        analytics_context = (
+            "Here is the authenticated 30-day channel analytics data for this exact channel:\n"
+            f"- Total Views: {analytics_data.get('views', 0):,}\n"
+            f"- Watch Time (Minutes): {analytics_data.get('estimatedMinutesWatched', 0):,}\n"
+            f"- Average View Duration (Seconds): {analytics_data.get('averageViewDuration', 0):,}\n"
+            f"- Subscribers Gained: {analytics_data.get('subscribersGained', 0):,}\n"
+            f"- Total Likes: {analytics_data.get('likes', 0):,}\n"
+            f"- Total Comments: {analytics_data.get('comments', 0):,}\n\n"
+            "Use this deep analytics data to provide more precise recommendations on how to improve retention and engagement.\n"
+        )
 
     return f"""\
 You are a YouTube content strategy expert specialising in Greek-language content.
 
 Below is a list of the top recent videos for the search query/niche: "{query}"
 
+{analytics_context}
 VIDEOS (most recent or top ranked):
 {videos_block}
 
@@ -287,7 +301,7 @@ def find_viral_recent_videos(
         base    = log10(max(views, 1))
         recency = max(0, 1 - days_old / 21)   # linear decay: 1.0 (today) → 0.0 (21 days)
         engmt   = likes / max(views, 1)        # engagement ratio
-        score   = base * (1 + recency) * (1 + engmt * 10)
+        score   = base * (1.0 + recency) * (1.0 + engmt * 10.0)
 
     The recency multiplier ensures a video uploaded yesterday with 10k views scores
     higher than one uploaded 20 days ago with 15k views, reflecting the YouTube
@@ -407,6 +421,7 @@ def analyze_niche(
     videos: list[VideoMeta],
     query: str,
     gemini_api_key: str,
+    analytics_data: dict[str, Any] | None = None,
 ) -> NicheInsights:
     """
     Run Gemini analysis on the fetched video metadata to produce NicheInsights.
@@ -418,6 +433,7 @@ def analyze_niche(
         videos:          List of VideoMeta objects from fetch_youtube_videos().
         query:           Original search query or channel URL.
         gemini_api_key:  Google Gemini API key.
+        analytics_data:  Optional 30-day analytics data from YouTube Analytics API.
 
     Returns:
         A populated NicheInsights object.
@@ -454,7 +470,7 @@ def analyze_niche(
         from google.genai import types as genai_types
 
         client = genai.Client(api_key=gemini_api_key)
-        prompt = _build_analysis_prompt(videos, query)
+        prompt = _build_analysis_prompt(videos, query, analytics_data)
 
         config = genai_types.GenerateContentConfig(
             temperature=0.4,

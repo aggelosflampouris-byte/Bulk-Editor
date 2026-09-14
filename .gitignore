@@ -11,3 +11,5 @@ venv/
 .pytest_cache/
 .env
 *.env
+client_secrets.json
+yt_token.json
