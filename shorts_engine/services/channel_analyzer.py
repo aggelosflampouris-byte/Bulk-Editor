@@ -69,13 +69,12 @@ class VideoMeta:
     def is_short_candidate(self) -> bool:
         """
         A video is a good Short extraction candidate if:
-          - It is at least 5 minutes long (enough content to extract from)
-          - It is not already a Short itself (< 65 seconds)
+          - It is at least 65 seconds long (so it's not already a Short)
           - It has a meaningful title
         """
         return (
-            self.duration_seconds >= 300
-            and self.duration_seconds < 7200
+            self.duration_seconds >= 65
+            and self.duration_seconds < 14400
             and bool(self.title.strip())
         )
 
@@ -355,6 +354,27 @@ def find_viral_recent_videos(
 
     # Sort by score descending
     candidates.sort(key=lambda c: c.virality_score, reverse=True)
+
+    # Fallback: if no videos found in the last 3 weeks, score the most recent videos 
+    # regardless of age, purely based on views and engagement (recency = 0)
+    if not candidates:
+        for v in videos:
+            if not v.is_short_candidate:
+                continue
+            
+            base = math.log10(max(v.view_count, 1))
+            engmt = v.like_count / max(v.view_count, 1)
+            score = base * 1.0 * (1.0 + engmt * 10.0)
+            
+            candidates.append(
+                ViralRecentVideo(
+                    video=v,
+                    days_old=(now - datetime.strptime(v.upload_date, "%Y%m%d").replace(tzinfo=timezone.utc)).days if v.upload_date else 999,
+                    virality_score=round(score, 2),
+                    virality_label="",
+                )
+            )
+        candidates.sort(key=lambda c: c.virality_score, reverse=True)
 
     # Assign labels based on rank
     labelled: list[ViralRecentVideo] = []
