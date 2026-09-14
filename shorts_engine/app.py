@@ -1363,6 +1363,39 @@ def main() -> None:
             
             if yt_connected:
                 st.success("✅ **YouTube API Connected:** Pulling deep real-time analytics for your channel.")
+                
+                # Niche Selector & Auto-Picker
+                col_niche, col_btn = st.columns([4, 1])
+                with col_niche:
+                    target_niche = st.text_input("Target Niche / Topic (Optional)", placeholder="e.g. Greek Mythology, Financial Advice", key="target_niche_input")
+                with col_btn:
+                    st.write("") # spacing
+                    st.write("")
+                    auto_pick = st.button("✨ Auto-Pick", use_container_width=True)
+                
+                if auto_pick:
+                    if not settings.gemini_api_key:
+                        st.error("Add Gemini API key in sidebar first.")
+                    else:
+                        with st.spinner("Finding best niche..."):
+                            try:
+                                yt_client = authenticate()
+                                yt_analytics = get_analytics_client()
+                                channel_info = get_channel_info(yt_client)
+                                analytics = fetch_channel_analytics(yt_analytics, days=30)
+                                from google import genai
+                                client = genai.Client(api_key=settings.gemini_api_key)
+                                prompt = f"Analyze this channel's analytics and suggest ONE highly profitable, low-competition niche for YouTube Shorts. Analytics: {analytics}. Channel: {channel_info.get('title')}. Respond with ONLY the niche topic in 2-5 words. No markdown, no quotes."
+                                response = client.models.generate_content(
+                                    model="gemini-3.5-flash",
+                                    contents=prompt,
+                                )
+                                auto_niche = response.text.strip().replace('"', '')
+                                st.session_state["target_niche_input"] = auto_niche
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Auto-pick failed: {e}")
+
                 max_videos_mine = st.number_input("Max recent videos to analyze", min_value=5, max_value=100, value=30, step=5, key="channel_max_mine")
                 analyze_mine_clicked = st.button("🚀 Analyze My Channel", type="primary", use_container_width=True)
             else:
@@ -1402,7 +1435,8 @@ def main() -> None:
                                     st.session_state["channel_videos"],
                                     st.session_state["channel_url"],
                                     gemini_api_key=settings.gemini_api_key,
-                                    analytics_data=st.session_state.get("yt_analytics_30d")
+                                    analytics_data=st.session_state.get("yt_analytics_30d"),
+                                    target_niche=target_niche.strip() if target_niche else None
                                 )
                                 st.session_state["channel_insights"] = insights
                             except Exception as exc:
@@ -1561,6 +1595,59 @@ def main() -> None:
                 </p>
             </div>
             """, unsafe_allow_html=True)
+            
+            # Chatbot UI added below everything else inside `if insights_data` block, wait I will add it if insights_data exists
+            if st.session_state.get("channel_insights"):
+                st.markdown("---")
+                st.markdown("### 💬 Viral Video Researcher")
+                st.markdown("Chat with the AI about your analytics, niche strategy, or ask for script hooks.")
+                
+                if "chat_messages" not in st.session_state:
+                    st.session_state.chat_messages = []
+                
+                for msg in st.session_state.chat_messages:
+                    with st.chat_message(msg["role"]):
+                        st.markdown(msg["content"])
+                
+                if chat_prompt := st.chat_input("Ask for hook ideas, analysis, or trends..."):
+                    st.session_state.chat_messages.append({"role": "user", "content": chat_prompt})
+                    with st.chat_message("user"):
+                        st.markdown(chat_prompt)
+                        
+                    with st.chat_message("assistant"):
+                        if not settings.gemini_api_key:
+                            st.error("Please add a Gemini API key.")
+                        else:
+                            with st.spinner("Thinking..."):
+                                try:
+                                    from google import genai
+                                    client = genai.Client(api_key=settings.gemini_api_key)
+                                    ins = st.session_state["channel_insights"]
+                                    anal = st.session_state.get("yt_analytics_30d", {})
+                                    
+                                    sys_ctx = (
+                                        f"You are an expert YouTube Viral Video Researcher.\n"
+                                        f"Channel 30-day Analytics:\n{anal}\n\n"
+                                        f"Channel Insights:\nTarget Niche: {ins.query}\n"
+                                        f"Topics: {ins.topic_clusters}\nGaps: {ins.content_gaps}\n"
+                                        f"Recommendations: {ins.short_recommendations}\n"
+                                        f"Virality patterns: {ins.virality_patterns}\n"
+                                    )
+                                    
+                                    chat_history = "Chat History:\n"
+                                    for m in st.session_state.chat_messages[:-1]:
+                                        chat_history += f"{m['role'].capitalize()}: {m['content']}\n"
+                                        
+                                    full_prompt = sys_ctx + "\n" + chat_history + f"\nUser: {chat_prompt}\nAssistant:"
+                                    
+                                    response = client.models.generate_content(
+                                        model="gemini-3.5-flash",
+                                        contents=full_prompt,
+                                    )
+                                    st.markdown(response.text)
+                                    st.session_state.chat_messages.append({"role": "assistant", "content": response.text})
+                                except Exception as e:
+                                    st.error(f"Chat failed: {e}")
 
 
     # ═══════════════════════════════════════════════════════════════════════════

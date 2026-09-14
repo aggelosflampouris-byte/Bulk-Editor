@@ -231,7 +231,7 @@ def _parse_video_meta(entry: dict[str, Any]) -> VideoMeta | None:
     )
 
 
-def _build_analysis_prompt(videos: list[VideoMeta], query: str, analytics_data: dict[str, Any] | None = None) -> str:
+def _build_analysis_prompt(videos: list[VideoMeta], query: str, analytics_data: dict[str, Any] | None = None, target_niche: str | None = None) -> str:
     """Build a structured Gemini prompt from the video metadata list."""
     video_lines: list[str] = []
     for i, v in enumerate(videos, 1):
@@ -257,12 +257,22 @@ def _build_analysis_prompt(videos: list[VideoMeta], query: str, analytics_data: 
             "Use this deep analytics data to provide more precise recommendations on how to improve retention and engagement.\n"
         )
 
+    target_niche_context = ""
+    if target_niche:
+        target_niche_context = (
+            f"CRITICAL INSTRUCTION: The user has specified their target niche/topic as: '{target_niche}'. "
+            "You MUST tailor all your topic clusters, content gaps, virality patterns, and short recommendations "
+            "specifically to bridging their current channel audience/content towards this target niche, or generating "
+            "highly viral ideas strictly within this target niche.\n\n"
+        )
+
     return f"""\
 You are a YouTube content strategy expert specialising in Greek-language content.
 
-Below is a list of the top recent videos for the search query/niche: "{query}"
+Below is a list of the top recent videos for the search query/channel: "{query}"
 
 {analytics_context}
+{target_niche_context}
 VIDEOS (most recent or top ranked):
 {videos_block}
 
@@ -442,6 +452,7 @@ def analyze_niche(
     query: str,
     gemini_api_key: str,
     analytics_data: dict[str, Any] | None = None,
+    target_niche: str | None = None,
 ) -> NicheInsights:
     """
     Run Gemini analysis on the fetched video metadata to produce NicheInsights.
@@ -490,7 +501,7 @@ def analyze_niche(
         from google.genai import types as genai_types
 
         client = genai.Client(api_key=gemini_api_key)
-        prompt = _build_analysis_prompt(videos, query, analytics_data)
+        prompt = _build_analysis_prompt(videos, query, analytics_data, target_niche)
 
         config = genai_types.GenerateContentConfig(
             temperature=0.4,
