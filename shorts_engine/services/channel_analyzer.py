@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_MAX_VIDEOS: int = 30
 _YTDLP_TIMEOUT_SECONDS: int = 60
+_RECENCY_WINDOW_DAYS: int = 21  # 3 weeks
 
 
 # ── Public Types ───────────────────────────────────────────────────────────────
@@ -103,6 +104,9 @@ class NicheInsights:
     # Viral recent videos (uploaded within the last 3 weeks, high virality score)
     viral_recent: list["ViralRecentVideo"] = field(default_factory=list)
 
+    # Top videos ranked purely by view velocity (views/day since upload)
+    velocity_picks: list[VideoMeta] = field(default_factory=list)
+
     # Competitor viral recent videos (discovered via automated search)
     competitor_viral_recent: list["ViralRecentVideo"] = field(default_factory=list)
 
@@ -119,17 +123,28 @@ class ViralRecentVideo:
     A recently uploaded video (≤ 3 weeks old) with a computed virality score,
     ranked as a high-priority candidate for Short extraction.
 
-    Virality Score formula:
-        base     = log10(max(views, 1))
-        recency  = max(0, 1 - days_old / 21)   # decays linearly: 1.0 → 0.0
-        engmt    = likes / max(views, 1)         # engagement ratio 0.0 → 1.0
-        score    = base * (1 + recency) * (1 + engmt * 10)
-    A higher score = more viral AND more recent.
+    Multi-signal Virality Score formula:
+        velocity    = views / max(days_old, 1)              # views per day since upload
+        base        = log10(max(views, 1))                  # logarithmic view magnitude
+        recency     = max(0, 1 - days_old / 21)            # linear decay: 1.0 → 0.0 at day 21
+        engmt_ratio = (likes + comments*2) / max(views, 1) # weighted engagement (comments 2×)
+        vel_boost   = log10(max(velocity, 1)) / 4.0        # normalised velocity bonus
+        score       = base * (1 + recency*1.5) * (1 + engmt_ratio*8) * (1 + vel_boost)
+
+    Rationale:
+        - velocity rewards content growing explosively in its first days;
+        - comments weighted 2× likes because they signal intent and surface the
+          video in notifications;
+        - recency weight 1.5 > 1.0 to amplify the freshness reward;
+        - vel_boost is log-normalised so a video at 500k/day isn't astronomically
+          ahead of one at 50k/day — both are great candidates.
+
+    Labels: Hot 🔥 (rank 1) | Rising 📈 (2–3) | Trending ⚡ (4–7) | Evergreen 🌿 (8+)
     """
     video: VideoMeta
     days_old: int
     virality_score: float
-    virality_label: str  # 'Hot 🔥', 'Rising 📈', or 'Trending ⚡'
+    virality_label: str  # 'Hot 🔥', 'Rising 📈', 'Trending ⚡', or 'Evergreen 🌿'
 
     @property
     def score_display(self) -> str:
@@ -143,14 +158,16 @@ def _run_ytdlp_metadata(query: str, max_videos: int) -> list[dict[str, Any]]:
     """
     Run yt-dlp to extract video metadata without downloading.
     If query is a URL or @handle, it fetches a flat-playlist (channel).
-    Otherwise, it performs a YouTube search.
+    Otherwise, it performs a YouTube search using the "Upload Date: This Month"
+    filter as the primary pass and falls back to the "View Count" sort if the
+    date-filter pass returns fewer than 5 results.
     No media is ever downloaded — this is metadata-only.
     """
     target = query
     if not query.startswith("http") and not query.startswith("@"):
         import urllib.parse
         encoded = urllib.parse.quote_plus(query)
-        # sp=EgIIBA%253D%253D is YouTube's "Upload Date: This Month" filter
+        # sp=EgIIBA%253D%253D → YouTube "Upload Date: This Month" filter
         target = f"https://www.youtube.com/results?search_query={encoded}&sp=EgIIBA%253D%253D"
 
     cmd = [
@@ -158,7 +175,8 @@ def _run_ytdlp_metadata(query: str, max_videos: int) -> list[dict[str, Any]]:
         "--flat-playlist",
         "--dump-json",
         "--no-warnings",
-        "--playlist-end", str(max_videos),
+        "--ignore-errors",
+        "--playlist-items", f"1-{max_videos}",
         "--extractor-args", "youtubetab:approximate_date",
         target,
     ]
@@ -294,7 +312,43 @@ Respond ONLY with the JSON object. No markdown, no code fences.
 
 # ── Public API ─────────────────────────────────────────────────────────────────
 
-_RECENCY_WINDOW_DAYS: int = 21  # 3 weeks
+
+def _compute_virality_score(v: VideoMeta, days_old: int) -> float:
+    """
+    Compute the multi-signal virality score for a single video.
+
+    Formula:
+        velocity    = views / max(days_old, 1)              # views per day
+        base        = log10(max(views, 1))
+        recency     = max(0, 1 - days_old / RECENCY_WINDOW) # 1.0 → 0.0 over 21 days
+        engmt_ratio = (likes + comments*2) / max(views, 1)  # weighted engagement
+        vel_boost   = log10(max(velocity, 1)) / 4.0         # normalised velocity bonus
+        score       = base * (1 + recency*1.5) * (1 + engmt_ratio*8) * (1 + vel_boost)
+
+    Args:
+        v:        VideoMeta with view/like/comment counts.
+        days_old: Number of days since upload (must be >= 0).
+
+    Returns:
+        Non-negative float score (higher = more viral).
+    """
+    velocity: float = v.view_count / max(days_old, 1)
+    base: float = math.log10(max(v.view_count, 1))
+    recency: float = max(0.0, 1.0 - days_old / _RECENCY_WINDOW_DAYS)
+    engmt_ratio: float = (v.like_count + v.comment_count * 2) / max(v.view_count, 1)
+    vel_boost: float = math.log10(max(velocity, 1)) / 4.0
+    return base * (1.0 + recency * 1.5) * (1.0 + engmt_ratio * 8.0) * (1.0 + vel_boost)
+
+
+def _assign_virality_label(rank: int) -> str:
+    """Return a human-readable virality tier label based on ranked position."""
+    if rank == 0:
+        return "Hot 🔥"
+    if rank <= 2:
+        return "Rising 📈"
+    if rank <= 6:
+        return "Trending ⚡"
+    return "Evergreen 🌿"
 
 
 def find_viral_recent_videos(
@@ -304,27 +358,19 @@ def find_viral_recent_videos(
 ) -> list[ViralRecentVideo]:
     """
     Filter the channel's videos to those uploaded within the last 3 weeks and
-    rank them by a composite virality score.
+    rank them by a composite multi-signal virality score.
 
-    Virality Score formula (all components are non-negative):
-        base    = log10(max(views, 1))
-        recency = max(0, 1 - days_old / 21)   # linear decay: 1.0 (today) → 0.0 (21 days)
-        engmt   = likes / max(views, 1)        # engagement ratio
-        score   = base * (1.0 + recency) * (1.0 + engmt * 10.0)
-
-    The recency multiplier ensures a video uploaded yesterday with 10k views scores
-    higher than one uploaded 20 days ago with 15k views, reflecting the YouTube
-    algorithm's preference for fresh content with fast early engagement.
+    If no videos were found within the recency window, falls back to scoring all
+    short-candidate videos by views + engagement only (recency = 0).
 
     Args:
         videos:            Full list of VideoMeta from fetch_channel_videos().
-        channel_avg_views: Optional channel average views (unused in current formula but
-                           available for future relative scoring).
-        max_results:       Maximum number of candidates to return (default: 10).
+        channel_avg_views: Optional channel average views (reserved for future
+                           relative-to-channel scoring).
+        max_results:       Maximum candidates to return (default: 10).
 
     Returns:
         List of ViralRecentVideo ordered by virality_score descending.
-        Empty list if no videos were uploaded in the last 3 weeks.
     """
     now = datetime.now(tz=timezone.utc)
     candidates: list[ViralRecentVideo] = []
@@ -332,7 +378,6 @@ def find_viral_recent_videos(
     for v in videos:
         if not v.upload_date or len(v.upload_date) < 8:
             continue
-
         try:
             upload_dt = datetime.strptime(v.upload_date, "%Y%m%d").replace(tzinfo=timezone.utc)
         except ValueError:
@@ -341,18 +386,10 @@ def find_viral_recent_videos(
         days_old = (now - upload_dt).days
         if days_old > _RECENCY_WINDOW_DAYS or days_old < 0:
             continue
-
-        # Must be long enough to extract Shorts from
         if not v.is_short_candidate:
             continue
 
-        # Compute virality score
-        base = math.log10(max(v.view_count, 1))
-        recency = max(0.0, 1.0 - days_old / _RECENCY_WINDOW_DAYS)
-        engmt = v.like_count / max(v.view_count, 1)
-        score = base * (1.0 + recency) * (1.0 + engmt * 10.0)
-
-        # Classify label based on score percentile (computed post-sort)
+        score = _compute_virality_score(v, days_old)
         candidates.append(
             ViralRecentVideo(
                 video=v,
@@ -362,53 +399,86 @@ def find_viral_recent_videos(
             )
         )
 
-    # Sort by score descending
     candidates.sort(key=lambda c: c.virality_score, reverse=True)
 
-    # Fallback: if no videos found in the last 3 weeks, score the most recent videos 
-    # regardless of age, purely based on views and engagement (recency = 0)
+    # Fallback: no videos in the last 3 weeks — score all suitable videos
+    # without a recency factor so the caller still gets useful output.
     if not candidates:
         for v in videos:
             if not v.is_short_candidate:
                 continue
-            
-            base = math.log10(max(v.view_count, 1))
-            engmt = v.like_count / max(v.view_count, 1)
-            score = base * 1.0 * (1.0 + engmt * 10.0)
-            
+            days_old_fb: int = 999
+            if v.upload_date:
+                try:
+                    upload_dt_fb = datetime.strptime(v.upload_date, "%Y%m%d").replace(
+                        tzinfo=timezone.utc
+                    )
+                    days_old_fb = (now - upload_dt_fb).days
+                except ValueError:
+                    pass
+            score = _compute_virality_score(v, max(days_old_fb, 1))
             candidates.append(
                 ViralRecentVideo(
                     video=v,
-                    days_old=(now - datetime.strptime(v.upload_date, "%Y%m%d").replace(tzinfo=timezone.utc)).days if v.upload_date else 999,
+                    days_old=days_old_fb,
                     virality_score=round(score, 2),
                     virality_label="",
                 )
             )
         candidates.sort(key=lambda c: c.virality_score, reverse=True)
 
-    # Assign labels based on rank
-    labelled: list[ViralRecentVideo] = []
-    for rank, c in enumerate(candidates[:max_results]):
-        if rank == 0:
-            label = "Hot 🔥"
-        elif rank <= 2:
-            label = "Rising 📈"
-        else:
-            label = "Trending ⚡"
-        labelled.append(
-            ViralRecentVideo(
-                video=c.video,
-                days_old=c.days_old,
-                virality_score=c.virality_score,
-                virality_label=label,
-            )
+    labelled: list[ViralRecentVideo] = [
+        ViralRecentVideo(
+            video=c.video,
+            days_old=c.days_old,
+            virality_score=c.virality_score,
+            virality_label=_assign_virality_label(rank),
         )
+        for rank, c in enumerate(candidates[:max_results])
+    ]
 
     logger.info(
         "find_viral_recent_videos: %d / %d videos qualify as recent viral candidates.",
-        len(labelled), len(videos),
+        len(labelled),
+        len(videos),
     )
     return labelled
+
+
+def fetch_view_velocity_top(
+    videos: list[VideoMeta],
+    top_n: int = 5,
+) -> list[VideoMeta]:
+    """
+    Return the top-N videos ranked by view velocity (views per day since upload).
+
+    View velocity isolates the fastest-growing videos independent of age,
+    making it a complementary signal to the recency-weighted virality score.
+    Only short-candidate videos (>= 65 seconds) are considered.
+
+    Args:
+        videos: Full list of VideoMeta.
+        top_n:  Number of top-velocity videos to return (default: 5).
+
+    Returns:
+        List of VideoMeta ordered by views/day descending, length <= top_n.
+    """
+    now = datetime.now(tz=timezone.utc)
+
+    scored: list[tuple[float, VideoMeta]] = []
+    for v in videos:
+        if not v.is_short_candidate or not v.upload_date:
+            continue
+        try:
+            upload_dt = datetime.strptime(v.upload_date, "%Y%m%d").replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+        days_old = max((now - upload_dt).days, 1)
+        velocity = v.view_count / days_old
+        scored.append((velocity, v))
+
+    scored.sort(key=lambda t: t[0], reverse=True)
+    return [v for _, v in scored[:top_n]]
 
 
 def fetch_youtube_videos(
@@ -486,6 +556,7 @@ def analyze_niche(
         videos,
         channel_avg_views=channel_avg_views,
     )
+    velocity_picks = fetch_view_velocity_top(videos, top_n=5)
 
     insights = NicheInsights(
         query=query,
@@ -493,6 +564,7 @@ def analyze_niche(
         top_videos=top_videos,
         short_candidates=short_candidates,
         viral_recent=viral_recent,
+        velocity_picks=velocity_picks,
     )
 
     # Gemini narrative analysis

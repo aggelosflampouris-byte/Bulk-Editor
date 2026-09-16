@@ -12,13 +12,10 @@ from pathlib import Path
 
 import cv2
 from moviepy import (
-    AudioFileClip,
     CompositeAudioClip,
     CompositeVideoClip,
-    ImageClip,
     VideoFileClip,
 )
-from moviepy.audio.fx import AudioFadeIn, AudioFadeOut, MultiplyVolume
 from moviepy.video.fx import FadeIn, FadeOut, Resize
 
 logger = logging.getLogger(__name__)

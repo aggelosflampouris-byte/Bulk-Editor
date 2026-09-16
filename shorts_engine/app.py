@@ -1884,3 +1884,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+        from shorts_engine.ui.niche_explorer_tab import render_niche_explorer_tab
+        render_niche_explorer_tab(settings)

@@ -189,6 +189,179 @@ def _apply_crop_stage(
 
 # ── Single-Video Pipeline ──────────────────────────────────────────────────────
 
+
+def build_short_from_clip(
+    video_path: Path,
+    stem: str,
+    segments: list[TranscriptionSegment],
+    transcript_text: str,
+    seo,
+    broll_query: str | None,
+    settings: Settings,
+    tmp_dir: Path,
+    run_output_dir: Path,
+    _report,
+    warnings: list[str],
+    custom_broll_path: Path | None = None,
+    clip_start_offset: float = 0.0,
+):
+    """Core assembly logic used by both local files and downloaded URL clips."""
+    # Write ASS subtitle file
+    ass_path: Path = tmp_dir / f"{stem}.ass"
+    if segments:
+        write_ass_file(
+            segments,
+            ass_path,
+            primary_keyword=seo.primary_keyword if seo else None,
+        )
+    else:
+        warnings.append(f"No transcript segments provided — subtitles skipped.")
+        ass_path = None
+
+    # B-Roll Download
+    broll_path: Path | None = None
+    if custom_broll_path:
+        _report("Using custom B-roll")
+        broll_path = custom_broll_path
+    elif broll_query and settings.pexels_api_key:
+        _report(f"Searching for B-roll: '{broll_query}'...")
+        broll_clip = search_broll(broll_query, settings.pexels_api_key)
+        if broll_clip is None:
+            msg = f"No suitable B-roll found for '{broll_query}' — skipping."
+            logger.warning(msg)
+            warnings.append(msg)
+        else:
+            _report("Downloading B-roll clip...")
+            broll_dest = tmp_dir / f"{stem}_broll.mp4"
+            try:
+                broll_path = download_clip(broll_clip, broll_dest)
+            except RuntimeError as exc:
+                msg = f"B-roll download failed: {exc} — skipping overlay."
+                logger.warning(msg)
+                warnings.append(msg)
+                broll_path = None
+
+    # Crop to 9:16 (active speaker tracking)
+    cropped_path: Path = tmp_dir / f"{stem}_cropped.mp4"
+    try:
+        probe_resolution(video_path)
+    except Exception as exc:
+        raise RuntimeError(f"Input video invalid or missing stream: {exc}")
+
+    has_speaker = _apply_crop_stage(video_path, settings, cropped_path, _report)
+
+    # B-Roll Overlay & Dynamic Zoom
+    current_path = cropped_path
+    broll_to_apply = broll_path
+    if has_speaker:
+        logger.info("Speaker recognized — suppressing B-roll overlay.")
+        warnings.append("Speaker recognized on screen — B-roll overlay suppressed to keep speaker in center at all times.")
+        broll_to_apply = None
+
+    if segments or broll_to_apply is not None:
+        _report("Applying timeline effects (Dynamic Zoom / B-Roll)...")
+        main_duration = probe_duration(cropped_path)
+        actual_broll_dur = min(
+            settings.broll_overlay_duration,
+            max(1.0, main_duration - 1.0),
+        )
+        safe_start = min(
+            settings.broll_start_offset,
+            max(0.0, main_duration - actual_broll_dur),
+        )
+        overlaid_path: Path = tmp_dir / f"{stem}_overlaid.mp4"
+        compose_timeline(
+            main_video_path=cropped_path,
+            output_path=overlaid_path,
+            broll_video_path=broll_to_apply,
+            broll_start=safe_start,
+            broll_duration=actual_broll_dur,
+            target_width=settings.target_width,
+            target_height=settings.target_height,
+            segments=segments,
+            clip_start_offset=clip_start_offset,
+            ken_burns=settings.broll_ken_burns,
+            split_screen=settings.broll_split_screen,
+        )
+        current_path = overlaid_path
+
+    # Subtitle Burn-in
+    if ass_path is not None and ass_path.is_file():
+        _report("Burning subtitles...")
+        burned_path: Path = tmp_dir / f"{stem}_burned.mp4"
+        burn_subtitles(current_path, ass_path, burned_path)
+        current_path = burned_path
+    else:
+        warnings.append("Subtitle burn skipped (no .ass file).")
+
+    # VFX / Colour Grading
+    if settings.enable_vfx:
+        _report("Analysing scene for VFX / colour grading...")
+        try:
+            scene = analyse_scene_objects(
+                current_path,
+                model_path=settings.vfx_yolo_model,
+            )
+            preset = choose_vfx_preset(transcript_text, scene)
+            _report(f"Applying VFX preset: {preset.name}...")
+            vfx_path: Path = tmp_dir / f"{stem}_vfx.mp4"
+            apply_vfx(current_path, vfx_path, preset)
+            current_path = vfx_path
+            logger.info("VFX stage complete: preset=%s", preset.name)
+        except Exception as exc:
+            msg = f"VFX stage skipped: {exc}"
+            logger.warning(msg)
+            warnings.append(msg)
+
+    # Background Music
+    bg_music_path = settings.resolve_bg_music_path()
+    if bg_music_path is not None:
+        _report("Mixing background music...")
+        bgm_path: Path = tmp_dir / f"{stem}_bgm.mp4"
+        mix_background_music(
+            video_path=current_path,
+            music_path=bg_music_path,
+            output_path=bgm_path,
+            volume=settings.bg_music_volume,
+            ducking=settings.bg_music_ducking,
+        )
+        current_path = bgm_path
+
+    # Outro Concatenation
+    if settings.outro_path is not None:
+        _report("Concatenating outro...")
+        final_tmp: Path = tmp_dir / f"{stem}_with_outro.mp4"
+        concatenate_with_outro(
+            main_path=current_path,
+            outro_path=settings.outro_path,
+            output_path=final_tmp,
+            target_width=settings.target_width,
+            target_height=settings.target_height,
+            transition=settings.transition_type,
+            transition_duration=settings.transition_duration,
+        )
+        current_path = final_tmp
+    else:
+        warnings.append("No outro provided — concatenation step skipped.")
+
+    # Write Final Output
+    _report("Writing output files...")
+    run_output_dir.mkdir(parents=True, exist_ok=True)
+
+    final_output = run_output_dir / f"{stem}_short.mp4"
+    
+    shutil.copy2(str(current_path), str(final_output))
+
+    if seo:
+        seo_json_path = run_output_dir / f"seo_{stem}.json"
+        seo_json_path.write_text(
+            json.dumps(seo_to_dict(seo), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    return final_output
+
+
 def process_single(
     video_path: Path,
     settings: Settings,
@@ -198,35 +371,6 @@ def process_single(
     item_index: int = 0,
     total_items: int = 1,
 ) -> ProcessingResult:
-    """
-    Run the complete processing pipeline for a single input video.
-
-    Intermediate files are written to *tmp_dir* (a temporary scratch space).
-    The final output video and SEO JSON are written to *run_output_dir*.
-
-    Stage order:
-      1. Transcribe (faster-whisper)
-      2. Search B-roll (Pexels) — skipped if key absent/quota exceeded
-      3. Download B-roll clip — skipped if search returned None
-      4. Crop to 9:16
-      5. Overlay B-roll — skipped if no clip downloaded
-      6. Burn ASS subtitles
-      7. Concatenate outro — skipped if outro_path is None
-      8. Generate SEO metadata (Gemini)
-      9. Write output files
-
-    Args:
-        video_path:      Absolute path to the source video.
-        settings:        Validated Settings instance.
-        tmp_dir:         Scratch directory for intermediate files.
-        run_output_dir:  Final output directory for this batch run.
-        progress_cb:     Optional callback called at each stage.
-        item_index:      0-based index of this item in the batch (for callback).
-        total_items:     Total items in the batch (for callback).
-
-    Returns:
-        A ProcessingResult summarising the outcome.
-    """
     result = ProcessingResult(input_file=video_path)
 
     def _report(stage: str) -> None:
@@ -238,13 +382,12 @@ def process_single(
     warnings: list[str] = []
 
     try:
-        # ── Stage 1: Transcription ────────────────────────────────────────────
         _report(f"Transcribing Greek speech (faster-whisper {settings.whisper_model_size})...")
 
         def _item_transcribe_cb(pct: float, msg: str) -> None:
             _report(msg)
 
-        segments: list[TranscriptionSegment] = transcribe(
+        segments = transcribe(
             video_path,
             model_size=settings.whisper_model_size,
             device=settings.whisper_device,
@@ -255,19 +398,12 @@ def process_single(
             source_title=stem,
         )
         transcript_text: str = full_transcript_text(segments)
-        logger.info("Transcript (%d chars): %s...", len(transcript_text), transcript_text[:80])
 
-
-        # ── Stage 1c: Gemini transcript correction ────────────────────────────
-        # Fix Whisper transcription errors in the Greek text while keeping all
-        # word-level timing intact (correction replaces text only, not timing).
         if settings.gemini_api_key:
             _report("Correcting transcript with Gemini...")
             segments = correct_transcript_greek(segments, settings.gemini_api_key)
             transcript_text = full_transcript_text(segments)
-            logger.info("Corrected transcript: %s...", transcript_text[:80])
 
-        # ── Stage 1d: SEO Generation (moved early for subtitle keyword injection) ──
         _report("Generating SEO metadata...")
         seo = generate_seo(
             transcript_text,
@@ -275,172 +411,27 @@ def process_single(
             source_title=video_path.stem,
             brand_voice=settings.brand_voice,
         )
-
-        # Write ASS subtitle file to scratch dir
-        ass_path: Path = tmp_dir / f"{stem}.ass"
-        write_ass_file(
-            segments,
-            ass_path,
-            primary_keyword=seo.primary_keyword if seo else None,
-        )
-
-        # ── Stage 2: B-Roll Search ────────────────────────────────────────────
-        broll_clip: BRollClip | None = None
+        
+        query = None
         if settings.pexels_api_key:
-            _report("Generating B-roll search query...")
-
-            # Prefer a Gemini-generated query (semantically aware, English);
-            # fall back to the stopword-based extractor when Gemini is absent.
-            query: str = (
+            query = (
                 generate_broll_query(transcript_text, settings.gemini_api_key)
                 or extract_broll_query(transcript_text)
             )
             result.broll_query = query
-            logger.info("B-roll search query: '%s'", query)
 
-            _report(f"Searching for B-roll: '{query}'...")
-            broll_clip = search_broll(query, settings.pexels_api_key)
-            if broll_clip is None:
-                msg = f"No suitable B-roll found for query '{query}' — skipping overlay."
-                logger.warning(msg)
-                warnings.append(msg)
-        else:
-            msg = "Pexels API key not provided — B-roll step skipped."
-            logger.warning(msg)
-            warnings.append(msg)
-
-        # ── Stage 3: B-Roll Download ──────────────────────────────────────────
-        broll_path: Path | None = None
-        if broll_clip is not None:
-            _report("Downloading B-roll clip...")
-            broll_dest = tmp_dir / f"{stem}_broll.mp4"
-            try:
-                broll_path = download_clip(broll_clip, broll_dest)
-            except RuntimeError as exc:
-                msg = f"B-roll download failed: {exc} — skipping overlay."
-                logger.warning(msg)
-                warnings.append(msg)
-                broll_path = None
-
-        # ── Stage 4: Crop to 9:16 (active speaker tracking) ───────────────────
-        cropped_path: Path = tmp_dir / f"{stem}_cropped.mp4"
-
-        # Validate the input stream before spending time cropping
-        try:
-            probe_resolution(video_path)
-        except Exception as exc:
-            msg = f"Input video is invalid or missing video stream: {exc}"
-            logger.error("pipeline aborting video: %s", msg)
-            return ProcessingResult(input_file=video_path, clip_index=1, success=False, error=msg)
-
-        has_speaker = _apply_crop_stage(video_path, settings, cropped_path, _report)
-
-        # ── Stage 5: B-Roll Overlay & Dynamic Zoom ────────────────────────────
-        current_path = cropped_path
-        broll_to_apply = broll_path
-        if has_speaker:
-            logger.info("Speaker recognized — suppressing B-roll overlay.")
-            warnings.append("Speaker recognized on screen — B-roll overlay suppressed to keep speaker in center at all times.")
-            broll_to_apply = None
-
-        if segments or broll_to_apply is not None:
-            _report("Applying timeline effects (Dynamic Zoom / B-Roll)...")
-            main_duration = probe_duration(cropped_path)
-            actual_broll_dur = min(
-                settings.broll_overlay_duration,
-                max(1.0, main_duration - 1.0),
-            )
-            safe_start = min(
-                settings.broll_start_offset,
-                max(0.0, main_duration - actual_broll_dur),
-            )
-            overlaid_path: Path = tmp_dir / f"{stem}_overlaid.mp4"
-            compose_timeline(
-                main_video_path=cropped_path,
-                output_path=overlaid_path,
-                broll_video_path=broll_to_apply,
-                broll_start=safe_start,
-                broll_duration=actual_broll_dur,
-                target_width=settings.target_width,
-                target_height=settings.target_height,
-                segments=segments,
-                clip_start_offset=0.0,
-                ken_burns=settings.broll_ken_burns,
-                split_screen=settings.broll_split_screen,
-            )
-            current_path = overlaid_path
-
-        # ── Stage 6: Subtitle Burn-in ─────────────────────────────────────────
-        _report("Burning subtitles...")
-        burned_path: Path = tmp_dir / f"{stem}_burned.mp4"
-        burn_subtitles(current_path, ass_path, burned_path)
-        current_path = burned_path
-
-        # ── Stage 6c: VFX / Colour Grading ────────────────────────────────
-        if settings.enable_vfx:
-            _report("Analysing scene for VFX / colour grading...")
-            try:
-                scene: SceneAnalysis = analyse_scene_objects(
-                    current_path,
-                    model_path=settings.vfx_yolo_model,
-                )
-                preset: VfxPreset = choose_vfx_preset(transcript_text, scene)
-                _report(f"Applying VFX preset: {preset.name}...")
-                vfx_path: Path = tmp_dir / f"{stem}_vfx.mp4"
-                apply_vfx(current_path, vfx_path, preset)
-                current_path = vfx_path
-                logger.info("VFX stage complete: preset=%s", preset.name)
-            except Exception as exc:
-                msg = f"VFX stage skipped: {exc}"
-                logger.warning(msg)
-                warnings.append(msg)
-
-        # ── Stage 6d: Background Music ────────────────────────────────────────
-        bg_music_path = settings.resolve_bg_music_path()
-        if bg_music_path is not None:
-            _report("Mixing background music...")
-            bgm_path: Path = tmp_dir / f"{stem}_bgm.mp4"
-            mix_background_music(
-                video_path=current_path,
-                music_path=bg_music_path,
-                output_path=bgm_path,
-                volume=settings.bg_music_volume,
-                ducking=settings.bg_music_ducking,
-            )
-            current_path = bgm_path
-
-        # ── Stage 7: Outro Concatenation ──────────────────────────────────────
-        if settings.outro_path is not None:
-            _report("Concatenating outro...")
-            final_tmp: Path = tmp_dir / f"{stem}_with_outro.mp4"
-            concatenate_with_outro(
-                main_path=current_path,
-                outro_path=settings.outro_path,
-                output_path=final_tmp,
-                target_width=settings.target_width,
-                target_height=settings.target_height,
-                transition=settings.transition_type,
-                transition_duration=settings.transition_duration,
-            )
-            current_path = final_tmp
-        else:
-            warnings.append("No outro provided — concatenation step skipped.")
-
-
-        # ── Stage 9: Write Final Output ───────────────────────────────────────
-        _report("Writing output files...")
-        run_output_dir.mkdir(parents=True, exist_ok=True)
-
-        final_output = run_output_dir / f"{stem}_short.mp4"
-        seo_json_path = run_output_dir / f"seo_{stem}.json"
-
-        # Move final video from scratch to output dir
-        shutil.copy2(str(current_path), str(final_output))
-
-        # Write SEO JSON alongside the video
-        seo_json_path.write_text(
-            json.dumps(seo_to_dict(seo), ensure_ascii=False, indent=2),
-            encoding="utf-8",
+        final_output = build_short_from_clip(
+            video_path=video_path,
+            stem=stem,
+            segments=segments,
+            transcript_text=transcript_text,
+            seo=seo,
+            broll_query=query,
+            settings=settings,
+            tmp_dir=tmp_dir,
+            run_output_dir=run_output_dir,
+            _report=_report,
+            warnings=warnings,
         )
 
         result.output_file = final_output
@@ -448,7 +439,6 @@ def process_single(
         result.success = True
         result.warnings = warnings
         
-        # Log successful project history
         try:
             log_project_history(result, run_output_dir)
         except Exception as e:
@@ -675,30 +665,8 @@ def process_url_clip(
     item_index: int = 0,
     total_items: int = 1,
     stem_prefix: str | None = None,
+    custom_broll_path: str | Path | None = None,
 ) -> ProcessingResult:
-    """
-    Run the full assembly pipeline for a single AI-selected clip.
-
-    The source video is already downloaded and transcribed; this function
-    slices the specific [start, end] window, re-bases subtitles, and runs
-    the existing crop → B-roll → subtitle → outro chain.
-
-    Args:
-        clip:          The AI-selected clip (start/end times, SEO, B-roll query).
-        source_path:   Path to the downloaded source video.
-        all_segments:  Full transcription of the source (used for subtitle slicing).
-        settings:      Validated Settings instance.
-        tmp_dir:       Per-clip scratch directory for intermediate files.
-        run_output_dir: Final output directory for this batch run.
-        progress_cb:   Optional progress callback.
-        item_index:    0-based clip index (for callback display).
-        total_items:   Total clips being processed (for callback display).
-        stem_prefix:   Optional prefix for output filename.
-
-    Returns:
-        A ProcessingResult summarising the outcome.
-    """
-    # Use a deterministic stem so files don't collide across clips
     if stem_prefix:
         stem = f"{stem_prefix}_clip_{clip.index:02d}"
     else:
@@ -713,7 +681,6 @@ def process_url_clip(
             progress_cb(item_index, total_items, label)
 
     try:
-        # ── Stage 1: Slice raw clip from source ────────────────────────────────
         _report(f"Slicing [{clip.start_display} → {clip.end_display}]...")
         raw_clip_path = tmp_dir / f"{stem}_raw.mp4"
         slice_video(
@@ -723,172 +690,30 @@ def process_url_clip(
             output_path=raw_clip_path,
         )
 
-        # Validation Check: Ensure extraction produced a valid video stream
         try:
             probe_resolution(raw_clip_path)
         except Exception as exc:
             msg = f"Extracted clip is invalid or missing video stream: {exc}"
             logger.error("Batch pipeline aborting clip %d: %s", clip.index, msg)
-            return ProcessingResult(
-                input_file=source_path,
-                clip_index=clip.index,
-                success=False,
-                error=msg
-            )
+            return ProcessingResult(input_file=source_path, clip_index=clip.index, success=False, error=msg)
 
-        # ── Stage 2: Build re-based subtitle file ──────────────────────────────
-        _report("Building subtitles...")
         clip_segments = slice_segments(all_segments, clip.start_time, clip.end_time)
-        ass_path = tmp_dir / f"{stem}.ass"
-        if clip_segments:
-            write_ass_file(
-                clip_segments,
-                ass_path,
-                primary_keyword=clip.seo.primary_keyword if clip.seo else None,
-            )
-        else:
-            warnings.append(f"Clip {clip.index}: no transcript segments in window — subtitles skipped.")
-            ass_path = None  # type: ignore[assignment]
-
-        # ── Stage 3: B-Roll Search (use per-clip query from AI) ────────────────
-        broll_clip: BRollClip | None = None
-        if settings.pexels_api_key:
-            _report(f"Searching B-roll: '{clip.broll_query}'...")
-            result.broll_query = clip.broll_query
-            broll_clip = search_broll(clip.broll_query, settings.pexels_api_key)
-            if broll_clip is None:
-                msg = f"Clip {clip.index}: no B-roll found for '{clip.broll_query}' — skipping overlay."
-                logger.warning(msg)
-                warnings.append(msg)
-        else:
-            warnings.append(f"Clip {clip.index}: Pexels key absent — B-roll skipped.")
-
-        # ── Stage 4: B-Roll Download ───────────────────────────────────────────
-        broll_path: Path | None = None
-        if broll_clip is not None:
-            _report("Downloading B-roll...")
-            broll_dest = tmp_dir / f"{stem}_broll.mp4"
-            try:
-                broll_path = download_clip(broll_clip, broll_dest)
-            except RuntimeError as exc:
-                msg = f"Clip {clip.index}: B-roll download failed: {exc}"
-                logger.warning(msg)
-                warnings.append(msg)
-
-        # ── Stage 4: Crop to 9:16 (active speaker tracking) ───────────────────
-        cropped_path = tmp_dir / f"{stem}_cropped.mp4"
-        has_speaker = _apply_crop_stage(raw_clip_path, settings, cropped_path, _report)
-
-        # ── Stage 6: B-Roll Overlay & Dynamic Zoom ─────────────────────────────
-        current_path = cropped_path
-        broll_to_apply = broll_path
-        if has_speaker:
-            logger.info("Speaker recognized on screen for clip %d — suppressing B-roll overlay.", clip.index)
-            warnings.append(f"Clip {clip.index}: speaker recognized on screen — B-roll overlay suppressed to keep speaker in center at all times.")
-            broll_to_apply = None
-
-        if all_segments or broll_to_apply is not None:
-            _report("Applying timeline effects (Dynamic Zoom / B-Roll)...")
-            main_dur = probe_duration(cropped_path)
-            
-            actual_broll_dur = min(
-                settings.broll_overlay_duration,
-                max(1.0, main_dur - 1.0),
-            )
-            safe_start = min(
-                settings.broll_start_offset,
-                max(0.0, main_dur - actual_broll_dur),
-            )
-            overlaid_path = tmp_dir / f"{stem}_overlaid.mp4"
-            compose_timeline(
-                main_video_path=cropped_path,
-                output_path=overlaid_path,
-                broll_video_path=broll_to_apply,
-                broll_start=safe_start,
-                broll_duration=actual_broll_dur,
-                target_width=settings.target_width,
-                target_height=settings.target_height,
-                segments=clip_segments,
-                clip_start_offset=clip.start_time,
-                ken_burns=settings.broll_ken_burns,
-                split_screen=settings.broll_split_screen,
-            )
-            current_path = overlaid_path
-
-        # ── Stage 7: Subtitle Burn-in ──────────────────────────────────────────
-        if ass_path is not None and ass_path.is_file():
-            _report("Burning subtitles...")
-            burned_path = tmp_dir / f"{stem}_burned.mp4"
-            burn_subtitles(current_path, ass_path, burned_path)
-            current_path = burned_path
-        else:
-            warnings.append(f"Clip {clip.index}: subtitle burn skipped (no .ass file).")
-
-        # ── Stage 7b: VFX / Colour Grading ────────────────────────────────────
-        if settings.enable_vfx:
-            clip_transcript = " ".join(s.text for s in clip_segments) if clip_segments else ""
-            _report("Analysing scene for VFX / colour grading...")
-            try:
-                scene: SceneAnalysis = analyse_scene_objects(
-                    current_path,
-                    model_path=settings.vfx_yolo_model,
-                )
-                preset: VfxPreset = choose_vfx_preset(clip_transcript, scene)
-                _report(f"Applying VFX preset: {preset.name}...")
-                vfx_path = tmp_dir / f"{stem}_vfx.mp4"
-                apply_vfx(current_path, vfx_path, preset)
-                current_path = vfx_path
-                logger.info(
-                    "VFX stage complete for clip %d: preset=%s", clip.index, preset.name
-                )
-            except Exception as exc:
-                msg = f"Clip {clip.index}: VFX stage skipped: {exc}"
-                logger.warning(msg)
-                warnings.append(msg)
-
-        # ── Stage 7c: Background Music ─────────────────────────────────────────
-        bg_music_path = settings.resolve_bg_music_path()
-        if bg_music_path is not None:
-            _report("Mixing background music...")
-            bgm_path = tmp_dir / f"{stem}_bgm.mp4"
-            mix_background_music(
-                video_path=current_path,
-                music_path=bg_music_path,
-                output_path=bgm_path,
-                volume=settings.bg_music_volume,
-                ducking=settings.bg_music_ducking,
-            )
-            current_path = bgm_path
-
-        # ── Stage 8: Outro Concatenation ───────────────────────────────────────
-        if settings.outro_path is not None:
-            _report("Concatenating outro...")
-            final_tmp = tmp_dir / f"{stem}_with_outro.mp4"
-            concatenate_with_outro(
-                main_path=current_path,
-                outro_path=settings.outro_path,
-                output_path=final_tmp,
-                target_width=settings.target_width,
-                target_height=settings.target_height,
-                transition=settings.transition_type,
-                transition_duration=settings.transition_duration,
-            )
-            current_path = final_tmp
-        else:
-            warnings.append(f"Clip {clip.index}: no outro — concatenation skipped.")
-
-        # ── Stage 9: Write Final Output ────────────────────────────────────────
-        _report("Writing output files...")
-        run_output_dir.mkdir(parents=True, exist_ok=True)
-
-        final_output = run_output_dir / f"{stem}_short.mp4"
-        seo_json_path = run_output_dir / f"seo_{stem}.json"
-
-        shutil.copy2(str(current_path), str(final_output))
-
-        seo_json_path.write_text(
-            json.dumps(seo_to_dict(clip.seo), ensure_ascii=False, indent=2),
-            encoding="utf-8",
+        clip_transcript = " ".join(s.text for s in clip_segments) if clip_segments else ""
+        
+        final_output = build_short_from_clip(
+            video_path=raw_clip_path,
+            stem=stem,
+            segments=clip_segments,
+            transcript_text=clip_transcript,
+            seo=clip.seo,
+            broll_query=clip.broll_query,
+            settings=settings,
+            tmp_dir=tmp_dir,
+            run_output_dir=run_output_dir,
+            _report=_report,
+            warnings=warnings,
+            custom_broll_path=Path(custom_broll_path) if custom_broll_path else None,
+            clip_start_offset=clip.start_time,
         )
 
         result.output_file = final_output
@@ -899,9 +724,7 @@ def process_url_clip(
 
     except Exception as exc:
         error_msg = f"{type(exc).__name__}: {exc}"
-        logger.error(
-            "URL clip pipeline failed for clip %d: %s", clip.index, error_msg, exc_info=True
-        )
+        logger.error("URL clip pipeline failed for clip %d: %s", clip.index, error_msg, exc_info=True)
         result.error = error_msg
         result.success = False
         result.warnings = warnings
@@ -1001,15 +824,15 @@ def run_url_pipeline(
             _report("Correcting transcript with Gemini...")
             all_segments = correct_transcript_greek(all_segments, settings.gemini_api_key)
 
-        # ── Phase 3: AI Clip Selection ─────────────────────────────────────────
-        _report("Selecting best clips with AI...")
+        # ── Phase 3: AI Clip Selection (Single Best Clip Workflow) ─────────────
+        _report("Selecting the single best clip with AI...")
         raw_candidates = select_clips(
             segments=all_segments,
             gemini_api_key=settings.gemini_api_key,
-            max_clips=settings.max_clips,
-            min_clips=settings.min_clips,
-            min_dur=settings.clip_min_duration,
-            max_dur=settings.clip_max_duration,
+            max_clips=1,
+            min_clips=1,
+            min_dur=20.0,
+            max_dur=45.0,
             source_title=url_meta.title,
             brand_voice=settings.brand_voice,
             channel_niche=settings.whisper_context_hint or "",
@@ -1022,8 +845,8 @@ def run_url_pipeline(
                 start_time=cand.start_time,
                 end_time=cand.end_time,
                 segments=all_segments,
-                min_dur=settings.clip_min_duration,
-                max_dur=settings.clip_max_duration,
+                min_dur=20.0,
+                max_dur=45.0,
             )
             snapped.append(
                 ClipCandidate(

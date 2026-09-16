@@ -29,11 +29,6 @@ def test_extract_youtube_id():
 
 
 def test_fetch_youtube_transcript_success():
-    raw_snippets = [
-        {"text": "Γεια σας σε όλους", "start": 0.0, "duration": 3.5},
-        {"text": "Σήμερα θα μιλήσουμε για AI", "start": 3.5, "duration": 4.0},
-    ]
-
     mock_snippet_1 = MagicMock(text="Γεια σας σε όλους", start=0.0, duration=3.5)
     mock_snippet_2 = MagicMock(text="Σήμερα θα μιλήσουμε για AI", start=3.5, duration=4.0)
     mock_fetched = [mock_snippet_1, mock_snippet_2]

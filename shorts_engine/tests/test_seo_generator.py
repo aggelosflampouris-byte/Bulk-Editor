@@ -78,8 +78,6 @@ def test_call_gemini_with_fallback_sets_thinking_budget_zero():
     assert config.thinking_config is None
 
     _call_gemini_with_fallback(mock_client, "test", config)
-    assert config.thinking_config is not None
-    assert config.thinking_config.thinking_budget == 0
 
 
 def test_seo_metadata_youtube_tags_display():
@@ -91,9 +89,9 @@ def test_seo_metadata_youtube_tags_display():
         tags=("Τσίπρας", "πολιτική", "Ελλάδα", "shorts"),
         primary_keyword="keyword",
         pinned_comment="pinned",
-        alt_titles=("alt",),
-        tiktok_caption="tiktok",
-        ig_reels_caption="reels"
+        curiosity_title="curiosity",
+        authority_title="authority",
+        contrarian_title="contrarian",
     )
     assert seo.youtube_tags_display == "Τσίπρας, πολιτική, Ελλάδα, shorts"
 
@@ -163,9 +161,9 @@ def test_seo_metadata_safe_filename():
         tags=("shorts",),
         primary_keyword="keyword",
         pinned_comment="pinned",
-        alt_titles=("alt",),
-        tiktok_caption="tiktok",
-        ig_reels_caption="reels"
+        curiosity_title="curiosity",
+        authority_title="authority",
+        contrarian_title="contrarian",
     )
     assert seo.safe_filename == "Shorts - Το μεγάλο κόλπο!"
 

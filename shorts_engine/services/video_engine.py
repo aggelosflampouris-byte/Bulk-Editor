@@ -825,15 +825,17 @@ def mix_background_music(
         if ducking:
             fc = (
                 f"{bgm_filter};"
-                f"[0:a]{norm_af},asplit=2[speech_main][speech_sc];"
-                f"[bgm][speech_sc]sidechaincompress=threshold=0.10:ratio=2.2:attack=25:release=350:level_sc=1.0[ducked_bgm];"
-                f"[speech_main][ducked_bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,atrim=0:{vid_dur:.3f}[a_out]"
+                f"[0:a]{norm_af},asplit=2[speech_raw][speech_sc];"
+                f"[speech_raw]acompressor=threshold=0.1:ratio=3:makeup=1.5[speech_enhanced];"
+                f"[bgm][speech_sc]sidechaincompress=threshold=0.08:ratio=5.0:attack=15:release=200:level_sc=1.0[ducked_bgm];"
+                f"[speech_enhanced][ducked_bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,atrim=0:{vid_dur:.3f}[a_out]"
             )
         else:
             fc = (
                 f"{bgm_filter};"
-                f"[0:a]{norm_af}[speech_main];"
-                f"[speech_main][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,atrim=0:{vid_dur:.3f}[a_out]"
+                f"[0:a]{norm_af}[speech_raw];"
+                f"[speech_raw]acompressor=threshold=0.1:ratio=3:makeup=1.5[speech_enhanced];"
+                f"[speech_enhanced][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,atrim=0:{vid_dur:.3f}[a_out]"
             )
     else:
         # Video has no audio track: music plays as sole audio track

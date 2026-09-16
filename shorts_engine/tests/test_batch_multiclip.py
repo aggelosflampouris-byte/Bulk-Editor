@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from shorts_engine.config import Settings
-from shorts_engine.pipeline import ProcessingResult, process_batch
+from shorts_engine.pipeline import ProcessingResult, run_batch
 from shorts_engine.services.clip_selector import ClipCandidate
 from shorts_engine.services.seo_generator import SeoMetadata
 from shorts_engine.services.transcriber import TranscriptionSegment
@@ -44,9 +44,9 @@ def test_process_batch_long_video_triggers_multiclip_extraction(tmp_path: Path):
                 tags=("tag",),
                 primary_keyword="keyword",
                 pinned_comment="pinned",
-                alt_titles=("alt",),
-                tiktok_caption="tiktok",
-                ig_reels_caption="reels"
+                curiosity_title="curiosity",
+                authority_title="authority",
+                contrarian_title="contrarian",
             ),
             broll_query="greek speech",
         )
