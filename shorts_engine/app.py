@@ -1396,16 +1396,90 @@ def main() -> None:
                 max_videos_mine = st.number_input("Max recent videos to analyze", min_value=5, max_value=100, value=30, step=5, key="channel_max_mine", label_visibility="collapsed")
                 
                 st.markdown("#### 3. Execution")
-                btn_text = f"🚀 Generate Content Ideas for '{target_niche.strip()}'" if target_niche.strip() else "🚀 Analyze My Channel"
-                analyze_mine_clicked = st.button(btn_text, type="primary", use_container_width=True)
+                col_btn1, col_btn2 = st.columns(2)
+                with col_btn1:
+                    analyze_mine_clicked = st.button("📊 Analyze My Channel", use_container_width=True)
+                with col_btn2:
+                    generate_ideas_clicked = st.button(
+                        f"🚀 Generate Video for '{target_niche.strip()}'", 
+                        type="primary", 
+                        use_container_width=True, 
+                        disabled=not target_niche.strip()
+                    )
             else:
                 st.warning("⚠️ **YouTube Account Not Connected**")
                 st.markdown(
                     "Please connect your YouTube channel in the **Upload to YouTube** tab to unlock deep channel analytics and AI insights."
                 )
 
+            if yt_connected and generate_ideas_clicked and target_niche.strip():
+                if not settings.gemini_api_key:
+                    st.error("A Gemini API key is required. Add it to the sidebar.")
+                else:
+                    from shorts_engine.services.autopilot import run_autopilot_pipeline
+                    st.session_state.pop("niche_autopilot_result", None)
+                    st.markdown("### Auto-Pilot Execution Log")
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    log_container = st.container()
+                    
+                    try:
+                        broll_path = st.session_state.get("custom_broll_path", "")
+                        for msg, pct, data in run_autopilot_pipeline(target_niche.strip(), settings, broll_path):
+                            progress_bar.progress(pct)
+                            status_text.markdown(f"**{pct}%** — {msg}")
+                            log_container.write(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
+                            
+                            if pct == 100 and data:
+                                st.session_state["niche_autopilot_result"] = data
+                                st.rerun()
+                    except Exception as e:
+                        st.error(f"Generation failed: {e}")
+                        logger.exception("Niche Autopilot failed")
+
+            # Render Autopilot Review UI if available
+            niche_ap_result = st.session_state.get("niche_autopilot_result")
+            if niche_ap_result:
+                st.markdown("---")
+                st.markdown("### 📝 Review & Approve Auto-Generated Video")
+                
+                video_path = niche_ap_result["path"]
+                seo = niche_ap_result["seo"]
+                publish_at = niche_ap_result["publish_at"]
+                
+                col_vid, col_meta = st.columns([1, 2])
+                with col_vid:
+                    st.video(str(video_path))
+                    
+                with col_meta:
+                    edit_title = st.text_input("Title", value=seo.title, key="niche_ap_title")
+                    edit_desc = st.text_area("Description", value=seo.description, height=150, key="niche_ap_desc")
+                    edit_tags = st.text_input("Tags (comma separated)", value=", ".join(seo.tags), key="niche_ap_tags")
+                    st.info(f"Scheduled for: **{publish_at.strftime('%Y-%m-%d %H:%M UTC')}**")
+                    
+                    if st.button("✅ Approve & Schedule Upload", type="primary", use_container_width=True, key="niche_ap_upload"):
+                        with st.spinner("Uploading to YouTube..."):
+                            try:
+                                from services.youtube_uploader import upload_short, authenticate
+                                tag_list = [t.strip() for t in edit_tags.split(",") if t.strip()]
+                                
+                                yt = authenticate()
+                                video_id = upload_short(
+                                    youtube_client=yt,
+                                    video_path=video_path,
+                                    title=edit_title,
+                                    description=edit_desc,
+                                    tags=tag_list,
+                                    publish_at=publish_at
+                                )
+                                st.success(f"🎉 **Upload Complete!** [View on YouTube Studio](https://www.youtube.com/watch?v={video_id})")
+                                st.balloons()
+                                st.session_state.pop("niche_autopilot_result", None)
+                            except Exception as e:
+                                st.error(f"Upload failed: {e}")
+
             # Scan & analyze
-            if analyze_mine_clicked:
+            if yt_connected and analyze_mine_clicked:
                 if not settings.gemini_api_key:
                     st.error("A Gemini API key is required for the AI analysis. Add it to the sidebar.")
                 else:
