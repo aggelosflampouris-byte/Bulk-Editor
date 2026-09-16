@@ -60,6 +60,7 @@ broll_cache/
 .env
 *.env
 .env.*
+!.env.example
 keys.json
 secrets.toml
 .streamlit/secrets.toml
