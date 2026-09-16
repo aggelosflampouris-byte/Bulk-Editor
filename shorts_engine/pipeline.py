@@ -698,6 +698,12 @@ def process_url_clip(
             return ProcessingResult(input_file=source_path, clip_index=clip.index, success=False, error=msg)
 
         clip_segments = slice_segments(all_segments, clip.start_time, clip.end_time)
+        
+        if settings.gemini_api_key and clip_segments:
+            _report("AI logic scan: correcting captions for grammar and gibberish...")
+            from shorts_engine.services.seo_generator import correct_transcript_greek
+            clip_segments = correct_transcript_greek(clip_segments, settings.gemini_api_key)
+            
         clip_transcript = " ".join(s.text for s in clip_segments) if clip_segments else ""
         
         final_output = build_short_from_clip(
