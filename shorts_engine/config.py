@@ -143,14 +143,14 @@ def assert_system_binaries() -> None:
 #   ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow,
 #   Alignment, MarginL, MarginR, MarginV, Encoding
 ASS_STYLE_LINE: str = (
-    "Style: Default,Impact,110,&H00000000,&H00000000,&H00000000,&H00FFFFFF,"
-    "-1,0,0,0,100,100,0,0,3,4,0,2,80,80,540,1"
+    "Style: Default,Impact,130,&H00FFFFFF,&H000000FF,&H00000000,&H66000000,"
+    "-1,0,0,0,100,100,0,0,1,5,3,2,80,80,540,1"
 )
 
-# Highlight style — PrimaryColour is Red (&H000000FF) with White Box, font size 110.
+# Highlight style — Same as default since we do inline color overrides now
 ASS_HIGHLIGHT_STYLE_LINE: str = (
-    "Style: Highlight,Impact,110,&H000000FF,&H00000000,&H00000000,&H00FFFFFF,"
-    "-1,0,0,0,100,100,0,0,3,4,0,2,80,80,540,1"
+    "Style: Highlight,Impact,130,&H00FFFFFF,&H000000FF,&H00000000,&H66000000,"
+    "-1,0,0,0,100,100,0,0,1,5,3,2,80,80,540,1"
 )
 
 # Full ASS file header template.  {dialogue_lines} is replaced at generation time.

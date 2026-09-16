@@ -270,71 +270,6 @@ def _escape_ass_text(text: str) -> str:
     return text
 
 
-def _build_karaoke_text(
-    words: list[tuple[float, float, str]],
-    seg_start: float,
-    primary_keyword: str | None = None,
-) -> str:
-    """
-    Build an ASS karaoke text string with per-word {\\k} timing tags.
-
-    Each word is prefixed with {\\rHighlight\\k<centiseconds>} so it renders
-    in yellow while being spoken and returns to white afterwards.  Between
-    words, {\\rDefault} resets the style to white.
-
-    If a word matches the primary_keyword (ignoring case/punctuation), it
-    receives a static color override {\\c&H00FFFF&} (Yellow) when returning to Default.
-
-    The {\\k} tag duration is the time the highlighted word is displayed
-    (in centiseconds, i.e. hundredths of a second).
-
-    Args:
-        words:           List of (word_start, word_end, word_text) tuples.
-        seg_start:       Segment start time in seconds (used to compute relative offsets).
-        primary_keyword: Optional keyword to permanently highlight.
-
-    Returns:
-        ASS dialogue Text field string with inline karaoke override tags.
-    """
-    parts: list[str] = []
-    
-    # Pre-clean the keyword for faster matching
-    clean_keyword = ""
-    if primary_keyword:
-        clean_keyword = primary_keyword.translate(str.maketrans('', '', string.punctuation)).lower().strip()
-        
-    for w_start, w_end, w_text in words:
-        duration_cs = max(1, int(round((w_end - w_start) * 100)))
-        safe = _escape_ass_text(w_text)
-
-        # Check if this word matches the primary keyword
-        is_keyword = False
-        if clean_keyword:
-            clean_word = w_text.translate(str.maketrans('', '', string.punctuation)).lower().strip()
-            if clean_word and (clean_word == clean_keyword or clean_word in clean_keyword.split()):
-                is_keyword = True
-
-        # Active-word pop: scale to 110% while spoken, reset after.
-        # This is the MrBeast-style caption animation that draws the eye.
-        # \fscx / \fscy are ASS spec-compliant and supported by libass (FFmpeg).
-        pop_on = r"{\fscx110\fscy110}"
-        pop_off = r"{\fscx100\fscy100}"
-
-        if is_keyword:
-            # &H00FF00& is Green in ASS (BGR) — permanent keyword highlight
-            parts.append(
-                f"{{\\rHighlight\\k{duration_cs}}}{pop_on}{safe}{pop_off}"
-                f"{{\\rDefault\\c&H00FF00&}}"
-            )
-        else:
-            parts.append(
-                f"{{\\rHighlight\\k{duration_cs}}}{pop_on}{safe}{pop_off}"
-                f"{{\\rDefault}}"
-            )
-
-    return " ".join(parts)
-
-
 def segments_to_ass(
     segments: list[TranscriptionSegment],
     style_line: str | None = None,
@@ -342,21 +277,11 @@ def segments_to_ass(
     primary_keyword: str | None = None,
 ) -> str:
     """
-    Render a full ASS subtitle file string from a list of segments.
-
-    When word-level timing is available on a segment, each word is wrapped
-    in karaoke {\\k} tags so the active word highlights yellow.
-    Segments without word data fall back to plain white text.
-
-    Args:
-        segments:             Ordered list of TranscriptionSegment objects.
-        style_line:           Override the default ASS style line.
-        highlight_style_line: Override the highlight ASS style line.
-        primary_keyword:      Optional keyword to statically highlight (e.g. Green).
-
-    Returns:
-        Complete ASS file content as a string, ready to be written to disk.
+    Generate an ASS subtitle payload from a list of transcription segments.
+    Uses an animated, modern TikTok-style 1-word-per-line rendering.
     """
+    import string
+    
     effective_style = style_line if style_line is not None else ASS_STYLE_LINE
     effective_highlight = (
         highlight_style_line
@@ -364,52 +289,56 @@ def segments_to_ass(
         else ASS_HIGHLIGHT_STYLE_LINE
     )
 
+    clean_keyword = ""
+    if primary_keyword:
+        clean_keyword = primary_keyword.translate(str.maketrans('', '', string.punctuation)).lower().strip()
+
     dialogue_lines: list[str] = []
+    
+    # Flatten all words
+    all_words: list[tuple[float, float, str]] = []
     for seg in segments:
         if seg.words:
-            # Chunk words into small blocks: max 2 words OR 20 chars (whichever comes first)
-            # This produces sharp, punchy one-thought-at-a-time captions (TikTok style).
-            current_chunk: list[tuple[float, float, str]] = []
-            current_char_len = 0
-            _MAX_WORDS = 2
-            _MAX_CHARS = 20
+            all_words.extend(seg.words)
 
-            def _flush_chunk(
-                chunk: list[tuple[float, float, str]],
-                primary_keyword: str | None,
-            ) -> str:
-                start_sec = chunk[0][0]
-                end_sec = chunk[-1][1]
-                t_start = _seconds_to_ass_time(start_sec)
-                t_end = _seconds_to_ass_time(end_sec)
-                text_field = _build_karaoke_text(chunk, start_sec, primary_keyword)
-                return f"Dialogue: 0,{t_start},{t_end},Default,,0,0,0,,{text_field}"
-
-            for word in seg.words:
-                w_text = word[2]
-                word_len = len(w_text.strip())
-                # Flush if adding this word would exceed either limit
-                if current_chunk and (
-                    len(current_chunk) >= _MAX_WORDS
-                    or current_char_len + word_len + 1 > _MAX_CHARS
-                ):
-                    dialogue_lines.append(_flush_chunk(current_chunk, primary_keyword))
-                    current_chunk = []
-                    current_char_len = 0
-                current_chunk.append(word)
-                current_char_len += word_len + 1  # +1 for space
-
-            # Flush any remaining words in the segment
-            if current_chunk:
-                dialogue_lines.append(_flush_chunk(current_chunk, primary_keyword))
-        else:
-            # Fallback: plain text
+    # If no words available, fallback to segments
+    if not all_words:
+        for seg in segments:
             start = _seconds_to_ass_time(seg.start)
             end = _seconds_to_ass_time(seg.end)
             text_field = _escape_ass_text(seg.text)
-            dialogue_lines.append(
-                f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text_field}"
-            )
+            dialogue_lines.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text_field}")
+    else:
+        for i, (w_start, w_end, w_text) in enumerate(all_words):
+            display_end = w_end
+            
+            # Bridge short gaps to next word to avoid flickering
+            if i + 1 < len(all_words):
+                next_start = all_words[i+1][0]
+                if next_start - w_end < 0.4:
+                    display_end = next_start
+                else:
+                    display_end = w_end + 0.2
+            else:
+                display_end = w_end + 0.2
+
+            t_start = _seconds_to_ass_time(w_start)
+            t_end = _seconds_to_ass_time(display_end)
+            
+            safe = _escape_ass_text(w_text)
+            
+            # Animation: Pop in from 80% to 115%, then settle at 100%
+            pop = r"{\fscx80\fscy80\t(0,40,\fscx115\fscy115)\t(40,120,\fscx100\fscy100)}"
+            
+            # Color: Highlight the primary keyword in Yellow, otherwise stay White
+            color = ""
+            if clean_keyword:
+                clean_word = w_text.translate(str.maketrans('', '', string.punctuation)).lower().strip()
+                if clean_word and (clean_word == clean_keyword or clean_word in clean_keyword.split()):
+                    color = r"{\c&H00FFFF&}"  # Yellow BGR
+                    
+            text_field = f"{pop}{color}{safe}"
+            dialogue_lines.append(f"Dialogue: 0,{t_start},{t_end},Default,,0,0,0,,{text_field}")
 
     return ASS_HEADER_TEMPLATE.format(
         style_line=effective_style,
