@@ -123,6 +123,6 @@ def run_autopilot_pipeline(
     # Review
     yield ("Ready for manual review!", 100, {
         "seo": seo,
-        "path": result.output_path,
+        "path": result.output_file,
         "publish_at": get_optimal_schedule_time()
     })
