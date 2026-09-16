@@ -664,8 +664,9 @@ Correct EACH line so it reads as accurate, natural, grammatically correct Greek.
 2. Do NOT merge or split lines.
 3. Do NOT add unnecessary punctuation; keep subtitles clean and natural.
 4. Do NOT change the speaker's intended meaning, but aggressively fix nonsense.
-5. If a line is already correct, output it unchanged.
-6. Output ONLY the corrected lines, nothing else.
+5. LOGICAL GUARDRAIL (CRITICAL): Ensure the sentence actually makes sense. If the literal words form a confusing or disjointed sentence, rewrite them slightly to form a coherent, logical statement that fits the context.
+6. If a line is already correct, output it unchanged.
+7. Output ONLY the corrected lines, nothing else.
 
 Lines to correct:
 {lines}

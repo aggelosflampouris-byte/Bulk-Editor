@@ -73,6 +73,7 @@ throat-clearing, greetings, or dead silence. Cut straight into the core thought.
 or analysis. Zero rambling or fluff.
 - 35–50s PUNCHLINE / RESOLUTION: End cleanly on a conclusive takeaway, punchline, \
 or clear resolution. Never cut mid-sentence or mid-thought.
+- LOGICAL COHERENCE GUARDRAIL (CRITICAL): The chosen clip MUST make 100% logical sense as a standalone story. It must not contain disjointed, confusing, or skipping thoughts. Do not select clips where the speaker's sentences trail off into gibberish or nonsense. The narrative must flow perfectly from start to finish.
 
 CONSTRAINTS:
 - You MUST select AT LEAST {min_clips} clips and at most {max_clips} clips (aim for {max_clips} clips if the video duration allows).
