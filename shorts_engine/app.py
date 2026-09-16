@@ -1425,7 +1425,7 @@ def main() -> None:
                     
                     try:
                         broll_path = st.session_state.get("custom_broll_path", "")
-                        for msg, pct, data in run_autopilot_pipeline(target_niche.strip(), settings, broll_path):
+                        for msg, pct, data in run_autopilot_pipeline(target_niche.strip(), settings, broll_path, num_videos=3):
                             progress_bar.progress(pct)
                             status_text.markdown(f"**{pct}%** — {msg}")
                             log_container.write(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
@@ -1438,45 +1438,46 @@ def main() -> None:
                         logger.exception("Niche Autopilot failed")
 
             # Render Autopilot Review UI if available
-            niche_ap_result = st.session_state.get("niche_autopilot_result")
-            if niche_ap_result:
+            niche_ap_results = st.session_state.get("niche_autopilot_result")
+            if niche_ap_results:
                 st.markdown("---")
-                st.markdown("### 📝 Review & Approve Auto-Generated Video")
+                st.markdown(f"### 📝 Review & Approve {len(niche_ap_results)} Auto-Generated Videos")
                 
-                video_path = niche_ap_result["path"]
-                seo = niche_ap_result["seo"]
-                publish_at = niche_ap_result["publish_at"]
-                
-                col_vid, col_meta = st.columns([1, 2])
-                with col_vid:
-                    st.video(str(video_path))
-                    
-                with col_meta:
-                    edit_title = st.text_input("Title", value=seo.title, key="niche_ap_title")
-                    edit_desc = st.text_area("Description", value=seo.description, height=150, key="niche_ap_desc")
-                    edit_tags = st.text_input("Tags (comma separated)", value=", ".join(seo.tags), key="niche_ap_tags")
-                    st.info(f"Scheduled for: **{publish_at.strftime('%Y-%m-%d %H:%M UTC')}**")
-                    
-                    if st.button("✅ Approve & Schedule Upload", type="primary", use_container_width=True, key="niche_ap_upload"):
-                        with st.spinner("Uploading to YouTube..."):
-                            try:
-                                from services.youtube_uploader import upload_short, authenticate
-                                tag_list = [t.strip() for t in edit_tags.split(",") if t.strip()]
-                                
-                                yt = authenticate()
-                                video_id = upload_short(
-                                    youtube_client=yt,
-                                    video_path=video_path,
-                                    title=edit_title,
-                                    description=edit_desc,
-                                    tags=tag_list,
-                                    publish_at=publish_at
-                                )
-                                st.success(f"🎉 **Upload Complete!** [View on YouTube Studio](https://www.youtube.com/watch?v={video_id})")
-                                st.balloons()
-                                st.session_state.pop("niche_autopilot_result", None)
-                            except Exception as e:
-                                st.error(f"Upload failed: {e}")
+                for idx, res in enumerate(niche_ap_results):
+                    with st.expander(f"🎬 Video {idx+1}: {res['seo'].title}", expanded=True):
+                        video_path = res["path"]
+                        seo = res["seo"]
+                        publish_at = res["publish_at"]
+                        
+                        col_vid, col_meta = st.columns([1, 2])
+                        with col_vid:
+                            st.video(str(video_path))
+                            
+                        with col_meta:
+                            edit_title = st.text_input("Title", value=seo.title, key=f"niche_ap_title_{idx}")
+                            edit_desc = st.text_area("Description", value=seo.description, height=150, key=f"niche_ap_desc_{idx}")
+                            edit_tags = st.text_input("Tags (comma separated)", value=", ".join(seo.tags), key=f"niche_ap_tags_{idx}")
+                            st.info(f"Scheduled for: **{publish_at.strftime('%Y-%m-%d %H:%M UTC')}**")
+                            
+                            if st.button(f"✅ Approve & Schedule Upload (Video {idx+1})", type="primary", use_container_width=True, key=f"niche_ap_upload_{idx}"):
+                                with st.spinner("Uploading to YouTube..."):
+                                    try:
+                                        from services.youtube_uploader import upload_short, authenticate
+                                        tag_list = [t.strip() for t in edit_tags.split(",") if t.strip()]
+                                        
+                                        yt = authenticate()
+                                        video_id = upload_short(
+                                            youtube_client=yt,
+                                            video_path=video_path,
+                                            title=edit_title,
+                                            description=edit_desc,
+                                            tags=tag_list,
+                                            publish_at=publish_at
+                                        )
+                                        st.success(f"🎉 **Upload Complete!** [View on YouTube Studio](https://www.youtube.com/watch?v={video_id})")
+                                        st.balloons()
+                                    except Exception as e:
+                                        st.error(f"Upload failed: {e}")
 
             # Scan & analyze
             if yt_connected and analyze_mine_clicked:

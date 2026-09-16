@@ -54,43 +54,43 @@ def render_autopilot_tab(settings) -> None:
             logger.exception("Autopilot pipeline error")
 
     # Outside the button, render the review UI
-    autopilot_result = st.session_state.get("autopilot_result")
-    if autopilot_result:
+    autopilot_results = st.session_state.get("autopilot_result")
+    if autopilot_results:
         st.markdown("---")
-        st.markdown("### 📝 Review & Approve")
+        st.markdown(f"### 📝 Review & Approve Auto-Generated Videos")
         
-        video_path = autopilot_result["path"]
-        seo = autopilot_result["seo"]
-        publish_at = autopilot_result["publish_at"]
-        
-        col_vid, col_meta = st.columns([1, 2])
-        with col_vid:
-            st.video(str(video_path))
-            
-        with col_meta:
-            edit_title = st.text_input("Title", value=seo.title, key="ap_title")
-            edit_desc = st.text_area("Description", value=seo.description, height=150, key="ap_desc")
-            edit_tags = st.text_input("Tags (comma separated)", value=", ".join(seo.tags), key="ap_tags")
-            st.info(f"Scheduled for: **{publish_at.strftime('%Y-%m-%d %H:%M UTC')}**")
-            
-            if st.button("✅ Approve & Schedule Upload", type="primary", use_container_width=True):
-                with st.spinner("Uploading to YouTube..."):
-                    try:
-                        from shorts_engine.services.youtube_uploader import upload_short, authenticate
-                        tag_list = [t.strip() for t in edit_tags.split(",") if t.strip()]
-                        
-                        yt = authenticate()
-                        video_id = upload_short(
-                            youtube_client=yt,
-                            video_path=video_path,
-                            title=edit_title,
-                            description=edit_desc,
-                            tags=tag_list,
-                            publish_at=publish_at
-                        )
-                        st.success(f"🎉 **Autopilot Complete!** [View on YouTube Studio](https://www.youtube.com/watch?v={video_id})")
-                        st.balloons()
-                        # Clean up so they don't upload twice accidentally
-                        st.session_state.pop("autopilot_result", None)
-                    except Exception as e:
-                        st.error(f"Upload failed: {e}")
+        for idx, res in enumerate(autopilot_results):
+            with st.expander(f"🎬 Video {idx+1}: {res['seo'].title}", expanded=True):
+                video_path = res["path"]
+                seo = res["seo"]
+                publish_at = res["publish_at"]
+                
+                col_vid, col_meta = st.columns([1, 2])
+                with col_vid:
+                    st.video(str(video_path))
+                    
+                with col_meta:
+                    edit_title = st.text_input("Title", value=seo.title, key=f"ap_title_{idx}")
+                    edit_desc = st.text_area("Description", value=seo.description, height=150, key=f"ap_desc_{idx}")
+                    edit_tags = st.text_input("Tags (comma separated)", value=", ".join(seo.tags), key=f"ap_tags_{idx}")
+                    st.info(f"Scheduled for: **{publish_at.strftime('%Y-%m-%d %H:%M UTC')}**")
+                    
+                    if st.button(f"✅ Approve & Schedule Upload (Video {idx+1})", type="primary", use_container_width=True, key=f"ap_btn_{idx}"):
+                        with st.spinner("Uploading to YouTube..."):
+                            try:
+                                from shorts_engine.services.youtube_uploader import upload_short, authenticate
+                                tag_list = [t.strip() for t in edit_tags.split(",") if t.strip()]
+                                
+                                yt = authenticate()
+                                video_id = upload_short(
+                                    youtube_client=yt,
+                                    video_path=video_path,
+                                    title=edit_title,
+                                    description=edit_desc,
+                                    tags=tag_list,
+                                    publish_at=publish_at
+                                )
+                                st.success(f"🎉 **Upload Complete!** [View on YouTube Studio](https://www.youtube.com/watch?v={video_id})")
+                                st.balloons()
+                            except Exception as e:
+                                st.error(f"Upload failed: {e}")

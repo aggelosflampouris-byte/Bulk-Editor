@@ -37,10 +37,11 @@ def get_optimal_schedule_time() -> datetime:
 def run_autopilot_pipeline(
     target_url: str,
     settings: Settings,
-    broll_path: str = ""
+    broll_path: str = "",
+    num_videos: int = 1,
 ) -> Generator[tuple[str, int, Any], None, None]:
     """
-    Runs the entire pipeline end-to-end.
+    Runs the entire pipeline end-to-end for the top `num_videos` videos.
     Yields (status_message, progress_percentage, result_data)
     """
     yield ("Analyzing channel / niche...", 5, None)
@@ -49,80 +50,99 @@ def run_autopilot_pipeline(
     if not videos:
         raise ValueError("Could not find any videos on this channel.")
         
-    velocity_picks = fetch_view_velocity_top(videos, top_n=5)
+    velocity_picks = fetch_view_velocity_top(videos, top_n=max(5, num_videos))
     if not velocity_picks:
         raise ValueError("Could not calculate velocity for videos.")
         
-    best_video = velocity_picks[0]
+    best_videos = velocity_picks[:num_videos]
     
-    yield (f"Selected highly viral video: {best_video.title}", 15, None)
+    yield (f"Selected {len(best_videos)} highly viral videos for processing.", 10, None)
     
-    # Download
-    yield ("Downloading video for analysis...", 20, None)
-    import uuid
-    download_dir = Path(tempfile.gettempdir()) / f"autopilot_{uuid.uuid4().hex}"
-    download_dir.mkdir(parents=True, exist_ok=True)
-    video_path = download_video(best_video.url, download_dir, settings.max_source_duration_seconds)
+    results = []
     
-    # Transcribe
-    yield ("Transcribing audio...", 35, None)
-    transcript = transcribe(
-        video_path=video_path,
-        model_size=settings.whisper_model_size,
-        device=settings.whisper_device,
-        compute_type=settings.whisper_compute_type,
-        beam_size=settings.whisper_beam_size,
-        context_hint=settings.whisper_context_hint
-    )
-    
-    # Select Clips
-    yield ("AI analyzing transcription for viral clips...", 50, None)
-    clips = select_clips(
-        segments=transcript,
-        gemini_api_key=settings.gemini_api_key,
-        max_clips=3,
-        min_clips=3,
-        min_dur=30.0,
-        max_dur=60.0
-    )
-    if not clips:
-        raise ValueError("AI could not find any good clips in this video.")
+    for idx, best_video in enumerate(best_videos):
+        base_pct = 10 + (90 * idx // num_videos)
+        step_pct = 90 // num_videos
         
-    # Pick highest ranked clip
-    best_clip = clips[0]
-    yield (f"Selected clip: {best_clip.seo.title} (Rank: {best_clip.index})", 60, None)
-    
-    # Compose Clip
-    yield ("Downloading clip segment & assembling Short...", 70, None)
-    # process_url_clip handles downloading the sub-segment and running video_engine
-    result = process_url_clip(
-        clip=best_clip,
-        source_path=video_path,
-        all_segments=transcript,
-        settings=settings,
-        tmp_dir=download_dir,
-        run_output_dir=settings.output_dir,
-        custom_broll_path=broll_path if broll_path else None
-    )
-    
-    if result.error:
-        raise RuntimeError(f"Clip processing failed: {result.error}")
+        def _p(offset: float) -> int:
+            return int(base_pct + (step_pct * offset))
+            
+        yield (f"[Video {idx+1}/{num_videos}] Selected highly viral video: {best_video.title}", _p(0.05), None)
         
-    # SEO
-    yield ("Generating SEO Metadata...", 85, None)
-    # crop transcript to clip bounds
-    from services.timeline_utils import slice_segments
-    from services.transcriber import full_transcript_text
-    sub_segments = slice_segments(transcript, best_clip.start_time, best_clip.end_time)
-    sub_transcript_text = full_transcript_text(sub_segments)
-    seo = generate_seo(
-        transcript_text=sub_transcript_text,
-        api_key=settings.gemini_api_key
-    )
-    
+        # Download
+        yield (f"[Video {idx+1}/{num_videos}] Downloading video for analysis...", _p(0.1), None)
+        import uuid
+        download_dir = Path(tempfile.gettempdir()) / f"autopilot_{uuid.uuid4().hex}"
+        download_dir.mkdir(parents=True, exist_ok=True)
+        video_path = download_video(best_video.url, download_dir, settings.max_source_duration_seconds)
+        
+        # Transcribe
+        yield (f"[Video {idx+1}/{num_videos}] Transcribing audio...", _p(0.3), None)
+        transcript = transcribe(
+            video_path=video_path,
+            model_size=settings.whisper_model_size,
+            device=settings.whisper_device,
+            compute_type=settings.whisper_compute_type,
+            beam_size=settings.whisper_beam_size,
+            context_hint=settings.whisper_context_hint
+        )
+        
+        # Select Clips
+        yield (f"[Video {idx+1}/{num_videos}] AI analyzing transcription for viral clips...", _p(0.5), None)
+        clips = select_clips(
+            segments=transcript,
+            gemini_api_key=settings.gemini_api_key,
+            max_clips=3,
+            min_clips=3,
+            min_dur=30.0,
+            max_dur=60.0
+        )
+        if not clips:
+            logger.warning(f"AI could not find any good clips in video {best_video.title}. Skipping.")
+            continue
+            
+        # Pick highest ranked clip
+        best_clip = clips[0]
+        yield (f"[Video {idx+1}/{num_videos}] Selected clip: {best_clip.seo.title} (Rank: {best_clip.index})", _p(0.6), None)
+        
+        # Compose Clip
+        yield (f"[Video {idx+1}/{num_videos}] Downloading clip segment & assembling Short...", _p(0.7), None)
+        # process_url_clip handles downloading the sub-segment and running video_engine
+        result = process_url_clip(
+            clip=best_clip,
+            source_path=video_path,
+            all_segments=transcript,
+            settings=settings,
+            tmp_dir=download_dir,
+            run_output_dir=settings.output_dir,
+            custom_broll_path=broll_path if broll_path else None
+        )
+        
+        if result.error:
+            logger.error(f"Clip processing failed for video {best_video.title}: {result.error}")
+            continue
+            
+        # SEO
+        yield (f"[Video {idx+1}/{num_videos}] Generating SEO Metadata...", _p(0.9), None)
+        # crop transcript to clip bounds
+        from shorts_engine.services.timeline_utils import slice_segments
+        from shorts_engine.services.transcriber import full_transcript_text
+        sub_segments = slice_segments(transcript, best_clip.start_time, best_clip.end_time)
+        sub_transcript_text = full_transcript_text(sub_segments)
+        seo = generate_seo(
+            transcript_text=sub_transcript_text,
+            api_key=settings.gemini_api_key
+        )
+        
+        results.append({
+            "seo": seo,
+            "path": result.output_file,
+            # Add an offset to publish_at so they aren't scheduled at the exact same time
+            "publish_at": get_optimal_schedule_time() + timedelta(days=idx)
+        })
+
+    if not results:
+        raise RuntimeError("Failed to generate any videos successfully.")
+
     # Review
-    yield ("Ready for manual review!", 100, {
-        "seo": seo,
-        "path": result.output_file,
-        "publish_at": get_optimal_schedule_time()
-    })
+    yield ("Ready for manual review!", 100, results)
