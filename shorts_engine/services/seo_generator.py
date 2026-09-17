@@ -446,10 +446,13 @@ def generate_seo(
     try:
         from services.cache_manager import load_cache_pickle, save_cache_pickle
     except ImportError:
-        from shorts_engine.services.cache_manager import load_cache_pickle, save_cache_pickle
+        from shorts_engine.services.cache_manager import (
+            load_cache_pickle,
+            save_cache_pickle,
+        )
 
     # Hash the full prompt so we never store multi-KB strings as dict/file keys.
-    cache_key = hashlib.md5(f"{prompt}_{source_title}".encode("utf-8")).hexdigest()
+    cache_key = hashlib.md5(f"{prompt}_{source_title}".encode()).hexdigest()
     cached_seo = load_cache_pickle("seo_metadata", cache_key)
     if cached_seo is not None:
         return cached_seo
@@ -656,6 +659,7 @@ Common Whisper Greek errors to ALWAYS correct:
 - "ό,τι" vs "ότι", "πως" vs "πώς", "που" vs "πού"
 - Missing accent marks (τόνοι) and spelling errors
 - Fix Capitalization at the start of sentences and proper nouns.
+- Contextual Acronyms & Institutions: Fix phonetic errors for public organizations or common acronyms (e.g., "ΔΔΕ" -> "ΔΕΔΔΗΕ", "ΕΦΚΑ", "ΑΑΔΕ"). Use context clues from the sentence to identify the correct institution.
 
 CRITICAL: The 'small' Whisper model often hallucinates complete gibberish or redundant phrases (e.g., "Καλημέρες ημέρες σε όλους"). If a phrase is clearly a hallucination, DO NOT try to literally preserve the hallucinated words. Aggressively rewrite it into the simplest, most natural Greek equivalent (e.g., "Καλημέρα σε όλους").
 
