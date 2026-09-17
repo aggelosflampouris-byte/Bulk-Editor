@@ -1,6 +1,6 @@
-import pytest
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path.cwd()))
 from config import Settings
 from services.seo_generator import generate_seo

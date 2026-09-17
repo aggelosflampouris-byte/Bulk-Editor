@@ -35,13 +35,12 @@ try:
     from config import Settings, assert_system_binaries
 except ImportError:
     from shorts_engine.config import Settings, assert_system_binaries
-from services.cache_manager import log_project_history
 from services.broll_fetcher import (
-    BRollClip,
     download_clip,
     extract_broll_query,
     search_broll,
 )
+from services.cache_manager import log_project_history
 from services.clip_selector import ClipCandidate, select_clips
 from services.compositor import compose_timeline
 from services.downloader import download_video, probe_url_metadata
@@ -61,8 +60,6 @@ from services.transcriber import (
     write_ass_file,
 )
 from services.vfx_engine import (
-    SceneAnalysis,
-    VfxPreset,
     analyse_scene_objects,
     apply_vfx,
     choose_vfx_preset,
@@ -215,7 +212,7 @@ def build_short_from_clip(
             primary_keyword=seo.primary_keyword if seo else None,
         )
     else:
-        warnings.append(f"No transcript segments provided — subtitles skipped.")
+        warnings.append("No transcript segments provided — subtitles skipped.")
         ass_path = None
 
     # B-Roll Download
@@ -555,6 +552,16 @@ def run_batch(
                         progress_cb(idx, total, f"[{video_path.name}] Correcting transcript with Gemini...")
                     all_segments = correct_transcript_greek(all_segments, settings.gemini_api_key)
 
+                ocr_text = ""
+                try:
+                    from services.ocr_engine import OCREngine
+                    if progress_cb:
+                        progress_cb(idx, total, f"[{video_path.name}] Extracting OCR visual context...")
+                    ocr_engine = OCREngine(gemini_api_key=settings.gemini_api_key)
+                    ocr_text = ocr_engine.extract_text_from_video(video_path, sample_rate_sec=5)
+                except Exception as e:
+                    logger.warning(f"OCR extraction failed for {video_path}: {e}")
+
                 if progress_cb:
                     progress_cb(idx, total, f"[{video_path.name}] Selecting best clips with AI...")
 
@@ -568,6 +575,7 @@ def run_batch(
                     source_title=video_path.stem,
                     brand_voice=settings.brand_voice,
                     channel_niche=settings.whisper_context_hint or "",
+                    ocr_text=ocr_text,
                 )
 
                 snapped: list[ClipCandidate] = []
@@ -830,6 +838,15 @@ def run_url_pipeline(
             _report("Correcting transcript with Gemini...")
             all_segments = correct_transcript_greek(all_segments, settings.gemini_api_key)
 
+        ocr_text = ""
+        try:
+            from services.ocr_engine import OCREngine
+            _report("Extracting OCR visual context...")
+            ocr_engine = OCREngine(gemini_api_key=settings.gemini_api_key)
+            ocr_text = ocr_engine.extract_text_from_video(source_path, sample_rate_sec=5)
+        except Exception as e:
+            logger.warning(f"OCR extraction failed for {source_path}: {e}")
+
         # ── Phase 3: AI Clip Selection (Single Best Clip Workflow) ─────────────
         _report("Selecting the single best clip with AI...")
         raw_candidates = select_clips(
@@ -842,6 +859,7 @@ def run_url_pipeline(
             source_title=url_meta.title,
             brand_voice=settings.brand_voice,
             channel_niche=settings.whisper_context_hint or "",
+            ocr_text=ocr_text,
         )
 
         # ── Phase 4: Boundary Snapping ─────────────────────────────────────────

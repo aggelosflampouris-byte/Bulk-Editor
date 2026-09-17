@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from shorts_engine.config import Settings
-from shorts_engine.pipeline import ProcessingResult, run_batch
+from shorts_engine.pipeline import ProcessingResult
 from shorts_engine.services.clip_selector import ClipCandidate
 from shorts_engine.services.seo_generator import SeoMetadata
 from shorts_engine.services.transcriber import TranscriptionSegment
@@ -72,7 +72,9 @@ def test_process_batch_long_video_triggers_multiclip_extraction(tmp_path: Path):
          patch("shorts_engine.pipeline.snap_to_silence", side_effect=lambda start_time, end_time, **kw: (start_time, end_time)), \
          patch("shorts_engine.pipeline.process_url_clip", side_effect=mock_process_clip):
 
-        results = process_batch(
+        from shorts_engine.pipeline import run_batch
+
+        results = run_batch(
             video_paths=[dummy_video],
             settings=settings,
         )

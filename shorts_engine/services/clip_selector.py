@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 
 from google import genai
 from google.genai import types as genai_types
+
 try:
     from services.seo_generator import (
         SeoMetadata,
@@ -62,6 +63,7 @@ SEO metadata that fits the image of the video.
 
 SOURCE TITLE: {source_title}
 CHANNEL NICHE / BRAND VOICE: {channel_niche}
+OCR VISUAL CONTEXT: {ocr_text}
 
 CLIP STRUCTURE & HOOK REQUIREMENTS (CRITICAL):
 - VIRALITY FIRST: Prioritize segments containing high emotion (laughter, surprise, anger), counter-intuitive statements, strong opinions, or highly relatable analogies over plain informational text.
@@ -545,6 +547,7 @@ def select_clips(
     source_title: str = "",
     brand_voice: str = "",
     channel_niche: str = "",
+    ocr_text: str = "",
 ) -> list[ClipCandidate]:
     """
     Use Gemini to select the most viral-worthy clips from a transcript.
@@ -589,7 +592,10 @@ def select_clips(
     try:
         from services.cache_manager import load_cache_pickle, save_cache_pickle
     except ImportError:
-        from shorts_engine.services.cache_manager import load_cache_pickle, save_cache_pickle
+        from shorts_engine.services.cache_manager import (
+            load_cache_pickle,
+            save_cache_pickle,
+        )
 
     import hashlib
     cache_hash = hashlib.md5(transcript_block.encode("utf-8")).hexdigest()
@@ -608,6 +614,7 @@ def select_clips(
         min_dur=int(min_dur),
         max_dur=int(max_dur),
         transcript=transcript_block,
+        ocr_text=ocr_text or "No visual context available.",
     )
 
     logger.info(

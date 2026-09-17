@@ -3,19 +3,19 @@ services/autopilot.py — End-to-End Autopilot Orchestration
 """
 
 import logging
-import time
+import tempfile
+from collections.abc import Generator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Generator, Any
+from typing import Any
 
 from config import Settings
-from services.channel_analyzer import fetch_youtube_videos, fetch_view_velocity_top
-from services.downloader import download_video
-from services.transcriber import transcribe
-import tempfile
-from services.clip_selector import select_clips
 from pipeline import process_url_clip
+from services.channel_analyzer import fetch_view_velocity_top, fetch_youtube_videos
+from services.clip_selector import select_clips
+from services.downloader import download_video
 from services.seo_generator import generate_seo
+from services.transcriber import transcribe
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +87,16 @@ def run_autopilot_pipeline(
             context_hint=settings.whisper_context_hint
         )
         
+        # Extract OCR Text
+        yield (f"[Video {idx+1}/{num_videos}] Extracting visual context (OCR)...", _p(0.4), None)
+        ocr_text = ""
+        try:
+            from services.ocr_engine import OCREngine
+            ocr_engine = OCREngine(gemini_api_key=settings.gemini_api_key)
+            ocr_text = ocr_engine.extract_text_from_video(video_path, sample_rate_sec=5)
+        except Exception as e:
+            logger.warning(f"OCR extraction failed for {video_path}: {e}")
+
         # Select Clips
         yield (f"[Video {idx+1}/{num_videos}] AI analyzing transcription for viral clips...", _p(0.5), None)
         clips = select_clips(
@@ -95,7 +105,8 @@ def run_autopilot_pipeline(
             max_clips=3,
             min_clips=3,
             min_dur=30.0,
-            max_dur=60.0
+            max_dur=60.0,
+            ocr_text=ocr_text,
         )
         if not clips:
             logger.warning(f"AI could not find any good clips in video {best_video.title}. Skipping.")

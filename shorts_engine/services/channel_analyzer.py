@@ -102,13 +102,13 @@ class NicheInsights:
     short_candidates: list[VideoMeta] = field(default_factory=list)
 
     # Viral recent videos (uploaded within the last 3 weeks, high virality score)
-    viral_recent: list["ViralRecentVideo"] = field(default_factory=list)
+    viral_recent: list[ViralRecentVideo] = field(default_factory=list)
 
     # Top videos ranked purely by view velocity (views/day since upload)
     velocity_picks: list[VideoMeta] = field(default_factory=list)
 
     # Competitor viral recent videos (discovered via automated search)
-    competitor_viral_recent: list["ViralRecentVideo"] = field(default_factory=list)
+    competitor_viral_recent: list[ViralRecentVideo] = field(default_factory=list)
 
     # The AI-deduced search query used to find competitors
     suggested_search_query: str = ""

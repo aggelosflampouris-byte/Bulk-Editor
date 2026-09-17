@@ -1,6 +1,6 @@
-import pytest
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path.cwd()))
 from config import Settings
 from services.seo_generator import correct_transcript_greek
@@ -15,10 +15,10 @@ segments = [
     TranscriptionSegment(start=4.0, end=6.0, text="και λέμε ότι αυτό δεν είναι σωστό", words=[])
 ]
 
-print(f"Original:")
+print("Original:")
 for s in segments: print(s.text)
 
 corrected = correct_transcript_greek(segments, api_key)
 
-print(f"\nCorrected:")
+print("\nCorrected:")
 for s in corrected: print(s.text)

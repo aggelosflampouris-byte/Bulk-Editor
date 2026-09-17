@@ -103,9 +103,9 @@ def authenticate():
         ImportError:      If required packages are not installed.
     """
     try:
+        from google.auth.transport.requests import Request
         from google.oauth2.credentials import Credentials
         from google_auth_oauthlib.flow import InstalledAppFlow
-        from google.auth.transport.requests import Request
         from googleapiclient.discovery import build
     except ImportError as exc:
         raise ImportError(
@@ -159,8 +159,8 @@ def is_authenticated() -> bool:
     triggering any browser flow.
     """
     try:
-        from google.oauth2.credentials import Credentials
         from google.auth.transport.requests import Request
+        from google.oauth2.credentials import Credentials
     except ImportError:
         return False
 
@@ -291,6 +291,7 @@ def fetch_my_recent_videos(youtube_client, max_videos: int = 30):
     bypassing yt-dlp scraping entirely. Returns a list of VideoMeta objects.
     """
     import re
+
     from services.channel_analyzer import VideoMeta
 
     def parse_iso_duration(dur: str) -> int:

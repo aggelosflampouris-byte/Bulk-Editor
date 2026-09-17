@@ -66,7 +66,10 @@ def track_active_speaker(
     try:
         from services.cache_manager import load_cache_pickle, save_cache_pickle
     except ImportError:
-        from shorts_engine.services.cache_manager import load_cache_pickle, save_cache_pickle
+        from shorts_engine.services.cache_manager import (
+            load_cache_pickle,
+            save_cache_pickle,
+        )
 
     cache_key = f"{video_path.name}_{source_width}x{source_height}_{target_width}x{target_height}"
     cached_result = load_cache_pickle("face_tracking", cache_key)

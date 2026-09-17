@@ -153,7 +153,10 @@ def transcribe(
     try:
         from services.cache_manager import load_cache_pickle, save_cache_pickle
     except ImportError:
-        from shorts_engine.services.cache_manager import load_cache_pickle, save_cache_pickle
+        from shorts_engine.services.cache_manager import (
+            load_cache_pickle,
+            save_cache_pickle,
+        )
 
     cache_key = f"{video_path.name}_{model_size}_{device}_{compute_type}_{beam_size}"
     cached_segments = load_cache_pickle("transcription", cache_key)
@@ -280,7 +283,6 @@ def segments_to_ass(
     Generate an ASS subtitle payload from a list of transcription segments.
     Uses an animated, modern TikTok-style 1-word-per-line rendering.
     """
-    import string
     
     effective_style = style_line if style_line is not None else ASS_STYLE_LINE
     effective_highlight = (
