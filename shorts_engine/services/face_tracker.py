@@ -92,7 +92,7 @@ def track_active_speaker(
         )
 
     try:
-        model = YOLO("yolov8n.pt")
+        model = YOLO("yolov8n-pose.pt")
     except Exception as exc:
         logger.warning("Failed to initialize YOLO model: %s — using center-crop fallback.", exc)
         return SpeakerTrackingResult(
@@ -136,13 +136,34 @@ def track_active_speaker(
                 results = model(frame, classes=[0], conf=0.6, verbose=False)
                 boxes = results[0].boxes if results else None
                 if boxes and len(boxes) > 0:
-                    best_box = max(
-                        boxes,
-                        key=lambda b: float((b.xyxy[0][2] - b.xyxy[0][0]) * (b.xyxy[0][3] - b.xyxy[0][1]))
+                    best_idx = max(
+                        range(len(boxes)),
+                        key=lambda i: float((boxes[i].xyxy[0][2] - boxes[i].xyxy[0][0]) * (boxes[i].xyxy[0][3] - boxes[i].xyxy[0][1]))
                     )
+                    best_box = boxes[best_idx]
                     x1, y1, x2, y2 = best_box.xyxy[0].tolist()
                     centroid_x = (x1 + x2) / 2.0
                     centroid_y = (y1 + y2) / 2.0
+                    
+                    # Try to refine centroid using facial keypoints (Nose, L/R Eye, L/R Ear)
+                    keypoints = results[0].keypoints
+                    if keypoints is not None and len(keypoints) > best_idx:
+                        kp = keypoints[best_idx]
+                        if kp.xy is not None and len(kp.xy) > 0:
+                            face_kps = kp.xy[0][:5]
+                            confs = kp.conf[0][:5] if kp.conf is not None else None
+                            
+                            valid_x, valid_y = [], []
+                            for k_idx, pt in enumerate(face_kps):
+                                conf = float(confs[k_idx]) if confs is not None else 1.0
+                                if conf > 0.5 and pt[0] > 0 and pt[1] > 0:
+                                    valid_x.append(float(pt[0]))
+                                    valid_y.append(float(pt[1]))
+                            
+                            if valid_x and valid_y:
+                                centroid_x = sum(valid_x) / len(valid_x)
+                                centroid_y = sum(valid_y) / len(valid_y)
+                                
                     samples.append((t_sec, centroid_x, centroid_y))
             frame_idx += 1
     except Exception as exc:
