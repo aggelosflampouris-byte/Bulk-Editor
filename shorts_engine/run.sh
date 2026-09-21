@@ -131,7 +131,15 @@ install_deps() {
     echo "[OK] Dependencies installed."
 }
 
-# ── Step 5: Launch Streamlit ──────────────────────────────────────────────────
+# ── Step 5: Ensure .env is present ───────────────────────────────────────────
+ensure_env() {
+    if [[ ! -f "$SCRIPT_DIR/.env" ]] && [[ -f "$SCRIPT_DIR/.env.example" ]]; then
+        cp "$SCRIPT_DIR/.env.example" "$SCRIPT_DIR/.env"
+        echo "[OK] Initialized .env template from .env.example."
+    fi
+}
+
+# ── Step 6: Launch Streamlit ──────────────────────────────────────────────────
 launch_app() {
     echo ""
     echo " Starting Streamlit... your browser will open automatically."
@@ -150,6 +158,7 @@ main() {
     check_ffmpeg
     setup_venv
     install_deps
+    ensure_env
     launch_app
 }
 

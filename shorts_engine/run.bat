@@ -131,6 +131,14 @@ if not exist "%VENV_DIR%\Scripts\activate.bat" (
 :: ── Step 4: Activate and install dependencies ─────────────────
 call "%VENV_DIR%\Scripts\activate.bat"
 
+:: Ensure .env exists
+if not exist "%~dp0.env" (
+    if exist "%~dp0.env.example" (
+        copy "%~dp0.env.example" "%~dp0.env" >nul
+        echo [OK] Initialized .env template from .env.example.
+    )
+)
+
 echo [INFO] Installing / updating Python dependencies...
 python -m pip install --quiet --upgrade pip
 python -m pip install --quiet -r "%~dp0requirements.txt"
@@ -147,7 +155,7 @@ echo  Starting Streamlit... your browser will open automatically.
 echo  Press Ctrl+C in this window to stop the server.
 echo.
 
-streamlit run "%~dp0app.py" --server.headless false --browser.gatherUsageStats false
+python -m streamlit run "%~dp0app.py" --server.headless false --browser.gatherUsageStats false
 
 endlocal
 pause

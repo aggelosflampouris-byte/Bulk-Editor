@@ -9,6 +9,13 @@ venv/
 *.mov
 *.avi
 .pytest_cache/
+.ruff_cache/
+.cache/
+test_out_dir/
+output/
+bin/
+temp/
+tmp/
 .env
 *.env
 client_secrets.json
