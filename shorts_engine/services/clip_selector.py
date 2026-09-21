@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -76,6 +77,7 @@ or analysis. Zero rambling or fluff.
 - 35–50s PUNCHLINE / RESOLUTION: End cleanly on a conclusive takeaway, punchline, \
 or clear resolution. Never cut mid-sentence or mid-thought.
 - LOGICAL COHERENCE GUARDRAIL (CRITICAL): The chosen clip MUST make 100% logical sense as a standalone story. It must not contain disjointed, confusing, or skipping thoughts. Do not select clips where the speaker's sentences trail off into gibberish or nonsense. The narrative must flow perfectly from start to finish.
+- NICHE TEMPLATE CONTEXT: {niche_context}
 
 CONSTRAINTS:
 - You MUST select AT LEAST {min_clips} clips and at most {max_clips} clips (aim for {max_clips} clips if the video duration allows).
@@ -393,7 +395,6 @@ def _supplement_clips(
                 excerpt_segs = [s for s in segments if s.end >= cand_s and s.start <= cand_e]
                 full_excerpt_text = " ".join(s.text.strip() for s in excerpt_segs)
                 if api_key and full_excerpt_text:
-                    import time
                     time.sleep(2)  # Avoid rate limiting
                     seo = generate_seo(full_excerpt_text, api_key, source_title=source_title, brand_voice=brand_voice)
                 else:
@@ -426,7 +427,6 @@ def _supplement_clips(
             excerpt_segs = [s for s in segments if s.end >= cand_s and s.start <= cand_e]
             full_excerpt_text = " ".join(s.text.strip() for s in excerpt_segs)
             if api_key and full_excerpt_text:
-                import time
                 time.sleep(2)  # Avoid rate limiting
                 seo = generate_seo(full_excerpt_text, api_key, source_title=source_title, brand_voice=brand_voice)
             else:
@@ -515,7 +515,6 @@ def _build_fallback_clips(
         excerpt_segs = [s for s in segments if s.end >= clip_start and s.start <= clip_end]
         full_excerpt_text = " ".join(s.text.strip() for s in excerpt_segs)
         if api_key and full_excerpt_text:
-            import time
             time.sleep(2)  # Avoid rate limiting
             seo = generate_seo(full_excerpt_text, api_key, source_title=source_title, brand_voice=brand_voice)
         else:
@@ -548,6 +547,7 @@ def select_clips(
     brand_voice: str = "",
     channel_niche: str = "",
     ocr_text: str = "",
+    niche_template: str = "custom",
 ) -> list[ClipCandidate]:
     """
     Use Gemini to select the most viral-worthy clips from a transcript.
@@ -606,9 +606,19 @@ def select_clips(
         return cached_candidates
 
     niche_line = channel_niche.strip() or "High-value, engaging content across any topic"
+
+    # Pull niche context from the template registry for richer prompt context
+    try:
+        from services.niche_templates import get_template
+    except ImportError:
+        from shorts_engine.services.niche_templates import get_template
+    template = get_template(niche_template)
+    niche_context = template.channel_niche_context or niche_line
+
     prompt = _CLIP_SELECTION_PROMPT.format(
         source_title=source_title or "Unknown",
         channel_niche=niche_line,
+        niche_context=niche_context,
         min_clips=min_clips,
         max_clips=max_clips,
         min_dur=int(min_dur),

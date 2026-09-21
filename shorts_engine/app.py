@@ -16,14 +16,15 @@ import os
 import re
 import shutil
 import tempfile
-from datetime import datetime, timezone
 from pathlib import Path
 
 import streamlit as st
 
+import pipeline
 from config import Settings, assert_system_binaries, inject_ffmpeg_path
 from pipeline import ProcessingResult, run_batch, run_url_pipeline
 from services.clip_selector import ClipCandidate
+from services.niche_templates import NICHE_TEMPLATES, get_template, template_options
 from services.seo_generator import get_download_filename
 
 # ── Logging Setup ──────────────────────────────────────────────────────────────
@@ -280,9 +281,9 @@ def _render_sidebar() -> Settings:
     """
     Render the settings sidebar and return a populated Settings instance.
 
-    API keys are read exclusively from the .env file / environment — no
-    sidebar inputs are exposed for them.  A status row shows whether each
-    key was found.
+    The sidebar is driven by a Niche Template selectbox at the top. Selecting
+    a template pre-fills all dependent controls with sensible defaults for that
+    content type; the user can still override any individual setting.
 
     Returns:
         Settings object built from sidebar inputs.
@@ -307,6 +308,48 @@ def _render_sidebar() -> Settings:
             st.caption("Add missing keys to `shorts_engine/.env` and restart.")
 
         st.markdown("---")
+
+        # ── Niche Template ─────────────────────────────────────────────────
+        st.markdown("### 🎯 Niche Template")
+
+        options = template_options()   # list of (name, label)
+        option_names = [n for n, _ in options]
+        option_labels = [lbl for _, lbl in options]
+
+        selected_template_name = st.selectbox(
+            "Content Niche",
+            options=option_names,
+            format_func=lambda n: dict(options).get(n, n),
+            index=0,
+            help=(
+                "Select your channel's content niche to auto-configure clip duration, "
+                "music, VFX grade, and subtitle placement. You can still override any "
+                "individual setting below."
+            ),
+            key="niche_template_select",
+        )
+
+        active_template = get_template(selected_template_name)
+        if selected_template_name != "custom":
+            st.caption(f"*{active_template.description}*")
+
+        custom_brand_voice = st.text_input(
+            "Brand Voice Override (Optional)",
+            value="",
+            placeholder="e.g. Sarcastic, funny gamer...",
+            help="Append a custom voice to the template's preset. Leave blank to use the template's voice.",
+            key="brand_voice_input",
+        )
+
+        # Compose final brand voice
+        if active_template.brand_voice and custom_brand_voice.strip():
+            final_brand_voice = f"{active_template.brand_voice} ADDITIONALLY: {custom_brand_voice.strip()}"
+        elif custom_brand_voice.strip():
+            final_brand_voice = custom_brand_voice.strip()
+        else:
+            final_brand_voice = active_template.brand_voice
+
+        st.markdown("---")
         st.markdown("### Transcription")
         model_size = st.selectbox(
             "Whisper Model Size",
@@ -328,10 +371,14 @@ def _render_sidebar() -> Settings:
             ),
             key="whisper_beam_size_select",
         )
+        # Domain context follows the template by default but can be overridden
+        domain_options = ["", "politics", "society", "science", "technology", "entertainment", "business", "education", "lifestyle", "gaming"]
+        template_hint = active_template.whisper_context_hint
+        default_domain_idx = domain_options.index(template_hint) if template_hint in domain_options else 0
         whisper_context_hint = st.selectbox(
             "Domain Context",
-            options=["", "politics", "society", "science", "technology", "entertainment", "business", "education", "lifestyle", "gaming"],
-            index=0,
+            options=domain_options,
+            index=default_domain_idx,
             format_func=lambda x: {
                 "": "Generic (auto-detect)",
                 "politics": "🏛️ Politics / Economy",
@@ -346,19 +393,32 @@ def _render_sidebar() -> Settings:
             }.get(x, x),
             help=(
                 "Inject domain vocabulary into the Whisper transcription prompt and Gemini SEO generator for higher accuracy.\n"
-                "Select the topic closest to your video's content."
+                "Automatically set by the Niche Template — override here if needed."
             ),
             key="whisper_context_hint_select",
         )
 
         st.markdown("---")
-        st.markdown("### Content Analysis & Hooks")
+        st.markdown("### Subtitles")
+        subtitle_position = st.selectbox(
+            "Caption Position",
+            options=["lower_third", "center", "top"],
+            index=["lower_third", "center", "top"].index(active_template.subtitle_position),
+            format_func=lambda x: {
+                "lower_third": "Lower Third (default for Shorts)",
+                "center": "Center (lifestyle / entertainment)",
+                "top": "Top (gaming, avoid platform UI overlap)",
+            }.get(x, x),
+            help="Vertical position of animated captions in the 9:16 frame.",
+            key="subtitle_position_select",
+        )
+
         st.markdown("---")
         st.markdown("### Auto-Framing")
         enable_face_tracking = st.checkbox(
             "YOLO Face Speaker Tracking",
             value=True,
-            help="Tracks active speaker coordinates frame-by-frame with EMA smoothing to keep the subject centered when cropping 16:9 to 9:16 vertical Shorts.",
+            help="Tracks active speaker face keypoints frame-by-frame to keep the subject centered when cropping 16:9 to 9:16 vertical Shorts.",
             key="enable_face_tracking_check",
         )
 
@@ -378,11 +438,10 @@ def _render_sidebar() -> Settings:
             ),
             key="enable_vfx_check",
         )
-        if enable_vfx:
+        if enable_vfx and active_template.vfx_preset_override:
             st.caption(
-                "Preset selected automatically per clip from transcript keywords "
-                "and YOLO scene analysis. Applied after subtitle burn-in, before "
-                "background music."
+                f"Template default: **{active_template.vfx_preset_override}** grade applied "
+                "automatically. Override per-clip via the VFX engine."
             )
 
         st.markdown("---")
@@ -404,7 +463,6 @@ def _render_sidebar() -> Settings:
             step=0.5,
             key="broll_duration_slider",
         )
-        
         broll_ken_burns = st.checkbox(
             "Enable Ken Burns Effect",
             value=True,
@@ -443,43 +501,7 @@ def _render_sidebar() -> Settings:
         )
 
         st.markdown("---")
-        st.markdown("### SEO Settings")
-        
-        seo_preset = st.selectbox(
-            "Virality Preset",
-            options=["None", "Politics/Economy", "Society", "Science", "Technology"],
-            index=0,
-            help="Select a high-virality persona preset tailored to your content's niche.",
-            key="seo_preset_select",
-        )
-        
-        custom_brand_voice = st.text_input(
-            "Custom Brand Voice / Persona (Optional)",
-            value="",
-            placeholder="e.g. Sarcastic, funny gamer...",
-            help="Inject your specific channel personality. This will be combined with the preset if selected.",
-            key="brand_voice_input",
-        )
-        
-        # Combine preset and custom voice
-        preset_mapping = {
-            "None": "",
-            "Politics/Economy": "Highly authoritative, analytical, and slightly polarizing. Focus on hidden agendas, economic impact, and hard truths. Tone should be serious, urgent, and provocative.",
-            "Society": "Relatable, empathetic, and thought-provoking. Focus on human behavior, social dynamics, and everyday realities. Tone should spark intense debate and personal reflection.",
-            "Science": "Educational, mind-blowing, and highly factual. Focus on explaining complex concepts simply, debunking myths, and highlighting future implications. Tone should be awe-inspiring and authoritative.",
-            "Technology": "Forward-looking, fast-paced, and analytical. Focus on innovation, disruption, and how tech changes daily life. Tone should be cutting-edge, enthusiastic, and slightly urgent."
-        }
-        
-        selected_preset = preset_mapping.get(seo_preset, "")
-        if selected_preset and custom_brand_voice.strip():
-            final_brand_voice = f"{selected_preset} ADDITIONALLY: {custom_brand_voice.strip()}"
-        elif selected_preset:
-            final_brand_voice = selected_preset
-        else:
-            final_brand_voice = custom_brand_voice.strip()
-
-        st.markdown("---")
-        st.markdown("### Clip Selection (URL Mode)")
+        st.markdown("### Clip Selection")
         max_clips = st.slider(
             "Max Clips per Video",
             min_value=3,
@@ -492,18 +514,27 @@ def _render_sidebar() -> Settings:
         clip_min_dur = st.slider(
             "Min Clip Duration (s)",
             min_value=20,
-            max_value=45,
-            value=35,
+            max_value=50,
+            value=int(active_template.clip_min_duration),
             step=5,
             key="clip_min_dur_slider",
         )
         clip_max_dur = st.slider(
             "Max Clip Duration (s)",
-            min_value=35,
+            min_value=30,
             max_value=60,
-            value=50,
+            value=int(active_template.clip_max_duration),
             step=5,
             key="clip_max_dur_slider",
+        )
+        max_source_duration_minutes = st.slider(
+            "Max Source Video Length (min)",
+            min_value=5,
+            max_value=240,
+            value=120,
+            step=5,
+            help="Reject source videos longer than this. Prevents accidentally processing 4-hour livestreams.",
+            key="max_source_dur_slider",
         )
 
         st.markdown("---")
@@ -517,12 +548,10 @@ def _render_sidebar() -> Settings:
 
         outro_path: Path | None = None
         if outro_file is not None:
-            # Persist the uploaded outro to a session-scoped temp file
             if "outro_tmp_path" not in st.session_state:
+                import tempfile as _tf
                 suffix = Path(outro_file.name).suffix
-                tmp = tempfile.NamedTemporaryFile(
-                    delete=False, suffix=suffix, prefix="outro_"
-                )
+                tmp = _tf.NamedTemporaryFile(delete=False, suffix=suffix, prefix="outro_")
                 tmp.write(outro_file.read())
                 tmp.flush()
                 tmp.close()
@@ -530,7 +559,6 @@ def _render_sidebar() -> Settings:
             outro_path = Path(st.session_state["outro_tmp_path"])
             st.success(f"Outro loaded: {outro_file.name}")
         else:
-            # Clear stale temp path if user removed the file
             if "outro_tmp_path" in st.session_state:
                 del st.session_state["outro_tmp_path"]
 
@@ -543,10 +571,10 @@ def _render_sidebar() -> Settings:
             key="enable_bg_music_check",
         )
 
-        bg_music_track = "ambient_calm"
+        bg_music_track = active_template.bg_music_track
         custom_music_path: Path | None = None
-        bg_music_vol = 0.20
-        bg_music_duck = True
+        bg_music_vol = active_template.bg_music_volume
+        bg_music_duck = active_template.bg_music_ducking
 
         if enable_bg_music:
             bg_music_track = st.selectbox(
@@ -559,7 +587,9 @@ def _render_sidebar() -> Settings:
                     "custom": "Upload Custom Track",
                     "none": "None",
                 }.get(x, x),
-                index=0,
+                index=["ambient_calm", "dramatic_pulse", "upbeat_groove", "custom", "none"].index(
+                    active_template.bg_music_track
+                ),
                 help="Select a bundled royalty-free sound bed or upload your own audio.",
                 key="bg_music_track_select",
             )
@@ -568,15 +598,13 @@ def _render_sidebar() -> Settings:
                 custom_music_file = st.file_uploader(
                     "Upload Music Track (.mp3, .wav, .m4a)",
                     type=["mp3", "wav", "m4a", "aac"],
-                    help="Custom audio file to use as background music.",
                     key="custom_music_uploader",
                 )
                 if custom_music_file is not None:
                     if "custom_music_tmp_path" not in st.session_state:
+                        import tempfile as _tf
                         suffix = Path(custom_music_file.name).suffix
-                        tmp_music = tempfile.NamedTemporaryFile(
-                            delete=False, suffix=suffix, prefix="bgm_"
-                        )
+                        tmp_music = _tf.NamedTemporaryFile(delete=False, suffix=suffix, prefix="bgm_")
                         tmp_music.write(custom_music_file.read())
                         tmp_music.flush()
                         tmp_music.close()
@@ -591,17 +619,15 @@ def _render_sidebar() -> Settings:
                 "Music Volume",
                 min_value=0.02,
                 max_value=0.40,
-                value=0.20,
+                value=active_template.bg_music_volume,
                 step=0.01,
                 format="%.2f",
-                help="Volume of background music relative to speech (20% recommended).",
                 key="bg_music_vol_slider",
             )
-
             bg_music_duck = st.checkbox(
                 "Speech Ducking",
-                value=True,
-                help="Automatically lowers background music when the speaker is talking so words remain 100% intelligible.",
+                value=active_template.bg_music_ducking,
+                help="Automatically lowers background music when the speaker is talking.",
                 key="bg_music_ducking_check",
             )
 
@@ -612,7 +638,7 @@ def _render_sidebar() -> Settings:
         output_dir_input = st.text_input(
             "Destination Directory",
             value=default_output_str,
-            help="Folder on your machine where processed shorts, cut clips, and SEO JSON files are saved automatically.",
+            help="Folder where processed shorts, cut clips, and SEO JSON files are saved.",
             key="output_dir_input",
         )
         resolved_output_dir = (
@@ -653,7 +679,10 @@ def _render_sidebar() -> Settings:
         max_clips=int(max_clips),
         clip_min_duration=float(clip_min_dur),
         clip_max_duration=float(max(clip_max_dur, clip_min_dur + 5)),
+        max_source_duration_seconds=int(max_source_duration_minutes * 60),
         brand_voice=final_brand_voice,
+        niche_template=selected_template_name,
+        subtitle_position=str(subtitle_position),
         outro_path=outro_path,
         output_dir=resolved_output_dir,
     )
@@ -1345,241 +1374,18 @@ def main() -> None:
     # TAB 3 — NICHE EXPLORER
     # ══════════════════════════════════════════════════════════════════════════
     elif active_tab == "📊 Niche Explorer":
-        from shorts_engine.ui.niche_explorer_tab import render_niche_explorer_tab
+        from ui.niche_explorer_tab import render_niche_explorer_tab
         render_niche_explorer_tab(settings)
+
 
     # ═══════════════════════════════════════════════════════════════════════════
     # TAB 4 — UPLOAD TO YOUTUBE
     # ═══════════════════════════════════════════════════════════════════════════
     elif active_tab == "📤 Upload to YouTube":
-        _, main_col, _ = st.columns([1, 6, 1])
-        with main_col:
-            st.markdown("### 📤 Upload to YouTube")
-            st.markdown(
-                "Connect your YouTube channel to upload finished Shorts directly from the app. "
-                "Set an immediate or scheduled publish time."
-            )
-
-            # Lazy-import uploader service so the rest of the app works even
-            # if google-api-python-client is not yet installed.
-            try:
-                from services.youtube_uploader import (
-                    YouTubeAuthError,
-                    YouTubeUploadError,
-                    authenticate,
-                    get_channel_info,
-                    is_authenticated,
-                    revoke_token,
-                    upload_short,
-                )
-                _yt_pkgs_ok = True
-            except ImportError:
-                _yt_pkgs_ok = False
-                st.error(
-                    "📦 **Missing packages.** Run the following in the terminal, then restart the app:\n\n"
-                    "```bash\n"
-                    "pip install google-api-python-client google-auth-oauthlib google-auth-httplib2\n"
-                    "```"
-                )
-
-            if _yt_pkgs_ok:
-                # ── Check for client_secrets.json ───────────────────────────────
-                from pathlib import Path as _Path
-                _secrets_path = _Path(__file__).parent / "client_secrets.json"
-                if not _secrets_path.is_file():
-                    st.warning(
-                        "⚠️ **client_secrets.json not found.** "
-                        "To connect your YouTube channel:\n\n"
-                        "1. Go to [Google Cloud Console](https://console.cloud.google.com/).\n"
-                        "2. Create a project, enable the **YouTube Data API v3**.\n"
-                        "3. Create an **OAuth 2.0 Client ID** (type: Desktop App).\n"
-                        "4. Download the JSON file and save it as `shorts_engine/client_secrets.json`.\n"
-                        "5. Restart the app."
-                    )
-
-                st.markdown("---")
-
-                # ── Auth Status ──────────────────────────────────────────────────
-                connected = is_authenticated()
-
-                auth_col, rev_col = st.columns([3, 1])
-                with auth_col:
-                    if connected:
-                        st.success("✅ YouTube account connected")
-                    else:
-                        st.info("🔒 Not connected — click **Connect YouTube Account** to begin.")
-
-                with rev_col:
-                    if connected:
-                        if st.button("🔓 Disconnect", key="yt_revoke", type="secondary"):
-                            revoke_token()
-                            st.success("Disconnected. Token deleted.")
-                            st.rerun()
-
-                if not connected:
-                    if st.button("🔗 Connect YouTube Account", key="yt_connect", type="primary"):
-                        try:
-                            with st.spinner("Opening browser for Google OAuth2 login..."):
-                                yt = authenticate()
-                                info = get_channel_info(yt)
-                                st.session_state["yt_channel_info"] = info
-                            st.success(
-                                f"✅ Connected as: **{info['title']}** "
-                                f"({info['subscriber_count']:,} subscribers)"
-                            )
-                            st.rerun()
-                        except Exception as exc:
-                            st.error(f"❌ Authentication failed: {exc}")
-
-                if connected:
-                    # ── Channel Info Card ────────────────────────────────────────
-                    try:
-                        if "yt_channel_info" not in st.session_state:
-                            with st.spinner("Loading channel info..."):
-                                yt = authenticate()
-                                st.session_state["yt_channel_info"] = get_channel_info(yt)
-                        info = st.session_state["yt_channel_info"]
-
-                        st.markdown("#### Your Channel")
-                        ch_cols = st.columns(3)
-                        with ch_cols[0]:
-                            st.metric("📺 Channel", info["title"])
-                        with ch_cols[1]:
-                            st.metric("👥 Subscribers", f"{info['subscriber_count']:,}")
-                        with ch_cols[2]:
-                            st.metric("🎥 Videos", f"{info['video_count']:,}")
-
-                    except Exception as exc:
-                        st.warning(f"Could not load channel info: {exc}")
-
-                    st.markdown("---")
-
-                    # ── Processed Clips ──────────────────────────────────────────
-                    st.markdown("#### Processed Clips Ready to Upload")
-
-                    output_dir = settings.output_dir
-                    all_clips: list[Path] = []
-                    if output_dir.is_dir():
-                        all_clips = sorted(
-                            output_dir.rglob("*_short.mp4"),
-                            key=lambda p: p.stat().st_mtime,
-                            reverse=True,
-                        )
-
-                    if not all_clips:
-                        st.info(
-                            "No processed clips found in the output directory yet. "
-                            "Use **File Upload** or **Video URL** tabs to generate Shorts first."
-                        )
-                    else:
-                        st.caption(
-                            f"Found {len(all_clips)} clip(s) in `{output_dir}`. "
-                            "Select a clip to configure and upload."
-                        )
-
-                        for idx, clip_path in enumerate(all_clips):
-                            # Attempt to load companion SEO JSON
-                            seo_stem = clip_path.stem.replace("_short", "")
-                            seo_json_path = clip_path.parent / f"seo_{seo_stem}.json"
-                            seo_data: dict = {}
-                            if seo_json_path.is_file():
-                                try:
-                                    import json as _json
-                                    seo_data = _json.loads(seo_json_path.read_text(encoding="utf-8"))
-                                except Exception:
-                                    pass
-
-                            with st.expander(f"🎥 {clip_path.name}", expanded=False):
-                                upload_title = st.text_input(
-                                    "Title",
-                                    value=seo_data.get("title", clip_path.stem)[:100],
-                                    max_chars=100,
-                                    key=f"yt_title_{idx}_{clip_path.name}",
-                                )
-                                upload_desc = st.text_area(
-                                    "Description",
-                                    value=seo_data.get("description", "")[:5000],
-                                    height=120,
-                                    key=f"yt_desc_{idx}_{clip_path.name}",
-                                )
-                                raw_tags = seo_data.get("tags", [])
-                                upload_tags_str = st.text_input(
-                                    "Tags (comma-separated)",
-                                    value=", ".join(raw_tags) if raw_tags else "",
-                                    key=f"yt_tags_{idx}_{clip_path.name}",
-                                    help="Paste YouTube tags separated by commas. Max 500 chars total.",
-                                )
-
-                                publish_mode = st.radio(
-                                    "Publish Mode",
-                                    ["Publish Now", "Schedule"],
-                                    horizontal=True,
-                                    key=f"yt_mode_{idx}_{clip_path.name}",
-                                )
-
-                                scheduled_dt = None
-                                if publish_mode == "Schedule":
-                                    from datetime import date as _date
-                                    from datetime import time as _time
-                                    sched_date = st.date_input(
-                                        "Publish Date (UTC)",
-                                        value=_date.today(),
-                                        key=f"yt_date_{idx}_{clip_path.name}",
-                                    )
-                                    sched_time = st.time_input(
-                                        "Publish Time (UTC)",
-                                        value=_time(9, 0),
-                                        key=f"yt_time_{idx}_{clip_path.name}",
-                                    )
-                                    scheduled_dt = datetime(
-                                        sched_date.year, sched_date.month, sched_date.day,
-                                        sched_time.hour, sched_time.minute,
-                                        tzinfo=timezone.utc,
-                                    )
-
-                                if st.button(
-                                    "🚀 Upload to YouTube" if publish_mode == "Publish Now" else "🗓️ Schedule Upload",
-                                    key=f"yt_upload_{idx}_{clip_path.name}",
-                                    type="primary",
-                                ):
-                                    try:
-                                        tag_list = [
-                                            t.strip() for t in upload_tags_str.split(",")
-                                            if t.strip()
-                                        ]
-                                        with st.spinner(
-                                            f"Uploading '{clip_path.name}' to YouTube..."
-                                        ):
-                                            yt = authenticate()
-                                            video_id = upload_short(
-                                                youtube_client=yt,
-                                                video_path=clip_path,
-                                                title=upload_title,
-                                                description=upload_desc,
-                                                tags=tag_list,
-                                                publish_at=scheduled_dt,
-                                            )
-                                        watch_url = f"https://www.youtube.com/watch?v={video_id}"
-                                        if scheduled_dt:
-                                            st.success(
-                                                f"✅ **Scheduled!** Will go live at "
-                                                f"`{scheduled_dt.strftime('%Y-%m-%d %H:%M UTC')}`\n\n"
-                                                f"🔗 [View in YouTube Studio]({watch_url})"
-                                            )
-                                        else:
-                                            st.success(
-                                                f"✅ **Published!** Your Short is now live:\n\n"
-                                                f"🔗 [{watch_url}]({watch_url})"
-                                            )
-                                    except FileNotFoundError as exc:
-                                        st.error(f"❌ File not found: {exc}")
-                                    except YouTubeAuthError as exc:
-                                        st.error(f"❌ Auth error: {exc}")
-                                    except YouTubeUploadError as exc:
-                                        st.error(f"❌ Upload failed: {exc}")
-                                    except Exception as exc:
-                                        st.error(f"❌ Unexpected error: {exc}")
+        from ui.youtube_upload_tab import render_youtube_upload_tab
+        render_youtube_upload_tab(settings)
 
 
 if __name__ == "__main__":
     main()
+

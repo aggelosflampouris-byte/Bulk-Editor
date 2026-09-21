@@ -218,11 +218,11 @@ class Settings:
     # ── Active Speaker Framing (YOLO-face) ─────────────────────
     enable_face_tracking: bool = True
 
-    # ── VFX / Colour Grading ──────────────────────────────────
+    # ── VFX / Colour Grading ──────────────────────────────────────────────
     # Enable transcript- and YOLO-driven colour grading applied after subtitle burn.
     enable_vfx: bool = True
-    # YOLO model weights used for scene analysis (same file as face tracker).
-    vfx_yolo_model: str = "yolov8n.pt"
+    # YOLO model weights used for scene analysis — must match face tracker model.
+    vfx_yolo_model: str = "yolov8n-pose.pt"
 
     # ── Output ────────────────────────────────────────────────
     output_dir: Path = field(default_factory=lambda: DEFAULT_OUTPUT_DIR)
@@ -256,7 +256,15 @@ class Settings:
     clip_max_duration: float = 50.0
     # Reject source videos longer than this many seconds (2 hours default)
     max_source_duration_seconds: int = 7200
-    
+
+    # ── Niche Template ────────────────────────────────────────
+    # Active niche template key. "custom" means no preset applied.
+    niche_template: str = "custom"
+
+    # ── Subtitles ─────────────────────────────────────────────
+    # Vertical placement of captions: "lower_third" | "center" | "top"
+    subtitle_position: str = "lower_third"
+
     # ── SEO Engine ─────────────────────────────────────────────
     # Optional Brand Voice injection to tailor Gemini's writing tone
     brand_voice: str = ""

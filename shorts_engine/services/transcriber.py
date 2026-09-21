@@ -76,7 +76,28 @@ _DOMAIN_PROMPTS: dict[str, str] = {
         "Τεχνολογία, ψηφιακός, AI, τεχνητή νοημοσύνη, software, hardware, startup, "
         "blockchain, crypto, metaverse, app, platform, data, cloud."
     ),
+    "entertainment": (
+        "Ψυχαγωγία, σινεμά, μουσική, τηλεόραση, σειρά, Netflix, celebrity, αστέρι, "
+        "reality show, Survivor, τραγούδι, άλμπουμ, ηθοποιός, σκηνοθέτης."
+    ),
+    "business": (
+        "Επιχείρηση, εταιρεία, startup, CEO, επενδυτής, χρηματοδότηση, κέρδος, "
+        "αγορά, στρατηγική, marketing, brand, προϊόν, πελάτης, ανάπτυξη."
+    ),
+    "education": (
+        "Εκπαίδευση, σχολείο, πανεπιστήμιο, μάθηση, ιστορία, αρχαία Ελλάδα, "
+        "φιλοσοφία, Σωκράτης, Πλάτωνας, Αριστοτέλης, επανάσταση, πολιτισμός."
+    ),
+    "lifestyle": (
+        "Τρόπος ζωής, ταξίδι, διακοπές, φαγητό, μαγειρική, γυμναστική, "
+        "υγεία, ευεξία, μόδα, στυλ, σπίτι, διακόσμηση, vlog, εμπειρία."
+    ),
+    "gaming": (
+        "Gaming, παιχνίδι, gamer, PlayStation, Xbox, PC, esports, streamer, "
+        "Twitch, YouTube Gaming, update, patch, multiplayer, ranked, tournament."
+    ),
 }
+
 
 _DEFAULT_WHISPER_PROMPT: str = (
     "Γεια σας. Σήμερα θα μιλήσουμε για ένα σημαντικό θέμα που αφορά την Ελλάδα. "
@@ -273,22 +294,55 @@ def _escape_ass_text(text: str) -> str:
     return text
 
 
+# Mapping from position names to ASS MarginV values.
+# MarginV is the distance in pixels from the bottom of the 1920px frame.
+_SUBTITLE_MARGIN_V: dict[str, int] = {
+    "lower_third": 540,   # ~28% up from bottom (default for Shorts)
+    "center": 960,        # True vertical centre of the frame
+    "top": 1600,          # Near the top, leaving room for platform UI
+}
+
+
+def _build_style_line(base: str, margin_v: int) -> str:
+    """
+    Clone a standard ASS style line with a custom MarginV.
+
+    The MarginV field is the 22nd comma-separated token (0-indexed: 21).
+    """
+    parts = base.split(",")
+    # Field index 21 = MarginV in the Format order defined in ASS_HEADER_TEMPLATE
+    if len(parts) > 21:
+        parts[21] = str(margin_v)
+    return ",".join(parts)
+
+
 def segments_to_ass(
     segments: list[TranscriptionSegment],
     style_line: str | None = None,
     highlight_style_line: str | None = None,
     primary_keyword: str | None = None,
+    subtitle_position: str = "lower_third",
 ) -> str:
     """
     Generate an ASS subtitle payload from a list of transcription segments.
     Uses an animated, modern TikTok-style 1-word-per-line rendering.
+
+    Args:
+        segments:            Ordered transcript segments.
+        style_line:          Optional raw ASS style string override.
+        highlight_style_line: Optional highlight style override.
+        primary_keyword:     Keyword to highlight in yellow.
+        subtitle_position:   "lower_third" | "center" | "top".
     """
-    
-    effective_style = style_line if style_line is not None else ASS_STYLE_LINE
-    effective_highlight = (
-        highlight_style_line
-        if highlight_style_line is not None
-        else ASS_HIGHLIGHT_STYLE_LINE
+    margin_v = _SUBTITLE_MARGIN_V.get(subtitle_position, _SUBTITLE_MARGIN_V["lower_third"])
+
+    effective_style = _build_style_line(
+        style_line if style_line is not None else ASS_STYLE_LINE,
+        margin_v,
+    )
+    effective_highlight = _build_style_line(
+        highlight_style_line if highlight_style_line is not None else ASS_HIGHLIGHT_STYLE_LINE,
+        margin_v,
     )
 
     clean_keyword = ""
@@ -355,6 +409,7 @@ def write_ass_file(
     style_line: str | None = None,
     highlight_style_line: str | None = None,
     primary_keyword: str | None = None,
+    subtitle_position: str = "lower_third",
 ) -> Path:
     """
     Generate and write an ASS subtitle file for the given segments.
@@ -364,7 +419,8 @@ def write_ass_file(
         output_path:          Destination path for the .ass file.
         style_line:           Optional style override (see segments_to_ass).
         highlight_style_line: Optional highlight style override.
-        primary_keyword:      Optional keyword to statically highlight (e.g. Green).
+        primary_keyword:      Optional keyword to statically highlight.
+        subtitle_position:    Vertical placement: "lower_third" | "center" | "top".
 
     Returns:
         The resolved, written output_path.
@@ -377,6 +433,7 @@ def write_ass_file(
         style_line=style_line,
         highlight_style_line=highlight_style_line,
         primary_keyword=primary_keyword,
+        subtitle_position=subtitle_position,
     )
 
     # ASS files must be UTF-8 encoded to preserve Greek glyphs

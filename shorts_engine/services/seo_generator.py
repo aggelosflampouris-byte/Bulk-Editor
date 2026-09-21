@@ -696,9 +696,19 @@ def align_words_with_corrected_text(
 
     new_words = corrected_text.strip().split()
     if not new_words:
-        return original_words
+        return original_words or []
 
-    if original_words and len(original_words) == len(new_words):
+    # Guard: segments without word-level timestamps (words=None) must fall back
+    # to a proportional distribution across the corrected words.
+    if not original_words:
+        seg_dur = seg_end - seg_start
+        per_word = seg_dur / len(new_words) if new_words else seg_dur
+        return [
+            (round(seg_start + i * per_word, 3), round(seg_start + (i + 1) * per_word, 3), w)
+            for i, w in enumerate(new_words)
+        ]
+
+    if len(original_words) == len(new_words):
         return [(w[0], w[1], nw) for w, nw in zip(original_words, new_words)]
 
     # Use difflib to map the new words to the original words by string similarity
@@ -709,12 +719,11 @@ def align_words_with_corrected_text(
     aligned: list[tuple[float, float, str]] = []
     
     # We will compute an average word duration from the original words as a fallback
-    avg_duration = 0.3
-    if original_words:
-        avg_duration = max(0.1, (seg_end - seg_start) / len(original_words))
+    avg_duration = max(0.1, (seg_end - seg_start) / len(original_words))
 
     # To track the last known valid time
     current_time = seg_start
+
 
     for op, i1, i2, j1, j2 in sm.get_opcodes():
         if op == 'equal' or op == 'replace':

@@ -18,28 +18,17 @@ from __future__ import annotations
 import json
 import logging
 import shutil
-import sys
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-_PKG_DIR = Path(__file__).parent.resolve()
-if str(_PKG_DIR.parent) not in sys.path:
-    sys.path.insert(0, str(_PKG_DIR.parent))
-if str(_PKG_DIR) not in sys.path:
-    sys.path.insert(0, str(_PKG_DIR))
-
 try:
     from config import Settings, assert_system_binaries
 except ImportError:
     from shorts_engine.config import Settings, assert_system_binaries
-from services.broll_fetcher import (
-    download_clip,
-    extract_broll_query,
-    search_broll,
-)
+from services.broll_fetcher import download_clip, search_broll
 from services.cache_manager import log_project_history
 from services.clip_selector import ClipCandidate, select_clips
 from services.compositor import compose_timeline
@@ -210,6 +199,7 @@ def build_short_from_clip(
             segments,
             ass_path,
             primary_keyword=seo.primary_keyword if seo else None,
+            subtitle_position=getattr(settings, "subtitle_position", "lower_third"),
         )
     else:
         warnings.append("No transcript segments provided — subtitles skipped.")
@@ -576,6 +566,7 @@ def run_batch(
                     brand_voice=settings.brand_voice,
                     channel_niche=settings.whisper_context_hint or "",
                     ocr_text=ocr_text,
+                    niche_template=getattr(settings, "niche_template", "custom"),
                 )
 
                 snapped: list[ClipCandidate] = []
@@ -860,6 +851,7 @@ def run_url_pipeline(
             brand_voice=settings.brand_voice,
             channel_niche=settings.whisper_context_hint or "",
             ocr_text=ocr_text,
+            niche_template=getattr(settings, "niche_template", "custom"),
         )
 
         # ── Phase 4: Boundary Snapping ─────────────────────────────────────────
