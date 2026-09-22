@@ -20,6 +20,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+try:
+    from services.hw_encoder import get_encoder_args, get_hwaccel_input_args
+except ImportError:
+    from shorts_engine.services.hw_encoder import get_encoder_args, get_hwaccel_input_args
+
 logger = logging.getLogger(__name__)
 
 # ── Custom Exception ───────────────────────────────────────────────────────────
@@ -320,14 +325,14 @@ def crop_to_9_16(
         f"setsar=1"
     )
 
+    hw_input_args = get_hwaccel_input_args()
     run_ffmpeg([
         "ffmpeg", "-y",
+        *hw_input_args,
         "-i", str(input_path),
         "-vf", vf,
-        "-c:v", "libx264",
+        *get_encoder_args(crf_equivalent=23),
         "-pix_fmt", "yuv420p",
-        "-preset", "fast",
-        "-crf", "23",
         "-c:a", "aac",
         "-b:a", "128k",
         "-movflags", "+faststart",
@@ -495,16 +500,16 @@ def overlay_broll(
         )
         audio_map_args = ["-map", "[a_out]", "-c:a", "aac", "-b:a", "128k"]
 
+    hw_input_args = get_hwaccel_input_args()
     cmd = ["ffmpeg", "-y"]
+    cmd.extend(hw_input_args)
     cmd.extend(ffmpeg_input_args)
     cmd.extend([
         "-filter_complex", filter_complex,
         "-map", "[v_out]",
         *audio_map_args,
-        "-c:v", "libx264",
+        *get_encoder_args(crf_equivalent=23),
         "-pix_fmt", "yuv420p",
-        "-preset", "fast",
-        "-crf", "23",
         "-movflags", "+faststart",
         str(output_path),
     ])
@@ -565,14 +570,14 @@ def burn_subtitles(
     # Build the subtitles filter with fontsdir
     vf = f"subtitles='{escaped_ass}':fontsdir='{escaped_fonts}'"
 
+    hw_input_args = get_hwaccel_input_args()
     run_ffmpeg([
         "ffmpeg", "-y",
+        *hw_input_args,
         "-i", str(input_path),
         "-vf", vf,
-        "-c:v", "libx264",
+        *get_encoder_args(crf_equivalent=23),
         "-pix_fmt", "yuv420p",
-        "-preset", "fast",
-        "-crf", "23",
         "-c:a", "copy",  # Audio is already encoded; avoid re-encoding
         "-movflags", "+faststart",
         str(output_path),
@@ -666,17 +671,17 @@ def concatenate_with_outro(
 
     filter_complex = ";".join(filter_chains)
 
+    hw_input_args = get_hwaccel_input_args()
     run_ffmpeg([
         "ffmpeg", "-y",
+        *hw_input_args,
         "-i", str(main_path),
         "-i", str(outro_path),
         "-filter_complex", filter_complex,
         "-map", "[v_out]",
         "-map", "[a_out]",
-        "-c:v", "libx264",
+        *get_encoder_args(crf_equivalent=23),
         "-pix_fmt", "yuv420p",
-        "-preset", "fast",
-        "-crf", "23",
         "-c:a", "aac",
         "-b:a", "128k",
         "-movflags", "+faststart",
@@ -732,14 +737,14 @@ def slice_video(
     )
     
     has_audio = probe_has_audio(source_path)
+    hw_input_args = get_hwaccel_input_args()
     cmd = [
         "ffmpeg", "-y",
+        *hw_input_args,
         "-ss", f"{start_time:.3f}",
         "-to", f"{end_time:.3f}",
         "-i", str(source_path),
-        "-c:v", "libx264",
-        "-preset", "fast",
-        "-crf", "23",
+        *get_encoder_args(crf_equivalent=23),
     ]
     if has_audio:
         fade_out_st = max(0.0, expected_duration - 0.08)

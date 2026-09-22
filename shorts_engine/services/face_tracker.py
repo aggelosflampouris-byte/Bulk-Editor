@@ -6,8 +6,32 @@ logger = logging.getLogger(__name__)
 
 # Default smoothing factor for Exponential Moving Average (0 < alpha <= 1)
 _DEFAULT_EMA_ALPHA = 0.10
-_DEFAULT_SAMPLE_INTERVAL_SECONDS = 0.25  # Sample 4 frames per second for high-speed tracking
+# Sample one frame every N seconds — increased to 0.5s (2 fps) for shorter thermal load.
+# For short clips (<60s) we use 0.25s to maintain accuracy on rapid speaker movement.
+_DEFAULT_SAMPLE_INTERVAL_SECONDS = 0.5
+_SHORT_CLIP_SAMPLE_INTERVAL_SECONDS = 0.25
+_SHORT_CLIP_THRESHOLD_SECONDS = 60.0
 _MIN_SPEAKER_PRESENCE_RATIO = 0.15       # At least 15% of frames must contain a speaker to flag has_speaker
+
+
+def _best_torch_device() -> str:
+    """
+    Return the best available torch compute device string.
+
+    Priority: CUDA (NVIDIA/AMD ROCm) → MPS (Apple Silicon) → CPU.
+    Failures are silently caught so that YOLO still runs on CPU if torch
+    is unavailable or no GPU is present.
+    """
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return "cuda"
+        # MPS = Apple Metal Performance Shaders (Apple Silicon)
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return "mps"
+    except Exception:
+        pass
+    return "cpu"
 
 
 @dataclass(frozen=True)
@@ -91,8 +115,10 @@ def track_active_speaker(
             shot_crop_offsets=[(0.0, 99999.0, default_center_x, default_center_y)],
         )
 
+    infer_device = _best_torch_device()
     try:
         model = YOLO("yolov8n-pose.pt")
+        model.to(infer_device)
     except Exception as exc:
         logger.warning("Failed to initialize YOLO model: %s — using center-crop fallback.", exc)
         return SpeakerTrackingResult(
@@ -119,7 +145,27 @@ def track_active_speaker(
         )
 
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    frame_step = max(1, int(fps * sample_interval))
+    total_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0.0
+    video_duration_sec = (total_frames / fps) if fps > 0 else 0.0
+
+    # Adaptive sampling: finer resolution for short clips (<60 s) to preserve
+    # accuracy on rapid speaker movement; coarser for long clips to reduce
+    # CPU/GPU thermal load on the laptop.
+    if sample_interval == _DEFAULT_SAMPLE_INTERVAL_SECONDS:
+        effective_interval = (
+            _SHORT_CLIP_SAMPLE_INTERVAL_SECONDS
+            if video_duration_sec < _SHORT_CLIP_THRESHOLD_SECONDS
+            else _DEFAULT_SAMPLE_INTERVAL_SECONDS
+        )
+    else:
+        effective_interval = sample_interval
+
+    frame_step = max(1, int(fps * effective_interval))
+    logger.debug(
+        "Face tracking '%s': duration=%.1fs, fps=%.1f, frame_step=%d (%.2fs interval, device=%s)",
+        video_path.name, video_duration_sec, fps, frame_step, effective_interval, infer_device,
+    )
+
 
     samples: list[tuple[float, float, float]] = []
     total_sampled = 0
@@ -133,7 +179,8 @@ def track_active_speaker(
             if frame_idx % frame_step == 0:
                 total_sampled += 1
                 t_sec = frame_idx / fps
-                results = model(frame, classes=[0], conf=0.6, verbose=False)
+                results = model(frame, classes=[0], conf=0.6, verbose=False, device=infer_device)
+
                 boxes = results[0].boxes if results else None
                 if boxes and len(boxes) > 0:
                     best_idx = max(
