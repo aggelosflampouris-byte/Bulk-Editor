@@ -2,22 +2,34 @@
 
 > Production-grade desktop web app for automated, high-retention 9:16 vertical video shorts generation tailored for Greek-language content.
 
+[![GitHub Release](https://img.shields.io/github/v/release/aggelosflampouris-byte/Bulk-Editor?color=blue&label=Latest%20Release)](https://github.com/aggelosflampouris-byte/Bulk-Editor/releases/latest)
+[![Download Zip](https://img.shields.io/badge/Download-Bulk--Editor--Release.zip-brightgreen?logo=github)](https://github.com/aggelosflampouris-byte/Bulk-Editor/releases/latest/download/Bulk-Editor-Release.zip)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python)](https://www.python.org/)
+
+---
+
+## 📦 Direct Download (Latest Release)
+
+The fastest and easiest way to use the program without cloning git:
+
+👉 **[Download Latest Release (Bulk-Editor-Release.zip)](https://github.com/aggelosflampouris-byte/Bulk-Editor/releases/latest/download/Bulk-Editor-Release.zip)** *(~4.4 MB, self-contained)*
+
+> **Alternative Download Locations:**
+> - [Browse GitHub Releases Page](https://github.com/aggelosflampouris-byte/Bulk-Editor/releases)
+> - Or click the green **Code → Download ZIP** button at the top of this repository.
+
 ---
 
 ## ⚡ Quickstart — 1-Click Launch
 
-No complex setup needed. The engine includes zero-friction launchers that automatically verify Python, set up the virtual environment, install all dependencies, configure FFmpeg, and launch the application directly in your web browser.
-
-### 🪟 Windows
-Simply **double-click** `run.bat` in this folder.
-*(Or open Command Prompt / PowerShell here and run `.\run.bat`)*
-
-### 🐧 Linux & 🍎 macOS
-Open Terminal in this directory and execute:
-```bash
-chmod +x run.sh
-./run.sh
-```
+1. **Download and Extract:** Unzip `Bulk-Editor-Release.zip` to any folder on your computer.
+2. **Run the launcher:**
+   - 🪟 **Windows:** Simply double-click `run.bat` in the extracted folder.
+   - 🐧 **Linux & 🍎 macOS:** Open terminal in the folder and run:
+     ```bash
+     chmod +x run.sh && ./run.sh
+     ```
+3. **That's it!** The launcher automatically verifies Python 3.10+, installs dependencies, downloads FFmpeg into `./bin/` if missing, initializes your `.env` template, and opens the app in your browser.
 
 ---
 
