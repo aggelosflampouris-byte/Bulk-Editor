@@ -116,6 +116,18 @@ def track_active_speaker(
         )
 
     infer_device = _best_torch_device()
+    if infer_device == "cpu":
+        try:
+            import os
+            import torch
+            cores = os.cpu_count() or 4
+            # Cap PyTorch intra-op threads to prevent thermal saturation on ThinkPad/laptop CPUs
+            optimal_torch_threads = max(1, min(4, cores // 2))
+            torch.set_num_threads(optimal_torch_threads)
+            logger.debug("Configured PyTorch CPU inference threads=%d for face tracking", optimal_torch_threads)
+        except Exception:
+            pass
+
     try:
         model = YOLO("yolov8n-pose.pt")
         model.to(infer_device)
@@ -166,6 +178,11 @@ def track_active_speaker(
         video_path.name, video_duration_sec, fps, frame_step, effective_interval, infer_device,
     )
 
+    try:
+        import torch
+        has_torch = True
+    except ImportError:
+        has_torch = False
 
     samples: list[tuple[float, float, float]] = []
     total_sampled = 0
@@ -179,7 +196,11 @@ def track_active_speaker(
             if frame_idx % frame_step == 0:
                 total_sampled += 1
                 t_sec = frame_idx / fps
-                results = model(frame, classes=[0], conf=0.6, verbose=False, device=infer_device)
+                if has_torch:
+                    with torch.inference_mode():
+                        results = model(frame, classes=[0], conf=0.6, verbose=False, device=infer_device)
+                else:
+                    results = model(frame, classes=[0], conf=0.6, verbose=False, device=infer_device)
 
                 boxes = results[0].boxes if results else None
                 if boxes and len(boxes) > 0:
@@ -217,6 +238,8 @@ def track_active_speaker(
         logger.warning("Speaker tracking loop encountered an error: %s", exc)
     finally:
         cap.release()
+        import gc
+        gc.collect()
 
     presence_ratio = (len(samples) / total_sampled) if total_sampled > 0 else 0.0
 

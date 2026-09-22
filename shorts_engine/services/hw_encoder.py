@@ -20,9 +20,10 @@ from typing import Literal
 
 logger = logging.getLogger(__name__)
 
-EncoderName = Literal["h264_amf", "h264_vaapi", "libx264"]
+EncoderName = Literal["h264_amf", "h264_qsv", "h264_vaapi", "libx264"]
 
 _AMF_QP_MAP: dict[int, int] = {18: 18, 20: 20, 23: 24, 25: 26, 28: 28, 32: 32}
+_QSV_QP_MAP: dict[int, int] = {18: 18, 20: 20, 23: 23, 25: 25, 28: 28, 32: 32}
 _VAAPI_QP_MAP: dict[int, int] = {18: 18, 20: 20, 23: 23, 25: 25, 28: 28, 32: 32}
 
 
@@ -42,6 +43,33 @@ def _probe_encoder(encoder: str) -> bool:
         return False
     except Exception as exc:
         logger.debug("Encoder probe failed for '%s': %s", encoder, exc)
+        return False
+
+
+def _probe_qsv_device() -> bool:
+    """
+    Check whether Intel Quick Sync Video (QSV) is functional by running a
+    minimal dummy encode.
+    """
+    if not _probe_encoder("h264_qsv"):
+        return False
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg", "-hide_banner", "-loglevel", "error",
+                "-f", "lavfi", "-i", "color=black:s=16x16:d=0.1",
+                "-c:v", "h264_qsv",
+                "-preset", "faster",
+                "-global_quality", "24",
+                "-f", "null", "-",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=10,
+        )
+        return result.returncode == 0
+    except Exception as exc:
+        logger.debug("QSV functional probe failed: %s", exc)
         return False
 
 
@@ -96,21 +124,28 @@ def _detect_best_encoder() -> tuple[EncoderName, str | None]:
     Returns:
         (encoder_name, vaapi_device_path | None)
     """
-    if sys.platform == "win32" and _probe_encoder("h264_amf"):
-        logger.info("Hardware encoder selected: h264_amf (AMD AMF, Windows)")
-        return "h264_amf", None
+    if sys.platform == "win32":
+        if _probe_encoder("h264_amf"):
+            logger.info("Hardware encoder selected: h264_amf (AMD AMF, Windows)")
+            return "h264_amf", None
+        if _probe_qsv_device():
+            logger.info("Hardware encoder selected: h264_qsv (Intel Quick Sync, Windows)")
+            return "h264_qsv", None
+    else:
+        if _probe_encoder("h264_vaapi"):
+            from pathlib import Path
 
-    if sys.platform != "win32" and _probe_encoder("h264_vaapi"):
-        from pathlib import Path
-
-        dri_path = Path("/dev/dri")
-        render_nodes = list(dri_path.glob("renderD*")) if dri_path.exists() else []
-        device = str(render_nodes[0]) if render_nodes else "/dev/dri/renderD128"
-        if _probe_vaapi_device():
-            logger.info(
-                "Hardware encoder selected: h264_vaapi (VA-API, Linux) device=%s", device
-            )
-            return "h264_vaapi", device
+            dri_path = Path("/dev/dri")
+            render_nodes = list(dri_path.glob("renderD*")) if dri_path.exists() else []
+            device = str(render_nodes[0]) if render_nodes else "/dev/dri/renderD128"
+            if _probe_vaapi_device():
+                logger.info(
+                    "Hardware encoder selected: h264_vaapi (VA-API, Linux) device=%s", device
+                )
+                return "h264_vaapi", device
+        if _probe_qsv_device():
+            logger.info("Hardware encoder selected: h264_qsv (Intel Quick Sync, Linux)")
+            return "h264_qsv", None
 
     logger.info("Hardware encoder selected: libx264 (software fallback)")
     return "libx264", None
@@ -148,6 +183,14 @@ def get_encoder_args(crf_equivalent: int = 23) -> list[str]:
             "-qp_b", str(qp + 2),
         ]
 
+    if encoder == "h264_qsv":
+        qp = _QSV_QP_MAP.get(crf_equivalent, crf_equivalent)
+        return [
+            "-c:v", "h264_qsv",
+            "-preset", "faster",
+            "-global_quality", str(qp),
+        ]
+
     if encoder == "h264_vaapi":
         qp = _VAAPI_QP_MAP.get(crf_equivalent, crf_equivalent)
         return [
@@ -162,12 +205,47 @@ def get_encoder_args(crf_equivalent: int = 23) -> list[str]:
     ]
 
 
+def get_pix_fmt_args() -> list[str]:
+    """
+    Return the appropriate pixel format arguments for the active encoder.
+    - libx264: -pix_fmt yuv420p (maximum player compatibility)
+    - h264_amf: -pix_fmt yuv420p
+    - h264_qsv: -pix_fmt nv12 (required by Intel QSV)
+    - h264_vaapi: -pix_fmt vaapi (hardware frames)
+    """
+    encoder, _ = _detect_best_encoder()
+    if encoder == "h264_qsv":
+        return ["-pix_fmt", "nv12"]
+    if encoder == "h264_vaapi":
+        return ["-pix_fmt", "vaapi"]
+    return ["-pix_fmt", "yuv420p"]
+
+
+def get_optimal_threads() -> int:
+    """
+    Calculate the optimal thread count for FFmpeg/video processing.
+
+    Prevents thermal throttling and fan screaming on laptops (e.g. ThinkPad)
+    by preserving thermal headroom and keeping cores available for the OS and UI.
+    """
+    import os
+
+    cores = os.cpu_count() or 4
+    # For laptops, use 75% of logical cores, capped at 8 to prevent thermal throttling
+    return max(1, min(8, int(cores * 0.75)))
+
+
+def get_thread_args() -> list[str]:
+    """Return FFmpeg thread-limiting arguments."""
+    return ["-threads", str(get_optimal_threads())]
+
+
 def get_hwaccel_input_args() -> list[str]:
     """
     Return FFmpeg input-side hardware-acceleration arguments (before -i).
 
     For VA-API these must appear before the input file to enable hardware
-    upload via the hwaccel pipeline. For AMF and software they are empty.
+    upload via the hwaccel pipeline. For AMF, QSV, and software they are empty.
     """
     encoder, vaapi_device = _detect_best_encoder()
     if encoder == "h264_vaapi" and vaapi_device:

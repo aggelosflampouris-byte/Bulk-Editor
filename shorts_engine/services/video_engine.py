@@ -21,9 +21,19 @@ import sys
 from pathlib import Path
 
 try:
-    from services.hw_encoder import get_encoder_args, get_hwaccel_input_args
+    from services.hw_encoder import (
+        get_encoder_args,
+        get_hwaccel_input_args,
+        get_pix_fmt_args,
+        get_thread_args,
+    )
 except ImportError:
-    from shorts_engine.services.hw_encoder import get_encoder_args, get_hwaccel_input_args
+    from shorts_engine.services.hw_encoder import (
+        get_encoder_args,
+        get_hwaccel_input_args,
+        get_pix_fmt_args,
+        get_thread_args,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +65,7 @@ class FFmpegError(RuntimeError):
 def run_ffmpeg(args: list[str]) -> None:
     """
     Execute an FFmpeg command, capturing stderr for error reporting.
+    Injects optimal thread limits if omitted to prevent thermal throttling on laptops.
 
     Args:
         args: Full argument list, starting with 'ffmpeg'.
@@ -62,9 +73,13 @@ def run_ffmpeg(args: list[str]) -> None:
     Raises:
         FFmpegError: On non-zero exit code, with formatted stderr.
     """
-    logger.debug("FFmpeg command: %s", " ".join(args))
+    exec_args = list(args)
+    if "-threads" not in exec_args and len(exec_args) > 1:
+        exec_args = [exec_args[0], *get_thread_args()] + exec_args[1:]
+
+    logger.debug("FFmpeg command: %s", " ".join(exec_args))
     result = subprocess.run(
-        args,
+        exec_args,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -72,7 +87,7 @@ def run_ffmpeg(args: list[str]) -> None:
         errors="replace",
     )
     if result.returncode != 0:
-        raise FFmpegError(args, result.returncode, result.stderr)
+        raise FFmpegError(exec_args, result.returncode, result.stderr)
     logger.debug("FFmpeg completed successfully.")
 
 
@@ -332,7 +347,7 @@ def crop_to_9_16(
         "-i", str(input_path),
         "-vf", vf,
         *get_encoder_args(crf_equivalent=23),
-        "-pix_fmt", "yuv420p",
+        *get_pix_fmt_args(),
         "-c:a", "aac",
         "-b:a", "128k",
         "-movflags", "+faststart",
@@ -509,7 +524,7 @@ def overlay_broll(
         "-map", "[v_out]",
         *audio_map_args,
         *get_encoder_args(crf_equivalent=23),
-        "-pix_fmt", "yuv420p",
+        *get_pix_fmt_args(),
         "-movflags", "+faststart",
         str(output_path),
     ])
@@ -577,7 +592,7 @@ def burn_subtitles(
         "-i", str(input_path),
         "-vf", vf,
         *get_encoder_args(crf_equivalent=23),
-        "-pix_fmt", "yuv420p",
+        *get_pix_fmt_args(),
         "-c:a", "copy",  # Audio is already encoded; avoid re-encoding
         "-movflags", "+faststart",
         str(output_path),
@@ -681,7 +696,7 @@ def concatenate_with_outro(
         "-map", "[v_out]",
         "-map", "[a_out]",
         *get_encoder_args(crf_equivalent=23),
-        "-pix_fmt", "yuv420p",
+        *get_pix_fmt_args(),
         "-c:a", "aac",
         "-b:a", "128k",
         "-movflags", "+faststart",
@@ -745,6 +760,7 @@ def slice_video(
         "-to", f"{end_time:.3f}",
         "-i", str(source_path),
         *get_encoder_args(crf_equivalent=23),
+        *get_pix_fmt_args(),
     ]
     if has_audio:
         fade_out_st = max(0.0, expected_duration - 0.08)

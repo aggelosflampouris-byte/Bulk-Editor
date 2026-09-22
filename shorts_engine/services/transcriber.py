@@ -185,8 +185,20 @@ def transcribe(
         return cached_segments
 
     logger.info("Loading WhisperModel (size=%s, device=%s)", model_size, device)
+    model_kwargs: dict[str, object] = {
+        "device": device,
+        "compute_type": compute_type,
+    }
+    if device == "cpu":
+        import os
+        cores = os.cpu_count() or 4
+        # Cap Whisper CPU threads to prevent thermal saturation on ThinkPad/laptop CPUs
+        optimal_whisper_threads = max(1, min(4, cores // 2))
+        model_kwargs["cpu_threads"] = optimal_whisper_threads
+        logger.debug("Configured WhisperModel CPU threads=%d", optimal_whisper_threads)
+
     try:
-        model = WhisperModel(model_size, device=device, compute_type=compute_type)
+        model = WhisperModel(model_size, **model_kwargs)
     except Exception as exc:
         raise RuntimeError(
             f"Failed to load WhisperModel '{model_size}': {exc}"
@@ -251,6 +263,14 @@ def transcribe(
     
     # Save to cache
     save_cache_pickle("transcription", cache_key, segments)
+
+    # Reclaim model memory on unified memory laptop architectures (ThinkPad)
+    try:
+        del model
+        import gc
+        gc.collect()
+    except Exception:
+        pass
 
     return segments
 

@@ -299,6 +299,22 @@ def _render_sidebar() -> Settings:
     """
     with st.sidebar:
         st.markdown("## Settings")
+
+        # Hardware Acceleration Status
+        try:
+            from services.hw_encoder import get_encoder_name, get_optimal_threads
+            active_encoder = get_encoder_name()
+            opt_threads = get_optimal_threads()
+            encoder_labels = {
+                "h264_qsv": "⚡ Intel Quick Sync (QSV)",
+                "h264_amf": "⚡ AMD AMF (Radeon)",
+                "h264_vaapi": "⚡ Linux VA-API",
+                "libx264": f"💻 CPU ({opt_threads} threads, thermal-capped)",
+            }
+            st.caption(f"**Hardware:** {encoder_labels.get(active_encoder, active_encoder)}")
+        except Exception:
+            pass
+
         st.markdown("---")
 
         # ── API Key Status (read-only) ─────────────────────────────────────
