@@ -1,6 +1,8 @@
 import logging
 from typing import Any
 
+import streamlit as st
+
 try:
     from services.youtube_uploader import authenticate, upload_short
 except ImportError:

@@ -214,11 +214,10 @@ def _render_clip_upload_card(
 
         scheduled_dt: datetime | None = None
         if publish_mode == "Schedule":
-            from datetime import date as _date
             from datetime import time as _time
             sched_date = st.date_input(
                 "Publish Date (UTC)",
-                value=_date.today(),
+                value=datetime.now(timezone.utc).date(),
                 key=f"yt_date_{idx}_{clip_path.name}",
             )
             sched_time = st.time_input(

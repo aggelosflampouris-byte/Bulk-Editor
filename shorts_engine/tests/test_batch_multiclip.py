@@ -69,8 +69,9 @@ def test_process_batch_long_video_triggers_multiclip_extraction(tmp_path: Path):
          patch("shorts_engine.pipeline.probe_duration", return_value=120.0), \
          patch("shorts_engine.pipeline.transcribe", return_value=mock_segments), \
          patch("shorts_engine.pipeline.select_clips", return_value=mock_candidates), \
-         patch("shorts_engine.pipeline.snap_to_silence", side_effect=lambda start_time, end_time, **kw: (start_time, end_time)), \
-         patch("shorts_engine.pipeline.process_url_clip", side_effect=mock_process_clip):
+         patch("shorts_engine.pipeline.snap_to_silence", side_effect=lambda start_time, end_time, **_kw: (start_time, end_time)), \
+         patch("shorts_engine.pipeline.process_url_clip", side_effect=mock_process_clip), \
+         patch("services.ocr_engine.OCREngine.extract_text_from_video", return_value=""):
 
         from shorts_engine.pipeline import run_batch
 

@@ -4,6 +4,8 @@ tests/test_timeline_utils.py — Unit tests for silence snapping, clip structure
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from shorts_engine.services.timeline_utils import (
     slice_segments,
     snap_to_silence,

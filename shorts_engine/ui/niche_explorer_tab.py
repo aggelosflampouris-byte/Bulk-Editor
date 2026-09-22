@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 import streamlit as st
 
@@ -30,6 +30,8 @@ def render_niche_explorer_tab(settings: Settings) -> None:
             yt_connected = False
         
         analyze_mine_clicked = False
+        generate_ideas_clicked = False
+        target_niche = ""
         
         if yt_connected:
             st.success("✅ **YouTube API Connected:** Pulling deep real-time analytics for your channel.")
@@ -98,7 +100,7 @@ def render_niche_explorer_tab(settings: Settings) -> None:
                     for msg, pct, data in run_autopilot_pipeline(target_niche.strip(), settings, broll_path, num_videos=3):
                         progress_bar.progress(pct)
                         status_text.markdown(f"**{pct}%** — {msg}")
-                        log_container.write(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
+                        log_container.write(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] {msg}")
                         
                         if pct == 100 and data:
                             st.session_state["niche_autopilot_result"] = data

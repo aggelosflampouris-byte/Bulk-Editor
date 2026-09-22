@@ -185,7 +185,6 @@ def compose_timeline(
 
     # Layer 0: Main Speaker (now zoomed)
     main_clip = VideoFileClip(str(main_video_path))
-    duration = main_clip.duration
     
     layers = [main_clip]
     

@@ -35,7 +35,7 @@ try:
     from config import Settings, assert_system_binaries
 except ImportError:
     from shorts_engine.config import Settings, assert_system_binaries
-from services.broll_fetcher import download_clip, search_broll
+from services.broll_fetcher import download_clip, extract_broll_query, search_broll
 from services.cache_manager import log_project_history
 from services.clip_selector import ClipCandidate, select_clips
 from services.compositor import compose_timeline

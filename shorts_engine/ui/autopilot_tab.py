@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import streamlit as st
@@ -18,7 +18,7 @@ def render_autopilot_tab(settings) -> None:
 
     channel_url = st.text_input("YouTube Channel URL (e.g. @MrBeast)", placeholder="https://www.youtube.com/@MrBeast")
     
-    col1, col2 = st.columns([1, 1])
+    col1, _ = st.columns([1, 1])
     with col1:
         st.info("Ensure you have YouTube authentication tokens saved, as Autopilot will automatically schedule uploads.", icon="ℹ️")
         
@@ -48,7 +48,7 @@ def render_autopilot_tab(settings) -> None:
             for msg, pct, data in run_autopilot_pipeline(channel_url, settings, broll_path):
                 progress_bar.progress(pct)
                 status_text.markdown(f"**{pct}%** — {msg}")
-                log_container.write(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
+                log_container.write(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] {msg}")
                 
                 if pct == 100 and data:
                     st.session_state["autopilot_result"] = data

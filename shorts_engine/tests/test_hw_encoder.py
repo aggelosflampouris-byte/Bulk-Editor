@@ -4,15 +4,10 @@ tests/test_hw_encoder.py — Unit tests for hardware-accelerated encoder detecti
 
 from __future__ import annotations
 
-import os
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from shorts_engine.services.hw_encoder import (
-    _detect_best_encoder,
     get_encoder_args,
-    get_encoder_name,
     get_hwaccel_input_args,
     get_optimal_threads,
     get_pix_fmt_args,
