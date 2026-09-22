@@ -55,6 +55,7 @@ CONNECTED_CHANNEL=https://www.youtube.com/@YourChannel
 ## 🌟 Core Features
 
 - **9 Niche Presets:** Instant configuration tailored for Politics, Society, Science, Technology, Entertainment, Business, Education, Lifestyle, and Gaming (plus Custom mode). Each preset fine-tunes duration, brand voice, subtitle positioning, VFX color grading, and Whisper domain vocabularies.
+- **Hardware Acceleration & ThinkPad Efficiency:** Automatic GPU acceleration via Intel Quick Sync (`h264_qsv` for Intel/ThinkPad), AMD AMF (`h264_amf` for Radeon GPUs), and Linux VA-API (`h264_vaapi`). Built-in CPU thread capping prevents thermal throttling and fan noise on laptops.
 - **Smart Pose & Face Centering:** Automatically detects and tracks speakers using pose keypoints (`yolov8n-pose.pt`) to keep faces centered in 9:16 vertical frames.
 - **Greek-Specialized Transcription:** Whisper with forced Greek vocabulary prompting (`el`) and acronym post-processing (e.g. ΔΕΔΔΗΕ, ΕΣΥ, ΑΣΕΠ, ΑΑΔΕ, ΟΠΕΚΕΠΕ).
 - **Gemini Vision OCR:** Reads on-screen banners, chyrons, and graphics from source video frames to provide rich semantic context for clip selection.
@@ -83,6 +84,7 @@ Bulk-Editor/
 │   ├── services/              # Core business logic & AI models
 │   │   ├── clip_selector.py   # AI hook & clip detection
 │   │   ├── face_tracker.py    # Speaker tracking & centering
+│   │   ├── hw_encoder.py      # Hardware encoder detection (QSV/AMF/VAAPI)
 │   │   ├── niche_templates.py # Niche presets & brand profiles
 │   │   ├── ocr_engine.py      # Gemini Vision frame text extraction
 │   │   ├── seo_generator.py   # Greek title, tags & description generator
@@ -91,7 +93,7 @@ Bulk-Editor/
 │   │   ├── vfx_engine.py      # Color grading & scene analysis
 │   │   └── youtube_uploader.py# YouTube Data API upload handling
 │   ├── ui/                    # Streamlit modular tabs and components
-│   └── tests/                 # Comprehensive test suite (79 unit tests)
+│   └── tests/                 # Comprehensive test suite (44 unit tests)
 ```
 
 ---
