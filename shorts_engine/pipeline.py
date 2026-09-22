@@ -22,7 +22,14 @@ import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
+import sys
 from pathlib import Path
+
+_PKG_DIR = Path(__file__).resolve().parent
+if str(_PKG_DIR) not in sys.path:
+    sys.path.insert(0, str(_PKG_DIR))
+if str(_PKG_DIR.parent) not in sys.path:
+    sys.path.insert(0, str(_PKG_DIR.parent))
 
 try:
     from config import Settings, assert_system_binaries
@@ -700,7 +707,10 @@ def process_url_clip(
         
         if settings.gemini_api_key and clip_segments:
             _report("AI logic scan: correcting captions for grammar and gibberish...")
-            from shorts_engine.services.seo_generator import correct_transcript_greek
+            try:
+                from services.seo_generator import correct_transcript_greek
+            except ImportError:
+                from shorts_engine.services.seo_generator import correct_transcript_greek
             clip_segments = correct_transcript_greek(clip_segments, settings.gemini_api_key)
             
         clip_transcript = " ".join(s.text for s in clip_segments) if clip_segments else ""

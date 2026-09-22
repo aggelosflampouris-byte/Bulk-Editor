@@ -1,8 +1,10 @@
 import logging
 from typing import Any
 
-import streamlit as st
-from shorts_engine.services.youtube_uploader import authenticate, upload_short
+try:
+    from services.youtube_uploader import authenticate, upload_short
+except ImportError:
+    from shorts_engine.services.youtube_uploader import authenticate, upload_short
 
 logger = logging.getLogger(__name__)
 

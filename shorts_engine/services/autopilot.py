@@ -136,8 +136,12 @@ def run_autopilot_pipeline(
         # SEO
         yield (f"[Video {idx+1}/{num_videos}] Generating SEO Metadata...", _p(0.9), None)
         # crop transcript to clip bounds
-        from shorts_engine.services.timeline_utils import slice_segments
-        from shorts_engine.services.transcriber import full_transcript_text
+        try:
+            from services.timeline_utils import slice_segments
+            from services.transcriber import full_transcript_text
+        except ImportError:
+            from shorts_engine.services.timeline_utils import slice_segments
+            from shorts_engine.services.transcriber import full_transcript_text
         sub_segments = slice_segments(transcript, best_clip.start_time, best_clip.end_time)
         sub_transcript_text = full_transcript_text(sub_segments)
         seo = generate_seo(

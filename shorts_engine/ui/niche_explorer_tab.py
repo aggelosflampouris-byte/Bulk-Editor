@@ -3,7 +3,10 @@ from datetime import datetime
 
 import streamlit as st
 
-from shorts_engine.config import Settings
+try:
+    from config import Settings
+except ImportError:
+    from shorts_engine.config import Settings
 
 logger = logging.getLogger(__name__)
 

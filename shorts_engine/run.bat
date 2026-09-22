@@ -155,6 +155,7 @@ echo  Starting Streamlit... your browser will open automatically.
 echo  Press Ctrl+C in this window to stop the server.
 echo.
 
+set "PYTHONPATH=%~dp0;%~dp0..;%PYTHONPATH%"
 python -m streamlit run "%~dp0app.py" --server.headless false --browser.gatherUsageStats false
 
 endlocal

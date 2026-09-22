@@ -16,6 +16,7 @@ if not exist "%~dp0shorts_engine\run.bat" (
     exit /b 1
 )
 
+set "PYTHONPATH=%~dp0;%~dp0shorts_engine;%PYTHONPATH%"
 cd /d "%~dp0shorts_engine"
 call run.bat %*
 endlocal

@@ -15,8 +15,17 @@ import logging
 import os
 import re
 import shutil
+import sys
 import tempfile
 from pathlib import Path
+
+# Ensure sys.path includes both shorts_engine and its parent directory
+# so that both direct (`import config`) and package (`import shorts_engine.config`) imports resolve.
+_APP_DIR = Path(__file__).resolve().parent
+if str(_APP_DIR) not in sys.path:
+    sys.path.insert(0, str(_APP_DIR))
+if str(_APP_DIR.parent) not in sys.path:
+    sys.path.insert(0, str(_APP_DIR.parent))
 
 import streamlit as st
 

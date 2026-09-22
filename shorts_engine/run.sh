@@ -146,6 +146,7 @@ launch_app() {
     echo " Press Ctrl+C in this window to stop the server."
     echo ""
 
+    export PYTHONPATH="$SCRIPT_DIR:$(cd "$SCRIPT_DIR/.." && pwd):${PYTHONPATH:-}"
     "$VENV_DIR/bin/streamlit" run "$APP_FILE" \
         --server.headless false \
         --browser.gatherUsageStats false

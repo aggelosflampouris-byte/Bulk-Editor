@@ -31,7 +31,10 @@ def render_autopilot_tab(settings) -> None:
             st.error("Please enter a channel URL.")
             return
             
-        from shorts_engine.services.autopilot import run_autopilot_pipeline
+        try:
+            from services.autopilot import run_autopilot_pipeline
+        except ImportError:
+            from shorts_engine.services.autopilot import run_autopilot_pipeline
         
         # Clear previous result
         st.session_state.pop("autopilot_result", None)
@@ -57,7 +60,10 @@ def render_autopilot_tab(settings) -> None:
     # Outside the button, render the review UI
     autopilot_results = st.session_state.get("autopilot_result")
     if autopilot_results:
-        from shorts_engine.ui.components.review_card import (
-            render_review_and_approve_list,
-        )
+        try:
+            from ui.components.review_card import render_review_and_approve_list
+        except ImportError:
+            from shorts_engine.ui.components.review_card import (
+                render_review_and_approve_list,
+            )
         render_review_and_approve_list(autopilot_results, key_prefix="ap")

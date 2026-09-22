@@ -17,5 +17,6 @@ if [[ ! -d "$SCRIPT_DIR/shorts_engine" ]] || [[ ! -f "$SCRIPT_DIR/shorts_engine/
 fi
 
 chmod +x "$SCRIPT_DIR/shorts_engine/run.sh" 2>/dev/null || true
+export PYTHONPATH="$SCRIPT_DIR:$SCRIPT_DIR/shorts_engine:${PYTHONPATH:-}"
 cd "$SCRIPT_DIR/shorts_engine"
 exec bash run.sh "$@"
