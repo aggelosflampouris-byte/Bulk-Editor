@@ -263,3 +263,22 @@ def test_autopilot_transcript_triage_uses_section_download(tmp_path: Path) -> No
         proc_kwargs = mock_process.call_args[1]
         assert proc_kwargs["source_is_section"] is True
         assert proc_kwargs["source_offset"] == 2.0  # min(12.0, padding=2.0)
+
+
+def test_normalize_youtube_channel_url() -> None:
+    from shorts_engine.services.channel_analyzer import normalize_youtube_channel_url
+
+    # Handle variations
+    assert normalize_youtube_channel_url("@DianismaNews") == "https://www.youtube.com/@DianismaNews/videos"
+    assert normalize_youtube_channel_url("www.youtube.com/@DianismaNews") == "https://www.youtube.com/@DianismaNews/videos"
+    assert normalize_youtube_channel_url("https://www.youtube.com/@DianismaNews") == "https://www.youtube.com/@DianismaNews/videos"
+    assert normalize_youtube_channel_url("https://www.youtube.com/@DianismaNews/") == "https://www.youtube.com/@DianismaNews/videos"
+    assert normalize_youtube_channel_url("https://www.youtube.com/@DianismaNews/videos") == "https://www.youtube.com/@DianismaNews/videos"
+
+    # Channel IDs
+    assert normalize_youtube_channel_url("https://www.youtube.com/channel/UC12345") == "https://www.youtube.com/channel/UC12345/videos"
+    assert normalize_youtube_channel_url("www.youtube.com/channel/UC12345") == "https://www.youtube.com/channel/UC12345/videos"
+
+    # Plain text search queries shouldn't append /videos
+    assert normalize_youtube_channel_url("Greek politics news") == "Greek politics news"
+    assert normalize_youtube_channel_url("") == ""

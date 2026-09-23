@@ -159,6 +159,44 @@ class ViralRecentVideo:
 # ── Internal Helpers ───────────────────────────────────────────────────────────
 
 
+def normalize_youtube_channel_url(query: str) -> str:
+    """
+    Normalizes a YouTube channel handle, URL, or domain-relative string to ensure
+    yt-dlp queries the long-form video uploads rather than defaulting to shorts or search.
+
+    Examples:
+      - 'www.youtube.com/@DianismaNews' -> 'https://www.youtube.com/@DianismaNews/videos'
+      - '@DianismaNews'                 -> 'https://www.youtube.com/@DianismaNews/videos'
+      - 'youtube.com/@DianismaNews'     -> 'https://www.youtube.com/@DianismaNews/videos'
+      - 'https://youtube.com/@Dianisma' -> 'https://youtube.com/@Dianisma/videos'
+      - 'https://youtube.com/channel/UC.../videos' -> unchanged
+      - 'Greek politics' (search term)  -> unchanged
+    """
+    target = query.strip()
+    if not target:
+        return target
+
+    # Add protocol if starting with handle or common domain prefixes
+    if target.startswith("@"):
+        target = f"https://www.youtube.com/{target}"
+    elif target.startswith(("www.youtube.com", "youtube.com", "m.youtube.com", "youtu.be", "www.")):
+        target = f"https://{target}"
+
+    # If it's a channel URL (handle, /channel/, /c/, /user/), point to /videos
+    # to avoid yt-dlp extracting /shorts or featured sections
+    is_channel = any(
+        pat in target
+        for pat in ("youtube.com/@", "youtube.com/channel/", "youtube.com/c/", "youtube.com/user/")
+    )
+    if is_channel:
+        target = target.rstrip("/")
+        last_seg = target.split("/")[-1].split("?")[0]
+        if last_seg not in ("videos", "shorts", "streams", "podcasts", "featured"):
+            target = f"{target}/videos"
+
+    return target
+
+
 def _run_ytdlp_metadata(query: str, max_videos: int) -> list[dict[str, Any]]:
     """
     Run yt-dlp to extract video metadata without downloading.
@@ -168,10 +206,11 @@ def _run_ytdlp_metadata(query: str, max_videos: int) -> list[dict[str, Any]]:
     date-filter pass returns fewer than 5 results.
     No media is ever downloaded — this is metadata-only.
     """
-    target = query
-    if not query.startswith("http") and not query.startswith("@"):
+    target = normalize_youtube_channel_url(query)
+    is_url_or_channel = target.startswith(("http://", "https://", "@"))
+    if not is_url_or_channel:
         import urllib.parse
-        encoded = urllib.parse.quote_plus(query)
+        encoded = urllib.parse.quote_plus(target)
         # sp=EgIIBA%253D%253D → YouTube "Upload Date: This Month" filter
         target = f"https://www.youtube.com/results?search_query={encoded}&sp=EgIIBA%253D%253D"
 
@@ -195,6 +234,7 @@ def _run_ytdlp_metadata(query: str, max_videos: int) -> list[dict[str, Any]]:
             timeout=_YTDLP_TIMEOUT_SECONDS,
             encoding="utf-8",
             errors="replace",
+            check=False,
         )
     except FileNotFoundError as exc:
         raise RuntimeError(
@@ -220,7 +260,62 @@ def _run_ytdlp_metadata(query: str, max_videos: int) -> list[dict[str, Any]]:
         except json.JSONDecodeError:
             continue
 
-    logger.info("yt-dlp returned %d metadata entries.", len(raw_entries))
+    # Fallback 1: If /videos tab returned 0 entries for a channel, fall back to base URL
+    if not raw_entries and target.endswith("/videos"):
+        base_url = target[:-7]
+        logger.info("No entries on /videos tab, falling back to base channel: %s", base_url)
+        cmd[-1] = base_url
+        try:
+            fb_res = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=_YTDLP_TIMEOUT_SECONDS,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+            for line in fb_res.stdout.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                    raw_entries.append(entry)
+                except json.JSONDecodeError:
+                    continue
+        except (subprocess.SubprocessError, OSError) as exc:
+            logger.debug("Base channel fallback failed: %s", exc)
+
+    # Fallback 2: If a search query returned 0 results with month filter, search without date filter
+    if not raw_entries and not is_url_or_channel:
+        import urllib.parse
+        encoded = urllib.parse.quote_plus(query.strip())
+        logger.info("No entries found with month filter for '%s', searching without date filter.", query)
+        cmd[-1] = f"https://www.youtube.com/results?search_query={encoded}"
+        try:
+            fb_res = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=_YTDLP_TIMEOUT_SECONDS,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+            for line in fb_res.stdout.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                    raw_entries.append(entry)
+                except json.JSONDecodeError:
+                    continue
+        except (subprocess.SubprocessError, OSError) as exc:
+            logger.debug("Search fallback failed: %s", exc)
+
+    logger.info("yt-dlp returned %d metadata entries for: %s", len(raw_entries), query)
     return raw_entries
 
 

@@ -27,25 +27,34 @@ def render_autopilot_tab(settings) -> None:
         st.success(f"Using Custom B-Roll: {Path(broll_path).name}")
 
     if st.button("🚀 Launch Autopilot", type="primary", use_container_width=True):
-        if not channel_url:
+        target_channel = channel_url.strip() if channel_url else ""
+        if not target_channel:
             st.error("Please enter a channel URL.")
             return
-            
+
+        try:
+            from services.channel_analyzer import normalize_youtube_channel_url
+        except ImportError:
+            from shorts_engine.services.channel_analyzer import (
+                normalize_youtube_channel_url,
+            )
+        target_channel = normalize_youtube_channel_url(target_channel)
+
         try:
             from services.autopilot import run_autopilot_pipeline
         except ImportError:
             from shorts_engine.services.autopilot import run_autopilot_pipeline
-        
+
         # Clear previous result
         st.session_state.pop("autopilot_result", None)
-        
+
         st.markdown("### Execution Log")
         progress_bar = st.progress(0)
         status_text = st.empty()
         log_container = st.container()
-        
+
         try:
-            for msg, pct, data in run_autopilot_pipeline(channel_url, settings, broll_path):
+            for msg, pct, data in run_autopilot_pipeline(target_channel, settings, broll_path):
                 progress_bar.progress(pct)
                 status_text.markdown(f"**{pct}%** — {msg}")
                 log_container.write(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] {msg}")

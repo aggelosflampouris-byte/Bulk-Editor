@@ -168,6 +168,8 @@ def probe_url_metadata(
     url = url.strip()
     if not url:
         raise ValueError("URL must not be empty.")
+    if url.startswith(("www.", "youtube.com", "youtu.be")):
+        url = f"https://{url}"
 
     ytdlp = _resolve_ytdlp_bin()
 
@@ -253,6 +255,8 @@ def download_video(
     url = url.strip()
     if not url:
         raise ValueError("URL must not be empty.")
+    if url.startswith(("www.", "youtube.com", "youtu.be")):
+        url = f"https://{url}"
 
     dest_dir.mkdir(parents=True, exist_ok=True)
 
@@ -322,6 +326,8 @@ def download_video_section(
     url = url.strip()
     if not url:
         raise ValueError("URL must not be empty.")
+    if url.startswith(("www.", "youtube.com", "youtu.be")):
+        url = f"https://{url}"
 
     dest_dir.mkdir(parents=True, exist_ok=True)
     ytdlp = _resolve_ytdlp_bin()
