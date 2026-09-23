@@ -37,6 +37,7 @@ def _probe_encoder(encoder: str) -> bool:
             text=True,
             encoding="utf-8",
             errors="replace",
+            check=False,
         )
         return encoder in result.stdout
     except FileNotFoundError:
@@ -66,6 +67,7 @@ def _probe_qsv_device() -> bool:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=10,
+            check=False,
         )
         return result.returncode == 0
     except Exception as exc:
@@ -109,6 +111,7 @@ def _probe_vaapi_device() -> bool:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=10,
+            check=False,
         )
         return result.returncode == 0
     except Exception as exc:

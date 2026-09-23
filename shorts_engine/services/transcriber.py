@@ -269,8 +269,8 @@ def transcribe(
         del model
         import gc
         gc.collect()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Model memory reclamation failed (non-fatal): %s", exc)
 
     return segments
 

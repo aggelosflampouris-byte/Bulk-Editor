@@ -21,7 +21,7 @@ import shutil
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 import sys
 from pathlib import Path
 
@@ -41,6 +41,7 @@ from services.clip_selector import ClipCandidate, select_clips
 from services.compositor import compose_timeline
 from services.downloader import download_video, probe_url_metadata
 from services.face_tracker import track_active_speaker
+from services.ocr_engine import OCREngine
 from services.seo_generator import (
     SeoMetadata,
     correct_transcript_greek,
@@ -450,6 +451,163 @@ def process_single(
     return result
 
 
+# ── Shared Transcribe + Select Helper ────────────────────────────────────────
+
+
+def _transcribe_and_select(
+    video_path: Path,
+    settings: Settings,
+    progress_cb: Callable[[float, str], None] | None,
+    source_title: str,
+    main_duration: float,
+) -> tuple[list[TranscriptionSegment], list[ClipCandidate]]:
+    """
+    Shared helper: transcribe → correct → OCR → select → snap.
+
+    Extracted to eliminate the identical block that previously lived in both
+    ``run_batch`` (multi-clip path) and ``run_url_pipeline``.
+
+    Args:
+        video_path:    Path to the source video.
+        settings:      Active Settings instance.
+        progress_cb:   Per-segment transcription progress callback (pct, msg).
+        source_title:  Title injected into the Whisper prompt.
+        main_duration: Pre-probed duration of the source video (seconds).
+
+    Returns:
+        (all_segments, snapped_candidates)
+    """
+    all_segments = transcribe(
+        video_path,
+        model_size=settings.whisper_model_size,
+        device=settings.whisper_device,
+        compute_type=settings.whisper_compute_type,
+        beam_size=settings.whisper_beam_size,
+        progress_cb=progress_cb,
+        context_hint=settings.whisper_context_hint or None,
+        source_title=source_title,
+    )
+
+    if not all_segments:
+        logger.info(
+            "No speech segments in '%s' — synthesising %d placeholder segments (%.1fs).",
+            video_path.name, settings.min_clips, main_duration,
+        )
+        step = main_duration / max(settings.min_clips, 1)
+        all_segments = [
+            TranscriptionSegment(
+                start=round(k * step, 2),
+                end=round(min((k + 1) * step, main_duration), 2),
+                text=f"{source_title} clip {k + 1}",
+                words=[],
+            )
+            for k in range(settings.min_clips)
+        ]
+    elif settings.gemini_api_key:
+        all_segments = correct_transcript_greek(all_segments, settings.gemini_api_key)
+
+    ocr_text = ""
+    try:
+        ocr_engine = OCREngine(gemini_api_key=settings.gemini_api_key)
+        ocr_text = ocr_engine.extract_text_from_video(video_path, sample_rate_sec=5)
+    except Exception as exc:
+        logger.warning("OCR extraction failed for '%s': %s", video_path.name, exc)
+
+    raw_candidates = select_clips(
+        segments=all_segments,
+        gemini_api_key=settings.gemini_api_key,
+        max_clips=settings.max_clips,
+        min_clips=settings.min_clips,
+        min_dur=settings.clip_min_duration,
+        max_dur=settings.clip_max_duration,
+        source_title=source_title,
+        brand_voice=settings.brand_voice,
+        channel_niche=settings.whisper_context_hint or "",
+        ocr_text=ocr_text,
+        niche_template=getattr(settings, "niche_template", "custom"),
+    )
+
+    snapped: list[ClipCandidate] = []
+    for cand in raw_candidates:
+        s_start, s_end = snap_to_silence(
+            start_time=cand.start_time,
+            end_time=cand.end_time,
+            segments=all_segments,
+            min_dur=settings.clip_min_duration,
+            max_dur=settings.clip_max_duration,
+        )
+        snapped.append(
+            ClipCandidate(
+                index=cand.index,
+                start_time=s_start,
+                end_time=s_end,
+                hook_summary=cand.hook_summary,
+                seo=cand.seo,
+                broll_query=cand.broll_query,
+            )
+        )
+
+    return all_segments, snapped
+
+
+def render_selected_clips(
+    source_path: Path,
+    all_segments: list[TranscriptionSegment],
+    clips: list[ClipCandidate],
+    settings: Settings,
+    progress_cb: ProgressCallback | None = None,
+) -> list[ProcessingResult]:
+    """
+    Assemble a pre-selected list of ClipCandidates from an already-downloaded
+    source video, without repeating download or transcription.
+
+    This is the dedicated render-phase entry point for the URL tab, which
+    caches ``source_path`` and ``all_segments`` from the analysis phase and
+    calls this function on "Render" to avoid re-downloading/re-transcribing.
+
+    Args:
+        source_path:  Path to the already-downloaded source video.
+        all_segments: Transcription segments from the analysis phase.
+        clips:        AI-selected ClipCandidates to assemble.
+        settings:     Active Settings instance.
+        progress_cb:  Optional progress callback.
+
+    Returns:
+        List of ProcessingResult, one per assembled clip.
+    """
+    assert_system_binaries()
+
+    run_ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    run_output_dir = settings.output_dir / run_ts
+    run_output_dir.mkdir(parents=True, exist_ok=True)
+    logger.info("Render-phase output directory: '%s'", run_output_dir)
+
+    results: list[ProcessingResult] = []
+    total = len(clips)
+
+    with tempfile.TemporaryDirectory(prefix="shorts_render_") as tmp_root:
+        tmp_dir = Path(tmp_root)
+        for idx, clip in enumerate(clips):
+            per_clip_tmp = tmp_dir / f"clip_{clip.index:02d}"
+            per_clip_tmp.mkdir(parents=True, exist_ok=True)
+            result = process_url_clip(
+                clip=clip,
+                source_path=source_path,
+                all_segments=all_segments,
+                settings=settings,
+                tmp_dir=per_clip_tmp,
+                run_output_dir=run_output_dir,
+                progress_cb=progress_cb,
+                item_index=idx,
+                total_items=total,
+            )
+            results.append(result)
+
+    successful = sum(1 for r in results if r.success)
+    logger.info("Render complete: %d/%d clips succeeded.", successful, total)
+    return results
+
+
 # ── Batch Orchestrator ─────────────────────────────────────────────────────────
 
 
@@ -487,7 +645,7 @@ def run_batch(
     assert_system_binaries()
 
     # Timestamped output directory for this batch run
-    run_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     run_output_dir = settings.output_dir / run_ts
     run_output_dir.mkdir(parents=True, exist_ok=True)
     logger.info("Batch output directory: '%s'", run_output_dir)
@@ -514,99 +672,30 @@ def run_batch(
                     "Video '%s' duration (%.1fs) exceeds max clip duration (%.1fs) — running multi-clip extraction (minimum: %d)...",
                     video_path.name, main_duration, settings.clip_max_duration, settings.min_clips,
                 )
-                if progress_cb:
-                    progress_cb(idx, total, f"[{video_path.name}] Transcribing audio...")
 
-                def _item_transcribe_cb(pct: float, msg: str) -> None:
+                def _batch_progress_cb(pct: float, msg: str) -> None:
                     if progress_cb:
                         progress_cb(idx, total, f"[{video_path.name}] {msg}")
 
-                all_segments = transcribe(
-                    video_path,
-                    model_size=settings.whisper_model_size,
-                    device=settings.whisper_device,
-                    compute_type=settings.whisper_compute_type,
-                    beam_size=settings.whisper_beam_size,
-                    progress_cb=_item_transcribe_cb,
-                    context_hint=settings.whisper_context_hint or None,
-                    source_title=video_path.stem,
-                )
-
-                if not all_segments:
-                    logger.info("No speech segments detected in '%s' — generating synthetic segments across duration (%.1fs)...", video_path.name, main_duration)
-                    step = main_duration / max(settings.min_clips, 1)
-                    all_segments = [
-                        TranscriptionSegment(
-                            start=round(k * step, 2),
-                            end=round(min((k + 1) * step, main_duration), 2),
-                            text=f"{video_path.stem} clip {k + 1}",
-                            words=[],
-                        )
-                        for k in range(settings.min_clips)
-                    ]
-                elif settings.gemini_api_key:
-                    if progress_cb:
-                        progress_cb(idx, total, f"[{video_path.name}] Correcting transcript with Gemini...")
-                    all_segments = correct_transcript_greek(all_segments, settings.gemini_api_key)
-
-                ocr_text = ""
-                try:
-                    from services.ocr_engine import OCREngine
-                    if progress_cb:
-                        progress_cb(idx, total, f"[{video_path.name}] Extracting OCR visual context...")
-                    ocr_engine = OCREngine(gemini_api_key=settings.gemini_api_key)
-                    ocr_text = ocr_engine.extract_text_from_video(video_path, sample_rate_sec=5)
-                except Exception as e:
-                    logger.warning(f"OCR extraction failed for {video_path}: {e}")
-
                 if progress_cb:
-                    progress_cb(idx, total, f"[{video_path.name}] Selecting best clips with AI...")
+                    progress_cb(idx, total, f"[{video_path.name}] Transcribing audio...")
 
-                raw_candidates = select_clips(
-                    segments=all_segments,
-                    gemini_api_key=settings.gemini_api_key,
-                    max_clips=settings.max_clips,
-                    min_clips=settings.min_clips,
-                    min_dur=settings.clip_min_duration,
-                    max_dur=settings.clip_max_duration,
+                all_segments, snapped = _transcribe_and_select(
+                    video_path=video_path,
+                    settings=settings,
+                    progress_cb=_batch_progress_cb,
                     source_title=video_path.stem,
-                    brand_voice=settings.brand_voice,
-                    channel_niche=settings.whisper_context_hint or "",
-                    ocr_text=ocr_text,
-                    niche_template=getattr(settings, "niche_template", "custom"),
+                    main_duration=main_duration,
                 )
-
-                snapped: list[ClipCandidate] = []
-                for cand in raw_candidates:
-                    s_start, s_end = snap_to_silence(
-                        start_time=cand.start_time,
-                        end_time=cand.end_time,
-                        segments=all_segments,
-                        min_dur=settings.clip_min_duration,
-                        max_dur=settings.clip_max_duration,
-                    )
-                    snapped.append(
-                        ClipCandidate(
-                            index=cand.index,
-                            start_time=s_start,
-                            end_time=s_end,
-                            hook_summary=cand.hook_summary,
-                            seo=cand.seo,
-                            broll_query=cand.broll_query,
-                        )
-                    )
 
                 logger.info(
                     "Selected %d clip candidates from '%s' (minimum guaranteed: %d):",
                     len(snapped), video_path.name, settings.min_clips,
                 )
-                print(f"\n{'='*65}\n🎬 SELECTED {len(snapped)} SHORTS FROM '{video_path.name}' (MINIMUM: {settings.min_clips}):\n{'='*65}")
                 for c in snapped:
                     dur = c.end_time - c.start_time
                     title = c.seo.title if c.seo else "Clip"
                     logger.info("  [#%d] [%.1fs - %.1fs] (%.1fs): %s", c.index, c.start_time, c.end_time, dur, title)
-                    print(f"  [#{c.index}] {c.start_time:.1f}s - {c.end_time:.1f}s ({dur:.1f}s) — \"{title}\"")
-                print(f"{'='*65}\n")
 
                 stem_prefix = video_path.stem
                 item_results = []
@@ -623,20 +712,21 @@ def run_batch(
                         progress_cb=progress_cb,
                         item_index=c_idx,
                         total_items=len(snapped),
-                        stem_prefix=stem_prefix or None,
+                        stem_prefix=stem_prefix,
                     )
                     item_results.append(res)
                     results.append(res)
 
                 item_succ = sum(1 for r in item_results if r.success)
-                print(f"\n{'='*65}\n✅ RENDERED {item_succ}/{len(snapped)} SHORTS FROM '{video_path.name}':\n{'='*65}")
+                logger.info(
+                    "Rendered %d/%d shorts from '%s'.",
+                    item_succ, len(snapped), video_path.name,
+                )
                 for idx_r, r in enumerate(item_results, 1):
                     c_num = r.clip_index if r.clip_index is not None else idx_r
-                    st_icon = "✓" if r.success else "✗"
+                    icon = "✓" if r.success else "✗"
                     c_title = (r.seo.title if r.seo else None) or (r.output_file.name if r.output_file else f"Clip #{c_num}")
-                    c_out = str(r.output_file) if r.output_file else "None"
-                    print(f"  [{st_icon}] Clip #{c_num}: \"{c_title}\" -> {c_out}")
-                print(f"{'='*65}\n")
+                    logger.info("  [%s] Clip #%d: '%s'", icon, c_num, c_title)
             else:
                 result = process_single(
                     video_path=video_path,
@@ -704,13 +794,9 @@ def process_url_clip(
             return ProcessingResult(input_file=source_path, clip_index=clip.index, success=False, error=msg)
 
         clip_segments = slice_segments(all_segments, clip.start_time, clip.end_time)
-        
+
         if settings.gemini_api_key and clip_segments:
             _report("AI logic scan: correcting captions for grammar and gibberish...")
-            try:
-                from services.seo_generator import correct_transcript_greek
-            except ImportError:
-                from shorts_engine.services.seo_generator import correct_transcript_greek
             clip_segments = correct_transcript_greek(clip_segments, settings.gemini_api_key)
             
         clip_transcript = " ".join(s.text for s in clip_segments) if clip_segments else ""
@@ -792,7 +878,7 @@ def run_url_pipeline(
     """
     assert_system_binaries()
 
-    run_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     run_output_dir = settings.output_dir / run_ts
     run_output_dir.mkdir(parents=True, exist_ok=True)
     logger.info("URL pipeline output directory: '%s'", run_output_dir)
@@ -841,12 +927,11 @@ def run_url_pipeline(
 
         ocr_text = ""
         try:
-            from services.ocr_engine import OCREngine
             _report("Extracting OCR visual context...")
             ocr_engine = OCREngine(gemini_api_key=settings.gemini_api_key)
             ocr_text = ocr_engine.extract_text_from_video(source_path, sample_rate_sec=5)
-        except Exception as e:
-            logger.warning(f"OCR extraction failed for {source_path}: {e}")
+        except Exception as exc:
+            logger.warning("OCR extraction failed for %s: %s", source_path.name, exc)
 
         # ── Phase 3: AI Clip Selection (Single Best Clip Workflow) ─────────────
         _report("Selecting the single best clip with AI...")
@@ -887,18 +972,14 @@ def run_url_pipeline(
 
         all_candidates = snapped
 
-        # Print and log the selected clips with minimum guaranteed count
         logger.info(
             "Selected %d clip candidates (minimum guaranteed: %d):",
             len(all_candidates), settings.min_clips,
         )
-        print(f"\n{'='*65}\n🎬 SELECTED {len(all_candidates)} SHORTS (MINIMUM: {settings.min_clips}):\n{'='*65}")
         for c in all_candidates:
             dur = c.end_time - c.start_time
             title = c.seo.title if c.seo else "Clip"
             logger.info("  [#%d] [%.1fs - %.1fs] (%.1fs): %s", c.index, c.start_time, c.end_time, dur, title)
-            print(f"  [#{c.index}] {c.start_time:.1f}s - {c.end_time:.1f}s ({dur:.1f}s) — \"{title}\"")
-        print(f"{'='*65}\n")
 
         # Filter to user-approved indices if provided
         if clip_indices is not None:
@@ -932,12 +1013,9 @@ def run_url_pipeline(
         "URL pipeline complete: %d/%d clips succeeded. Output: '%s'",
         successful, total_clips, run_output_dir,
     )
-    print(f"\n{'='*65}\n✅ RENDERED {successful}/{total_clips} SHORTS:\n{'='*65}")
     for idx, r in enumerate(results, 1):
         c_idx = r.clip_index if r.clip_index is not None else idx
-        status_icon = "✓" if r.success else "✗"
+        icon = "✓" if r.success else "✗"
         title = (r.seo.title if r.seo else None) or (r.output_file.name if r.output_file else f"Clip #{c_idx}")
-        out_path = str(r.output_file) if r.output_file else "None"
-        print(f"  [{status_icon}] Clip #{c_idx}: \"{title}\" -> {out_path}")
-    print(f"{'='*65}\n")
+        logger.info("  [%s] Clip #%d: '%s'", icon, c_idx, title)
     return all_candidates, results

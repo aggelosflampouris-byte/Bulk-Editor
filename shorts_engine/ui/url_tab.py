@@ -4,17 +4,29 @@ ui/url_tab.py — Tab component for processing videos directly from URLs (YouTub
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import streamlit as st
 
 try:
     from config import Settings
-    from pipeline import ProcessingResult, run_url_pipeline
+    from pipeline import (
+        ProcessingResult,
+        render_selected_clips,
+        run_url_pipeline,
+    )
     from services.clip_selector import ClipCandidate
+    from services.transcriber import TranscriptionSegment
     from ui.components.result_card import render_result_card
 except ImportError:
     from shorts_engine.config import Settings
-    from shorts_engine.pipeline import ProcessingResult, run_url_pipeline
+    from shorts_engine.pipeline import (
+        ProcessingResult,
+        render_selected_clips,
+        run_url_pipeline,
+    )
     from shorts_engine.services.clip_selector import ClipCandidate
+    from shorts_engine.services.transcriber import TranscriptionSegment
     from shorts_engine.ui.components.result_card import render_result_card
 
 
@@ -243,6 +255,8 @@ def render_video_url_tab(settings: Settings) -> None:
                 url_progress_bar.progress(1.0, text="100% — Analysis complete.")
                 url_stage_text.markdown("**Analysis complete. Review clips below.**")
                 st.session_state["url_candidates"] = candidates
+                st.session_state["url_cached_source"] = None
+                st.session_state["url_cached_segments"] = []
                 st.session_state["url_is_analyzing"] = False
 
                 if candidates:
@@ -293,19 +307,37 @@ def render_video_url_tab(settings: Settings) -> None:
             render_progress = st.progress(0.0)
             render_stage_text = st.empty()
 
-            def _url_render_cb(idx: int, total: int, stage: str):
+            def _url_render_cb(idx: int, total: int, stage: str) -> None:
                 pct = idx / total if total > 0 else 0.0
                 render_progress.progress(pct, text=f"Rendering {idx}/{total}: {stage}")
                 render_stage_text.markdown(f"**{stage}**")
 
+            cached_source: Path | None = st.session_state.get("url_cached_source")
+            cached_segments: list[TranscriptionSegment] = st.session_state.get("url_cached_segments", [])
+            selected_clips = [
+                c for c in st.session_state.get("url_candidates", [])
+                if c.index in selected_indices
+            ]
+
             try:
                 with st.spinner("Rendering final Shorts..."):
-                    _all_candidates, render_results = run_url_pipeline(
-                        url=url_input.strip(),
-                        settings=settings,
-                        clip_indices=selected_indices,
-                        progress_cb=_url_render_cb,
-                    )
+                    if cached_source and cached_source.is_file() and cached_segments:
+                        # Fast path: reuse cached download and transcription
+                        render_results = render_selected_clips(
+                            source_path=cached_source,
+                            all_segments=cached_segments,
+                            clips=selected_clips,
+                            settings=settings,
+                            progress_cb=_url_render_cb,
+                        )
+                    else:
+                        # Fallback: full re-run (cache unavailable, e.g. after page reload)
+                        _all_candidates, render_results = run_url_pipeline(
+                            url=url_input.strip(),
+                            settings=settings,
+                            clip_indices=selected_indices,
+                            progress_cb=_url_render_cb,
+                        )
 
                 render_progress.progress(1.0, text="100% — All clips rendered.")
                 render_stage_text.markdown("**All clips rendered.**")

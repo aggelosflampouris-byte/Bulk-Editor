@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 # Ensure sys.path includes both shorts_engine and its parent directory
@@ -26,7 +27,7 @@ if str(_APP_DIR.parent) not in sys.path:
 
 import streamlit as st
 
-from config import Settings, assert_system_binaries, inject_ffmpeg_path
+from config import DEFAULT_OUTPUT_DIR, Settings, assert_system_binaries, inject_ffmpeg_path
 from services.niche_templates import get_template, template_options
 
 # ── Logging Setup ──────────────────────────────────────────────────────────────
@@ -566,9 +567,8 @@ def _render_sidebar() -> Settings:
         outro_path: Path | None = None
         if outro_file is not None:
             if "outro_tmp_path" not in st.session_state:
-                import tempfile as _tf
                 suffix = Path(outro_file.name).suffix
-                tmp = _tf.NamedTemporaryFile(delete=False, suffix=suffix, prefix="outro_")
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix, prefix="outro_")
                 tmp.write(outro_file.read())
                 tmp.flush()
                 tmp.close()
@@ -619,9 +619,8 @@ def _render_sidebar() -> Settings:
                 )
                 if custom_music_file is not None:
                     if "custom_music_tmp_path" not in st.session_state:
-                        import tempfile as _tf
                         suffix = Path(custom_music_file.name).suffix
-                        tmp_music = _tf.NamedTemporaryFile(delete=False, suffix=suffix, prefix="bgm_")
+                        tmp_music = tempfile.NamedTemporaryFile(delete=False, suffix=suffix, prefix="bgm_")
                         tmp_music.write(custom_music_file.read())
                         tmp_music.flush()
                         tmp_music.close()
@@ -650,7 +649,6 @@ def _render_sidebar() -> Settings:
 
         st.markdown("---")
         st.markdown("### 📁 Output Destination")
-        from config import DEFAULT_OUTPUT_DIR
         default_output_str = str(st.session_state.get("custom_output_dir", DEFAULT_OUTPUT_DIR))
         output_dir_input = st.text_input(
             "Destination Directory",

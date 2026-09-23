@@ -10,9 +10,12 @@ Responsibilities:
 import logging
 from pathlib import Path
 
-import cv2
+try:
+    from services.hw_encoder import get_encoder_args, get_optimal_threads
+except ImportError:
+    from shorts_engine.services.hw_encoder import get_encoder_args, get_optimal_threads
+
 from moviepy import (
-    CompositeAudioClip,
     CompositeVideoClip,
     VideoFileClip,
 )
@@ -202,6 +205,7 @@ def compose_timeline(
         
         # Apply Ken Burns if enabled
         if ken_burns:
+            import cv2  # lazy import: only needed for the Ken Burns transform
             # We scale the clip slightly larger to allow zooming
             zoom_start = 1.0
             zoom_end = 1.15
@@ -252,28 +256,28 @@ def compose_timeline(
         layers.append(broll_clip)
         
     final_video = CompositeVideoClip(layers, size=(target_width, target_height))
-    
-    # Audio compositing (preserve original audio only, background mixed elsewhere)
-    audio_layers = []
+
+    # Preserve original audio only; background music is mixed in a separate stage.
     if main_clip.audio:
-        audio_layers.append(main_clip.audio)
-        
-    if audio_layers:
-        final_audio = CompositeAudioClip(audio_layers)
-        final_video = final_video.with_audio(final_audio)
-        
+        final_video = final_video.with_audio(main_clip.audio)
+
+    encoder_args = get_encoder_args(crf_equivalent=23)
+    codec = encoder_args[1]  # second element is always the codec name
+
     logger.info("Rendering final composite to %s...", output_path.name)
-    final_video.write_videofile(
-        str(output_path),
-        fps=30,
-        codec="libx264",
-        audio_codec="aac",
-        preset="fast",
-        threads=4,
-        logger=None 
-    )
-    
-    main_clip.close()
-    if broll_clip: broll_clip.close()
-        
+    try:
+        final_video.write_videofile(
+            str(output_path),
+            fps=30,
+            codec=codec,
+            audio_codec="aac",
+            preset="fast",
+            threads=get_optimal_threads(),
+            logger=None,
+        )
+    finally:
+        main_clip.close()
+        if broll_clip:
+            broll_clip.close()
+
     return output_path
