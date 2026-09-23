@@ -294,3 +294,69 @@ def download_video(
     downloaded = max(candidates, key=lambda p: p.stat().st_mtime)
     logger.info("Download complete: '%s' (%.1f MB)", downloaded.name, downloaded.stat().st_size / 1_048_576)
     return downloaded
+
+
+def download_video_section(
+    url: str,
+    dest_dir: Path,
+    start_time: float,
+    end_time: float,
+    padding: float = 2.0,
+) -> Path:
+    """
+    Download only a specific time slice [start_time - padding, end_time + padding]
+    from a video URL using yt-dlp --download-sections.
+
+    Saves 80-95% network bandwidth and disk space when only a short clip is needed.
+
+    Args:
+        url:        Source video URL.
+        dest_dir:   Directory in which to write the downloaded section.
+        start_time: Section start in seconds.
+        end_time:   Section end in seconds.
+        padding:    Buffer seconds added before start and after end (default 2.0).
+
+    Returns:
+        Path to the downloaded video slice file.
+    """
+    url = url.strip()
+    if not url:
+        raise ValueError("URL must not be empty.")
+
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    ytdlp = _resolve_ytdlp_bin()
+
+    p_start = max(0.0, start_time - padding)
+    p_end = end_time + padding
+    section_str = f"*{p_start:.2f}-{p_end:.2f}"
+
+    output_template = str(dest_dir / "%(title).40s [%(id)s]_section.%(ext)s")
+
+    cmd = ytdlp + [
+        "--format", _FORMAT_SELECTOR,
+        "--no-playlist",
+        "--restrict-filenames",
+        "--merge-output-format", "mp4",
+        "--download-sections", section_str,
+        "--output", output_template,
+        "--quiet",
+        "--no-warnings",
+        url,
+    ]
+
+    logger.info("Downloading video section [%.2f - %.2f] from: %s", p_start, p_end, url)
+    _run_ytdlp(cmd, timeout=300)
+
+    video_extensions = {".mp4", ".mkv", ".webm", ".mov", ".avi", ".m4v"}
+    candidates = [
+        f for f in dest_dir.iterdir()
+        if f.is_file() and f.suffix.lower() in video_extensions
+    ]
+    if not candidates:
+        raise RuntimeError(
+            f"yt-dlp reported success but no section file was found in '{dest_dir}'."
+        )
+
+    downloaded = max(candidates, key=lambda p: p.stat().st_mtime)
+    logger.info("Section download complete: '%s' (%.1f MB)", downloaded.name, downloaded.stat().st_size / 1_048_576)
+    return downloaded

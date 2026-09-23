@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from shorts_engine.services.seo_generator import (
     _call_gemini_with_fallback,
     align_words_with_corrected_text,
@@ -237,5 +239,71 @@ def test_validate_seo_dict_removes_emojis():
     assert "🔥" not in seo.tags[0]
     assert "💶" not in seo.tags[1]
     assert "🇬🇷" not in seo.tags[2]
+
+
+def test_align_words_with_corrected_text_equal_count() -> None:
+    from shorts_engine.services.seo_generator import align_words_with_corrected_text
+
+    original_words = [(0.0, 0.4, "χαίρο"), (0.4, 0.8, "με")]
+    corrected = "χαίρομαι πολύ"
+    aligned = align_words_with_corrected_text(
+        original_words=original_words,
+        corrected_text=corrected,
+        seg_start=0.0,
+        seg_end=0.8,
+    )
+    assert len(aligned) == 2
+    assert aligned[0][2] == "χαίρομαι"
+    assert aligned[1][2] == "πολύ"
+
+
+def test_align_words_with_corrected_text_none_words() -> None:
+    from shorts_engine.services.seo_generator import align_words_with_corrected_text
+
+    aligned = align_words_with_corrected_text(
+        original_words=None,
+        corrected_text="Ένα δύο τρία",
+        seg_start=1.0,
+        seg_end=4.0,
+    )
+    assert len(aligned) == 3
+    assert aligned[0][2] == "Ένα"
+    assert aligned[0][0] == 1.0
+    assert aligned[2][2] == "τρία"
+    assert aligned[2][1] == 4.0
+
+
+def test_correct_transcript_greek_batching_and_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    from shorts_engine.services.seo_generator import correct_transcript_greek
+    from shorts_engine.services.transcriber import TranscriptionSegment
+
+    # Create 70 segments to verify that batching processes beyond the old 60 limit
+    segments = [
+        TranscriptionSegment(start=float(i), end=float(i + 1), text=f"γραμμή {i}")
+        for i in range(70)
+    ]
+
+    def fake_call_gemini(*args, **kwargs) -> str:
+        contents = kwargs.get("contents") or (args[1] if len(args) > 1 else "")
+        # Return properly tagged lines with an intentional correction
+        # [k] διορθωμένη γραμμή k
+        lines = []
+        for line in contents.splitlines():
+            line_str = line.strip()
+            if line_str.startswith("[") and "]" in line_str:
+                idx = line_str[1 : line_str.index("]")]
+                lines.append(f"[{idx}] διορθωμένη γραμμή {idx}")
+        return "\n".join(lines)
+
+    monkeypatch.setattr(
+        "shorts_engine.services.seo_generator._call_gemini_with_fallback",
+        fake_call_gemini,
+    )
+
+    corrected = correct_transcript_greek(segments, api_key="fake-key")
+    assert len(corrected) == 70
+    # Both batch 1 (0..49) and batch 2 (50..69) should be corrected!
+    assert "διορθωμένη" in corrected[0].text
+    assert "διορθωμένη" in corrected[65].text
 
 

@@ -145,10 +145,15 @@ class ViralRecentVideo:
     days_old: int
     virality_score: float
     virality_label: str  # 'Hot 🔥', 'Rising 📈', 'Trending ⚡', or 'Evergreen 🌿'
+    rvr: float = 1.0     # Relative View Ratio vs channel median
 
     @property
     def score_display(self) -> str:
         return f"{self.virality_score:.1f}"
+
+    @property
+    def rvr_display(self) -> str:
+        return f"{self.rvr:.1f}x"
 
 
 # ── Internal Helpers ───────────────────────────────────────────────────────────
@@ -313,21 +318,27 @@ Respond ONLY with the JSON object. No markdown, no code fences.
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 
-def _compute_virality_score(v: VideoMeta, days_old: int) -> float:
+def _compute_virality_score(
+    v: VideoMeta,
+    days_old: int,
+    rvr: float = 1.0,
+) -> float:
     """
     Compute the multi-signal virality score for a single video.
 
-    Formula:
+    Formula incorporates:
         velocity    = views / max(days_old, 1)              # views per day
         base        = log10(max(views, 1))
-        recency     = max(0, 1 - days_old / RECENCY_WINDOW) # 1.0 → 0.0 over 21 days
+        recency     = max(0, 1 - days_old / 21)            # 1.0 → 0.0 over 21 days
         engmt_ratio = (likes + comments*2) / max(views, 1)  # weighted engagement
         vel_boost   = log10(max(velocity, 1)) / 4.0         # normalised velocity bonus
-        score       = base * (1 + recency*1.5) * (1 + engmt_ratio*8) * (1 + vel_boost)
+        rvr_boost   = max(0.0, math.log2(max(rvr, 0.5) + 0.5)) # relative-to-channel outlier boost
+        score       = base * (1 + rvr_boost * 1.2) * (1 + recency * 1.2) * (1 + engmt_ratio * 6.0) * (1 + vel_boost)
 
     Args:
         v:        VideoMeta with view/like/comment counts.
         days_old: Number of days since upload (must be >= 0).
+        rvr:      Relative View Ratio (video views / channel median views).
 
     Returns:
         Non-negative float score (higher = more viral).
@@ -337,11 +348,16 @@ def _compute_virality_score(v: VideoMeta, days_old: int) -> float:
     recency: float = max(0.0, 1.0 - days_old / _RECENCY_WINDOW_DAYS)
     engmt_ratio: float = (v.like_count + v.comment_count * 2) / max(v.view_count, 1)
     vel_boost: float = math.log10(max(velocity, 1)) / 4.0
-    return base * (1.0 + recency * 1.5) * (1.0 + engmt_ratio * 8.0) * (1.0 + vel_boost)
+    rvr_boost: float = max(0.0, math.log2(max(rvr, 0.5) + 0.5))
+    return base * (1.0 + rvr_boost * 1.2) * (1.0 + recency * 1.2) * (1.0 + engmt_ratio * 6.0) * (1.0 + vel_boost)
 
 
-def _assign_virality_label(rank: int) -> str:
-    """Return a human-readable virality tier label based on ranked position."""
+def _assign_virality_label(rank: int, rvr: float = 1.0) -> str:
+    """Return a human-readable virality tier label based on rank and RVR outlier score."""
+    if rvr >= 2.5:
+        return "Breakout 🔥"
+    if rvr >= 1.7:
+        return "Outlier 🚀"
     if rank == 0:
         return "Hot 🔥"
     if rank <= 2:
@@ -358,20 +374,23 @@ def find_viral_recent_videos(
 ) -> list[ViralRecentVideo]:
     """
     Filter the channel's videos to those uploaded within the last 3 weeks and
-    rank them by a composite multi-signal virality score.
+    rank them by a composite multi-signal virality score and Relative View Ratio.
 
     If no videos were found within the recency window, falls back to scoring all
-    short-candidate videos by views + engagement only (recency = 0).
+    short-candidate videos by views + engagement + RVR (recency = 0).
 
     Args:
         videos:            Full list of VideoMeta from fetch_channel_videos().
-        channel_avg_views: Optional channel average views (reserved for future
-                           relative-to-channel scoring).
+        channel_avg_views: Optional channel average views or baseline.
         max_results:       Maximum candidates to return (default: 10).
 
     Returns:
         List of ViralRecentVideo ordered by virality_score descending.
     """
+    import statistics
+    valid_views = [v.view_count for v in videos if v.view_count > 0]
+    median_views = channel_avg_views or (statistics.median(valid_views) if valid_views else 1.0)
+
     now = datetime.now(tz=timezone.utc)
     candidates: list[ViralRecentVideo] = []
 
@@ -389,13 +408,15 @@ def find_viral_recent_videos(
         if not v.is_short_candidate:
             continue
 
-        score = _compute_virality_score(v, days_old)
+        rvr = v.view_count / max(median_views, 1.0)
+        score = _compute_virality_score(v, days_old, rvr=rvr)
         candidates.append(
             ViralRecentVideo(
                 video=v,
                 days_old=days_old,
                 virality_score=round(score, 2),
                 virality_label="",  # filled after sorting
+                rvr=round(rvr, 2),
             )
         )
 
@@ -416,13 +437,15 @@ def find_viral_recent_videos(
                     days_old_fb = (now - upload_dt_fb).days
                 except ValueError:
                     pass
-            score = _compute_virality_score(v, max(days_old_fb, 1))
+            rvr = v.view_count / max(median_views, 1.0)
+            score = _compute_virality_score(v, max(days_old_fb, 1), rvr=rvr)
             candidates.append(
                 ViralRecentVideo(
                     video=v,
                     days_old=days_old_fb,
                     virality_score=round(score, 2),
                     virality_label="",
+                    rvr=round(rvr, 2),
                 )
             )
         candidates.sort(key=lambda c: c.virality_score, reverse=True)
@@ -432,7 +455,8 @@ def find_viral_recent_videos(
             video=c.video,
             days_old=c.days_old,
             virality_score=c.virality_score,
-            virality_label=_assign_virality_label(rank),
+            virality_label=_assign_virality_label(rank, rvr=c.rvr),
+            rvr=c.rvr,
         )
         for rank, c in enumerate(candidates[:max_results])
     ]
@@ -515,6 +539,119 @@ def fetch_youtube_videos(
         )
 
     return videos
+
+
+def fetch_channel_rss_videos(channel_id_or_url: str, max_videos: int = 15) -> list[VideoMeta]:
+    """
+    Fetch the latest videos from a YouTube channel via its public XML RSS feed.
+    Zero-quota, zero-auth, and fast (<100ms).
+
+    Supports channel IDs (e.g. 'UC...'), user handles ('@username'), or channel URLs.
+    """
+    import urllib.request
+    import xml.etree.ElementTree as ET
+
+    target_id = channel_id_or_url.strip()
+    if "youtube.com/channel/" in target_id:
+        target_id = target_id.split("youtube.com/channel/")[-1].split("/")[0].split("?")[0]
+
+    if target_id.startswith("UC"):
+        feed_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={target_id}"
+    elif target_id.startswith("@"):
+        feed_url = f"https://www.youtube.com/feeds/videos.xml?user={target_id.lstrip('@')}"
+    else:
+        feed_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={target_id}"
+
+    logger.info("Fetching YouTube RSS feed: %s", feed_url)
+    req = urllib.request.Request(feed_url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        xml_content = resp.read()
+
+    root = ET.fromstring(xml_content)
+    ns = {
+        "atom": "http://www.w3.org/2005/Atom",
+        "yt": "http://www.youtube.com/xml/schemas/2015",
+        "media": "http://search.yahoo.com/mrss/",
+    }
+
+    videos: list[VideoMeta] = []
+    for entry in root.findall("atom:entry", ns)[:max_videos]:
+        vid_id_elem = entry.find("yt:videoId", ns)
+        title_elem = entry.find("atom:title", ns)
+        published_elem = entry.find("atom:published", ns)
+        media_group = entry.find("media:group", ns)
+
+        if vid_id_elem is None or not vid_id_elem.text:
+            continue
+        vid_id = vid_id_elem.text.strip()
+        title = title_elem.text.strip() if title_elem is not None and title_elem.text else f"Video {vid_id}"
+
+        upload_date = ""
+        if published_elem is not None and published_elem.text:
+            upload_date = published_elem.text[:10].replace("-", "")
+
+        views = 0
+        desc = ""
+        if media_group is not None:
+            desc_elem = media_group.find("media:description", ns)
+            if desc_elem is not None and desc_elem.text:
+                desc = desc_elem.text
+            community = media_group.find("media:community", ns)
+            if community is not None:
+                stats = community.find("media:statistics", ns)
+                if stats is not None and stats.get("views"):
+                    try:
+                        views = int(stats.get("views"))
+                    except ValueError:
+                        pass
+
+        videos.append(
+            VideoMeta(
+                video_id=vid_id,
+                title=title,
+                url=f"https://www.youtube.com/watch?v={vid_id}",
+                view_count=views,
+                duration_seconds=600,
+                upload_date=upload_date,
+                like_count=0,
+                comment_count=0,
+                description=desc,
+            )
+        )
+
+    return videos
+
+
+def fetch_video_heatmap(video_url: str) -> list[dict[str, float]]:
+    """
+    Extract YouTube's 'Most Replayed' viewer retention curve data for a video
+    via yt-dlp metadata. Returns list of dicts with keys: start_time, end_time, value.
+    """
+    cmd = [
+        sys.executable, "-m", "yt_dlp",
+        "--dump-single-json",
+        "--skip-download",
+        "--no-warnings",
+        video_url,
+    ]
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)
+        if res.returncode == 0 and res.stdout.strip():
+            data = json.loads(res.stdout)
+            heatmap = data.get("heatmap")
+            if isinstance(heatmap, list):
+                return [
+                    {
+                        "start_time": float(item.get("start_time", 0.0)),
+                        "end_time": float(item.get("end_time", 0.0)),
+                        "value": float(item.get("value", 0.0)),
+                    }
+                    for item in heatmap
+                    if "start_time" in item and "value" in item
+                ]
+    except (subprocess.SubprocessError, json.JSONDecodeError, OSError, ValueError) as exc:
+        logger.debug("Heatmap extraction skipped for %s: %s", video_url, exc)
+    return []
 
 
 def analyze_niche(
@@ -635,7 +772,7 @@ def analyze_niche(
             insights.suggested_search_query = parsed.get("suggested_search_query", "").strip()
 
             # Competitor Discovery
-            is_channel_scan = query.startswith("http") or query.startswith("@")
+            is_channel_scan = query.startswith(("http", "@"))
             if is_channel_scan and insights.suggested_search_query:
                 try:
                     logger.info("Executing competitor discovery for niche: %s", insights.suggested_search_query)

@@ -100,8 +100,8 @@ _DOMAIN_PROMPTS: dict[str, str] = {
 
 
 _DEFAULT_WHISPER_PROMPT: str = (
-    "Γεια σας. Σήμερα θα μιλήσουμε για ένα σημαντικό θέμα που αφορά την Ελλάδα. "
-    "Ας αναλύσουμε τα γεγονότα με σαφήνεια."
+    "Ελληνικά, ορθογραφία με τόνους, σωστή στίξη (κόμματα, τελείες, ερωτηματικά), "
+    "κεφαλαία, ακρωνύμια, καθαρή αποτύπωση ομιλίας χωρίς παραλείψεις."
 )
 
 
@@ -127,6 +127,38 @@ def _build_whisper_prompt(context_hint: str | None, source_title: str | None) ->
 
     parts.append(_DEFAULT_WHISPER_PROMPT)
     return " ".join(parts)
+
+
+def extract_speech_audio(video_path: Path, output_wav: Path) -> Path:
+    """
+    Extract a 16kHz mono WAV from video_path with voice normalization filters.
+
+    Uses highpass filter (80Hz) to eliminate rumble and dynaudnorm
+    (dynamic audio normalizer) to elevate quiet speech and balance levels
+    for optimal Whisper speech-to-text accuracy.
+    """
+    import subprocess
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i", str(video_path),
+        "-vn",
+        "-ar", "16000",
+        "-ac", "1",
+        "-af", "highpass=f=80,dynaudnorm=f=150:g=15:m=10.0",
+        "-c:a", "pcm_s16le",
+        str(output_wav),
+    ]
+    logger.debug("Extracting normalized speech audio: %s", " ".join(cmd))
+    res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=False)
+    if res.returncode != 0:
+        logger.warning(
+            "Speech audio pre-extraction failed (code %d): %s — falling back to direct video read.",
+            res.returncode,
+            res.stderr.decode("utf-8", errors="replace").strip()[:200],
+        )
+        return video_path
+    return output_wav
 
 
 # ── Core API ───────────────────────────────────────────────────────────────────
@@ -207,24 +239,40 @@ def transcribe(
     logger.info("Transcribing '%s' (language=el, beam_size=%d)...", video_path.name, beam_size)
     initial_prompt = _build_whisper_prompt(context_hint, source_title)
     logger.debug("Whisper initial_prompt: %s", initial_prompt[:120])
+
+    import tempfile
+    temp_wav = Path(tempfile.mktemp(suffix="_speech16k.wav"))
+    audio_target = extract_speech_audio(video_path, temp_wav)
+
     try:
         raw_segments, _info = model.transcribe(
-            str(video_path),
+            str(audio_target),
             language="el",
             beam_size=beam_size,
             word_timestamps=True,
             vad_filter=True,
-            # Raised from 300ms: prevents splitting Greek sentences mid-breath
-            vad_parameters={"min_silence_duration_ms": 500},
+            vad_parameters={
+                "min_silence_duration_ms": 400,
+                "speech_pad_ms": 400,
+            },
             initial_prompt=initial_prompt,
             condition_on_previous_text=False,
             # temperature=0 forces greedy decoding — most deterministic and accurate
             temperature=0.0,
+            repetition_penalty=1.1,
+            no_repeat_ngram_size=3,
+            hallucination_silence_threshold=2.0,
         )
     except Exception as exc:
         raise RuntimeError(
             f"Transcription failed for '{video_path.name}': {exc}"
         ) from exc
+    finally:
+        if temp_wav.exists():
+            try:
+                temp_wav.unlink()
+            except OSError as err:
+                logger.debug("Failed to delete temp wav %s: %s", temp_wav, err)
 
     total_duration = getattr(_info, "duration", 0.0) or 0.0
 
@@ -296,7 +344,7 @@ def _seconds_to_ass_time(seconds: float) -> str:
     remainder = seconds % 3600
     minutes = int(remainder // 60)
     secs = remainder % 60
-    centiseconds = int(round((secs % 1) * 100))
+    centiseconds = round((secs % 1) * 100)
     whole_secs = int(secs)
     return f"{hours}:{minutes:02d}:{whole_secs:02d}.{centiseconds:02d}"
 
@@ -342,10 +390,11 @@ def segments_to_ass(
     highlight_style_line: str | None = None,
     primary_keyword: str | None = None,
     subtitle_position: str = "lower_third",
+    subtitle_mode: str = "word",
 ) -> str:
     """
     Generate an ASS subtitle payload from a list of transcription segments.
-    Uses an animated, modern TikTok-style 1-word-per-line rendering.
+    Supports animated 1-word-per-line pop or natural 2-3 word phrases.
 
     Args:
         segments:            Ordered transcript segments.
@@ -353,6 +402,7 @@ def segments_to_ass(
         highlight_style_line: Optional highlight style override.
         primary_keyword:     Keyword to highlight in yellow.
         subtitle_position:   "lower_third" | "center" | "top".
+        subtitle_mode:       "word" (1-word pop) | "phrase" (2-3 words phrase chunks).
     """
     margin_v = _SUBTITLE_MARGIN_V.get(subtitle_position, _SUBTITLE_MARGIN_V["lower_third"])
 
@@ -377,6 +427,9 @@ def segments_to_ass(
         if seg.words:
             all_words.extend(seg.words)
 
+    min_word_duration = 0.22
+    gap_bridge_threshold = 0.35
+
     # If no words available, fallback to segments
     if not all_words:
         for seg in segments:
@@ -384,19 +437,65 @@ def segments_to_ass(
             end = _seconds_to_ass_time(seg.end)
             text_field = _escape_ass_text(seg.text)
             dialogue_lines.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text_field}")
+    elif subtitle_mode == "phrase":
+        # Group words into 2-3 word natural phrases
+        idx = 0
+        while idx < len(all_words):
+            chunk = [all_words[idx]]
+            idx += 1
+            while idx < len(all_words) and len(chunk) < 3:
+                curr_w = all_words[idx]
+                prev_w = chunk[-1]
+                # Break on long pauses between words
+                if curr_w[0] - prev_w[1] > 0.45:
+                    break
+                combined_len = sum(len(w[2]) for w in chunk) + len(curr_w[2]) + len(chunk)
+                if combined_len > 24:
+                    break
+                chunk.append(curr_w)
+                idx += 1
+            
+            p_start = chunk[0][0]
+            p_end = max(chunk[-1][1], p_start + 0.40)
+            if idx < len(all_words):
+                next_start = all_words[idx][0]
+                gap = next_start - p_end
+                if 0.0 <= gap < gap_bridge_threshold:
+                    p_end = max(p_end, next_start)
+                elif gap >= gap_bridge_threshold:
+                    p_end = min(p_end + 0.15, next_start)
+            else:
+                p_end = p_end + 0.20
+
+            t_start = _seconds_to_ass_time(p_start)
+            t_end = _seconds_to_ass_time(p_end)
+
+            words_formatted: list[str] = []
+            for w in chunk:
+                w_safe = _escape_ass_text(w[2])
+                clean_w = w[2].translate(str.maketrans('', '', string.punctuation)).lower().strip()
+                if clean_keyword and clean_w and (clean_w == clean_keyword or clean_w in clean_keyword.split()):
+                    words_formatted.append(rf"{{\c&H00FFFF&}}{w_safe}{{\c&H00FFFFFF&}}")
+                else:
+                    words_formatted.append(w_safe)
+
+            pop = r"{\fscx85\fscy85\t(0,50,\fscx108\fscy108)\t(50,130,\fscx100\fscy100)}"
+            phrase_text = " ".join(words_formatted)
+            dialogue_lines.append(f"Dialogue: 0,{t_start},{t_end},Default,,0,0,0,,{pop}{phrase_text}")
     else:
         for i, (w_start, w_end, w_text) in enumerate(all_words):
-            display_end = w_end
+            display_end = max(w_start + min_word_duration, w_end)
             
             # Bridge short gaps to next word to avoid flickering
             if i + 1 < len(all_words):
                 next_start = all_words[i+1][0]
-                if next_start - w_end < 0.4:
-                    display_end = next_start
-                else:
-                    display_end = w_end + 0.2
+                gap = next_start - w_end
+                if 0.0 <= gap < gap_bridge_threshold:
+                    display_end = max(display_end, next_start)
+                elif gap >= gap_bridge_threshold:
+                    display_end = min(display_end + 0.15, next_start)
             else:
-                display_end = w_end + 0.2
+                display_end = display_end + 0.15
 
             t_start = _seconds_to_ass_time(w_start)
             t_end = _seconds_to_ass_time(display_end)
@@ -430,6 +529,7 @@ def write_ass_file(
     highlight_style_line: str | None = None,
     primary_keyword: str | None = None,
     subtitle_position: str = "lower_third",
+    subtitle_mode: str = "word",
 ) -> Path:
     """
     Generate and write an ASS subtitle file for the given segments.
@@ -441,6 +541,7 @@ def write_ass_file(
         highlight_style_line: Optional highlight style override.
         primary_keyword:      Optional keyword to statically highlight.
         subtitle_position:    Vertical placement: "lower_third" | "center" | "top".
+        subtitle_mode:        "word" | "phrase".
 
     Returns:
         The resolved, written output_path.
@@ -454,6 +555,7 @@ def write_ass_file(
         highlight_style_line=highlight_style_line,
         primary_keyword=primary_keyword,
         subtitle_position=subtitle_position,
+        subtitle_mode=subtitle_mode,
     )
 
     # ASS files must be UTF-8 encoded to preserve Greek glyphs

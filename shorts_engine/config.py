@@ -201,12 +201,12 @@ class Settings:
     )
 
     # ── Transcription ──────────────────────────────────────────
-    # Whisper model size: tiny | base | small | medium | large-v3
+    # Whisper model size: tiny | base | small | medium | large-v3 | large-v3-turbo
     whisper_model_size: str = "large-v3"
     # Always CPU — no CUDA complexity
     whisper_device: str = "cpu"
-    # Compute type appropriate for CPU
-    whisper_compute_type: str = "int8"
+    # Compute type appropriate for CPU: int8_float32 (balanced accuracy/speed) | int8 | float32
+    whisper_compute_type: str = "int8_float32"
     # Beam search size (5 = full beam search for highest accuracy)
     whisper_beam_size: int = 5
     # Domain context hint for Whisper initial_prompt enrichment.
@@ -264,6 +264,8 @@ class Settings:
     # ── Subtitles ─────────────────────────────────────────────
     # Vertical placement of captions: "lower_third" | "center" | "top"
     subtitle_position: str = "lower_third"
+    # Caption animation style: "word" (1-word pop) | "phrase" (natural 2-3 word phrases)
+    subtitle_mode: str = "word"
 
     # ── SEO Engine ─────────────────────────────────────────────
     # Optional Brand Voice injection to tailor Gemini's writing tone
@@ -316,11 +318,25 @@ class Settings:
             errors.append(f"Outro file not found: {self.outro_path}")
 
         if self.whisper_model_size not in {
-            "tiny", "base", "small", "medium", "large-v3"
+            "tiny", "base", "small", "medium", "large-v3", "large-v3-turbo", "turbo"
         }:
             errors.append(
                 f"Invalid whisper_model_size '{self.whisper_model_size}'. "
-                "Choose from: tiny, base, small, medium, large-v3."
+                "Choose from: tiny, base, small, medium, large-v3, large-v3-turbo."
+            )
+
+        if self.whisper_compute_type not in {
+            "int8", "int8_float32", "float32", "int16"
+        }:
+            errors.append(
+                f"Invalid whisper_compute_type '{self.whisper_compute_type}'. "
+                "Choose from: int8, int8_float32, float32, int16."
+            )
+
+        if self.subtitle_mode not in {"word", "phrase"}:
+            errors.append(
+                f"Invalid subtitle_mode '{self.subtitle_mode}'. "
+                "Choose from: word, phrase."
             )
 
         if self.broll_overlay_duration <= 0:

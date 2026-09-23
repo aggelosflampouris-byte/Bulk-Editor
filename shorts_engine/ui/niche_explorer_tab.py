@@ -112,7 +112,9 @@ def render_niche_explorer_tab(settings: Settings) -> None:
         # Render Autopilot Review UI if available
         niche_ap_results = st.session_state.get("niche_autopilot_result")
         if niche_ap_results:
-            from shorts_engine.ui.components.review_card import render_review_and_approve_list
+            from shorts_engine.ui.components.review_card import (
+                render_review_and_approve_list,
+            )
             render_review_and_approve_list(niche_ap_results, key_prefix="niche_ap")
 
         # Scan & analyze
@@ -198,6 +200,13 @@ def render_niche_explorer_tab(settings: Settings) -> None:
             # Top Videos Table
             st.markdown("---")
             st.markdown("#### 📈 Top Performing Videos")
+            try:
+                from services.cache_manager import is_video_already_processed
+            except ImportError:
+                from shorts_engine.services.cache_manager import (
+                    is_video_already_processed,
+                )
+
             if ins.top_videos:
                 import pandas as pd
                 top_df = pd.DataFrame([
@@ -206,6 +215,7 @@ def render_niche_explorer_tab(settings: Settings) -> None:
                         "Views": f"{v.view_count:,}",
                         "Duration": v.duration_display,
                         "Uploaded": v.upload_date_display,
+                        "Clipped": "✂️ Yes" if is_video_already_processed(v.url, settings.output_dir) else "—",
                         "URL": v.url,
                     }
                     for v in ins.top_videos
@@ -216,8 +226,8 @@ def render_niche_explorer_tab(settings: Settings) -> None:
             st.markdown("---")
             st.markdown("#### 🔥 Recent Viral Picks — Last 3 Weeks")
             st.caption(
-                "Videos uploaded within the last 21 days, scored by virality "
-                "(views × recency × engagement rate). Click **Start Clipping** to "
+                "Videos uploaded within the last 21 days, scored by Relative View Ratio (RVR) "
+                "against channel median and view velocity. Click **Start Clipping** to "
                 "extract Shorts immediately."
             )
 
@@ -227,23 +237,40 @@ def render_niche_explorer_tab(settings: Settings) -> None:
                 st.info(f"**Competitor Discovery:** Sourced viral videos across YouTube for the AI-detected niche: `{ins.suggested_search_query}`")
 
             if viral_list:
+                unclipped = [vrv for vrv in viral_list if not is_video_already_processed(vrv.video.url, settings.output_dir)]
+                if unclipped:
+                    q_col1, _ = st.columns([3, 4])
+                    with q_col1:
+                        if st.button("⚡ Queue Top Unclipped Outlier", key="queue_top_outlier", type="secondary"):
+                            top_v = unclipped[0].video
+                            st.session_state["queued_url"] = top_v.url
+                            st.session_state["queued_url_autostart"] = True
+                            st.session_state["active_tab"] = "Video URL"
+                            st.rerun()
+
                 for vrv in viral_list:
                     v = vrv.video
+                    already_clipped = is_video_already_processed(v.url, settings.output_dir)
+                    clipped_badge = '<span style="background:#064e3b;color:#34d399;border-radius:4px;padding:2px 8px;font-size:0.75rem;font-weight:600;">✂️ Already Clipped</span>' if already_clipped else ""
+                    rvr_badge = f'<span style="background:#311b92;color:#b388ff;border-radius:4px;padding:2px 8px;font-size:0.75rem;font-weight:600;">{vrv.rvr_display}</span>' if hasattr(vrv, "rvr_display") else ""
+
                     with st.container():
                         st.markdown(
                             f"""
 <div style="border:1px solid #27272a;border-radius:8px;padding:14px 18px;margin-bottom:10px;background:#111113;">
   <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-<span style="font-size:1.05rem;font-weight:600;color:#f4f4f5;flex:1;">{v.title}</span>
-<span style="background:#3f3f46;color:#a1a1aa;border-radius:4px;padding:2px 8px;font-size:0.75rem;">{vrv.virality_label}</span>
+    <span style="font-size:1.05rem;font-weight:600;color:#f4f4f5;flex:1;">{v.title}</span>
+    <span style="background:#3f3f46;color:#a1a1aa;border-radius:4px;padding:2px 8px;font-size:0.75rem;">{vrv.virality_label}</span>
+    {rvr_badge}
+    {clipped_badge}
   </div>
   <div style="margin-top:6px;font-size:0.78rem;color:#71717a;">
-⏱ {v.duration_display} &nbsp;·&nbsp;
-👁 {v.view_count:,} views &nbsp;·&nbsp;
-👍 {v.like_count:,} likes &nbsp;·&nbsp;
-📅 {vrv.days_old} day{"s" if vrv.days_old != 1 else ""} ago &nbsp;·&nbsp;
-⚡ Virality score: <strong style="color:#f4f4f5;">{vrv.score_display}</strong>
-&nbsp;<a href="{v.url}" target="_blank" style="color:#6366f1;">[Open ↗]</a>
+    ⏱ {v.duration_display} &nbsp;·&nbsp;
+    👁 {v.view_count:,} views &nbsp;·&nbsp;
+    👍 {v.like_count:,} likes &nbsp;·&nbsp;
+    📅 {vrv.days_old} day{"s" if vrv.days_old != 1 else ""} ago &nbsp;·&nbsp;
+    ⚡ Virality score: <strong style="color:#f4f4f5;">{vrv.score_display}</strong>
+    &nbsp;<a href="{v.url}" target="_blank" style="color:#6366f1;">[Open ↗]</a>
   </div>
 </div>
 """,
@@ -256,10 +283,11 @@ def render_niche_explorer_tab(settings: Settings) -> None:
                                 st.session_state["queued_url_autostart"] = True
                                 st.session_state["active_tab"] = "Video URL"
 
+                            btn_label = "✂️ Re-clip Video" if already_clipped else "🎬 Start Clipping"
                             st.button(
-                                "🎬 Start Clipping",
+                                btn_label,
                                 key=f"clip_viral_{v.video_id}",
-                                type="primary",
+                                type="primary" if not already_clipped else "secondary",
                                 use_container_width=True,
                                 on_click=_on_clip_click,
                             )

@@ -665,12 +665,13 @@ CRITICAL: The 'small' Whisper model often hallucinates complete gibberish or red
 
 Correct EACH line so it reads as accurate, natural, grammatically correct Greek. Follow these rules:
 1. Output the EXACT SAME number of lines as input — one corrected line per input line.
-2. Do NOT merge or split lines.
-3. Do NOT add unnecessary punctuation; keep subtitles clean and natural.
-4. Do NOT change the speaker's intended meaning, but aggressively fix nonsense.
-5. LOGICAL GUARDRAIL (CRITICAL): Ensure the sentence actually makes sense. If the literal words form a confusing or disjointed sentence, rewrite them slightly to form a coherent, logical statement that fits the context.
-6. If a line is already correct, output it unchanged.
-7. Output ONLY the corrected lines, nothing else.
+2. PRESERVE THE LINE INDEX: Each output line MUST start with its exact index tag matching the input (e.g. [0] ..., [1] ...).
+3. Do NOT merge or split lines.
+4. Do NOT add unnecessary punctuation; keep subtitles clean and natural.
+5. Do NOT change the speaker's intended meaning, but aggressively fix nonsense and speech-to-text AI glitches.
+6. LOGICAL GUARDRAIL (CRITICAL): Ensure the sentence actually makes sense. If the literal words form a confusing or disjointed sentence, rewrite them slightly to form a coherent, logical statement that fits the context.
+7. If a line is already correct, output it with its tag unchanged.
+8. Output ONLY the tagged lines, nothing else.
 
 Lines to correct:
 {lines}
@@ -775,6 +776,7 @@ def correct_transcript_greek(
     Sends the text of each segment to Gemini for grammar/spelling correction,
     then maps the corrected text back to the original segments while preserving
     all word-level timing data (only the .text attribute is updated).
+    Processes transcripts in sequential batches of 50 to cover 100% of the video.
 
     Args:
         segments: List of TranscriptionSegment objects from transcribe().
@@ -793,71 +795,77 @@ def correct_transcript_greek(
     if not segments:
         return segments
 
-    # Build numbered input lines (one per segment)
-    input_lines = [seg.text for seg in segments]
+    batch_size = 50
+    corrected_segments: list[TranscriptionSegment] = []
 
-    # Limit prompt size — for very long transcripts batch in 60-line windows
-    if len(input_lines) > 60:
-        logger.info(
-            "Transcript has %d segments; correcting in one batch (first 60).",
-            len(input_lines),
-        )
-        input_lines_batch = input_lines[:60]
-        rest = segments[60:]
-    else:
-        input_lines_batch = input_lines
-        rest = []
-
-    prompt = _CORRECTION_PROMPT.format(lines="\n".join(input_lines_batch))
-
-    logger.info("Calling Gemini to correct %d transcript segments...", len(input_lines_batch))
     try:
         client = genai.Client(api_key=api_key)
-        raw = _call_gemini_with_fallback(
-            client=client,
-            contents=prompt,
-            config=genai_types.GenerateContentConfig(
-                max_output_tokens=2048,
-                temperature=0.1,  # Very low — stay close to original
-            ),
-        ).strip()
     except Exception as exc:
-        logger.warning("Gemini transcript correction failed: %s — using original.", exc)
+        logger.warning("Failed to initialize Gemini client for transcript correction: %s", exc)
         return segments
 
-    # Strip potential markdown fences (e.g. ```text ... ```)
-    raw_cleaned = raw.strip()
-    if raw_cleaned.startswith("```"):
-        raw_cleaned = "\n".join(raw_cleaned.split("\n")[1:])
-    if raw_cleaned.endswith("```"):
-        raw_cleaned = "\n".join(raw_cleaned.split("\n")[:-1])
-    
-    corrected_lines = [line.strip() for line in raw_cleaned.splitlines() if line.strip()]
+    total_batches = (len(segments) + batch_size - 1) // batch_size
+    logger.info("Correcting %d transcript segments in %d batch(es)...", len(segments), total_batches)
 
-    # Validate: must have same count as input batch
-    if len(corrected_lines) != len(input_lines_batch):
-        logger.warning(
-            "Gemini returned %d corrected lines for %d segments — using original.",
-            len(corrected_lines), len(input_lines_batch),
-        )
-        return segments
+    for b_idx in range(total_batches):
+        batch = segments[b_idx * batch_size : (b_idx + 1) * batch_size]
+        input_lines = [f"[{i}] {seg.text}" for i, seg in enumerate(batch)]
+        prompt = _CORRECTION_PROMPT.format(lines="\n".join(input_lines))
 
-    # Rebuild segments with corrected text and synchronised word timings
-    corrected_segments: list[TranscriptionSegment] = []
-    for seg, new_text in zip(segments[:len(input_lines_batch)], corrected_lines):
-        aligned_words = align_words_with_corrected_text(
-            original_words=seg.words,
-            corrected_text=new_text,
-            seg_start=seg.start,
-            seg_end=seg.end,
-        )
-        corrected_segments.append(
-            TranscriptionSegment(
-                start=seg.start,
-                end=seg.end,
-                text=new_text,
-                words=aligned_words,
+        try:
+            raw = _call_gemini_with_fallback(
+                client=client,
+                contents=prompt,
+                config=genai_types.GenerateContentConfig(
+                    max_output_tokens=2048,
+                    temperature=0.1,  # Very low — stay close to original
+                ),
+            ).strip()
+        except Exception as exc:
+            logger.warning("Gemini transcript correction failed on batch %d: %s — using original.", b_idx + 1, exc)
+            corrected_segments.extend(batch)
+            continue
+
+        # Strip markdown fences if present
+        raw_cleaned = raw.strip()
+        if raw_cleaned.startswith("```"):
+            raw_cleaned = "\n".join(raw_cleaned.split("\n")[1:])
+        if raw_cleaned.endswith("```"):
+            raw_cleaned = "\n".join(raw_cleaned.split("\n")[:-1])
+
+        raw_lines = [line.strip() for line in raw_cleaned.splitlines() if line.strip()]
+
+        # Parse indexed lines
+        corrected_map: dict[int, str] = {}
+        for line in raw_lines:
+            match = re.match(r"^\[(\d+)\]\s*(.*)$", line)
+            if match:
+                idx = int(match.group(1))
+                text = match.group(2).strip()
+                if text:
+                    corrected_map[idx] = text
+
+        # Fallback if model omitted bracket tags but returned same line count
+        if not corrected_map and len(raw_lines) == len(batch):
+            for i, line in enumerate(raw_lines):
+                corrected_map[i] = line
+
+        # Rebuild segments with corrected text and synchronised word timings
+        for i, seg in enumerate(batch):
+            new_text = corrected_map.get(i, seg.text)
+            aligned_words = align_words_with_corrected_text(
+                original_words=seg.words,
+                corrected_text=new_text,
+                seg_start=seg.start,
+                seg_end=seg.end,
             )
-        )
+            corrected_segments.append(
+                TranscriptionSegment(
+                    start=seg.start,
+                    end=seg.end,
+                    text=new_text,
+                    words=aligned_words,
+                )
+            )
 
-    return corrected_segments + rest
+    return corrected_segments

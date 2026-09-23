@@ -11,11 +11,17 @@ from typing import Any
 
 from config import Settings
 from pipeline import process_url_clip
-from services.channel_analyzer import fetch_view_velocity_top, fetch_youtube_videos
+from services.cache_manager import is_video_already_processed
+from services.channel_analyzer import (
+    fetch_view_velocity_top,
+    fetch_youtube_videos,
+    find_viral_recent_videos,
+)
 from services.clip_selector import select_clips
-from services.downloader import download_video
+from services.downloader import download_video, download_video_section
 from services.seo_generator import generate_seo
 from services.transcriber import transcribe
+from services.youtube_transcript_fetcher import fetch_youtube_transcript
 
 logger = logging.getLogger(__name__)
 
@@ -45,80 +51,153 @@ def run_autopilot_pipeline(
     Yields (status_message, progress_percentage, result_data)
     """
     yield ("Analyzing channel / niche...", 5, None)
-    
+
     videos = fetch_youtube_videos(target_url, max_videos=30)
     if not videos:
         raise ValueError("Could not find any videos on this channel.")
-        
-    velocity_picks = fetch_view_velocity_top(videos, top_n=max(5, num_videos))
-    if not velocity_picks:
-        raise ValueError("Could not calculate velocity for videos.")
-        
-    best_videos = velocity_picks[:num_videos]
-    
+
+    # Prioritize viral breakout candidates (RVR-boosted virality score)
+    viral_picks = find_viral_recent_videos(videos, max_results=max(10, num_videos * 2))
+    candidates = (
+        [vp.video for vp in viral_picks]
+        if viral_picks
+        else fetch_view_velocity_top(videos, top_n=max(5, num_videos * 2))
+    )
+
+    # Anti-cannibalization: skip videos that have already been processed into shorts
+    unprocessed = [v for v in candidates if not is_video_already_processed(v.url, settings.output_dir)]
+    best_videos = (unprocessed if unprocessed else candidates)[:num_videos]
+
     yield (f"Selected {len(best_videos)} highly viral videos for processing.", 10, None)
-    
+
     results = []
-    
+
     for idx, best_video in enumerate(best_videos):
         base_pct = 10 + (90 * idx // num_videos)
         step_pct = 90 // num_videos
-        
-        def _p(offset: float) -> int:
-            return int(base_pct + (step_pct * offset))
-            
-        yield (f"[Video {idx+1}/{num_videos}] Selected highly viral video: {best_video.title}", _p(0.05), None)
-        
-        # Download
-        yield (f"[Video {idx+1}/{num_videos}] Downloading video for analysis...", _p(0.1), None)
+
+        def _p(offset: float, b: int = base_pct, s: int = step_pct) -> int:
+            return int(b + (s * offset))
+
+        yield (f"[Video {idx+1}/{num_videos}] Sourced viral video: {best_video.title}", _p(0.05), None)
+
         import uuid
         download_dir = Path(tempfile.gettempdir()) / f"autopilot_{uuid.uuid4().hex}"
         download_dir.mkdir(parents=True, exist_ok=True)
-        video_path = download_video(best_video.url, download_dir, settings.max_source_duration_seconds)
-        
-        # Transcribe
-        yield (f"[Video {idx+1}/{num_videos}] Transcribing audio...", _p(0.3), None)
-        transcript = transcribe(
-            video_path=video_path,
-            model_size=settings.whisper_model_size,
-            device=settings.whisper_device,
-            compute_type=settings.whisper_compute_type,
-            beam_size=settings.whisper_beam_size,
-            context_hint=settings.whisper_context_hint
-        )
-        
-        # Extract OCR Text
-        yield (f"[Video {idx+1}/{num_videos}] Extracting visual context (OCR)...", _p(0.4), None)
-        ocr_text = ""
-        try:
-            from services.ocr_engine import OCREngine
-            ocr_engine = OCREngine(gemini_api_key=settings.gemini_api_key)
-            ocr_text = ocr_engine.extract_text_from_video(video_path, sample_rate_sec=5)
-        except Exception as e:
-            logger.warning(f"OCR extraction failed for {video_path}: {e}")
 
-        # Select Clips
-        yield (f"[Video {idx+1}/{num_videos}] AI analyzing transcription for viral clips...", _p(0.5), None)
-        clips = select_clips(
-            segments=transcript,
-            gemini_api_key=settings.gemini_api_key,
-            max_clips=3,
-            min_clips=3,
-            min_dur=30.0,
-            max_dur=60.0,
-            ocr_text=ocr_text,
-        )
-        if not clips:
-            logger.warning(f"AI could not find any good clips in video {best_video.title}. Skipping.")
-            continue
-            
-        # Pick highest ranked clip
-        best_clip = clips[0]
-        yield (f"[Video {idx+1}/{num_videos}] Selected clip: {best_clip.seo.title} (Rank: {best_clip.index})", _p(0.6), None)
-        
+        yield (f"[Video {idx+1}/{num_videos}] Pre-download triage: fetching YouTube transcript...", _p(0.1), None)
+
+        # 1. Attempt pre-download transcript triage
+        transcript = None
+        try:
+            transcript = fetch_youtube_transcript(best_video.url)
+            if transcript:
+                logger.info(
+                    "Retrieved %d transcript segments via YouTube API for %s — skipping full video download.",
+                    len(transcript),
+                    best_video.url,
+                )
+        except (RuntimeError, OSError, ValueError) as exc:
+            logger.debug("YouTube transcript fetch failed for %s: %s", best_video.url, exc)
+            transcript = None
+
+        source_is_section = False
+        source_offset = 0.0
+
+        if transcript:
+            # AI selects viral clips directly from pre-fetched transcript
+            yield (f"[Video {idx+1}/{num_videos}] AI analyzing transcript for viral clips...", _p(0.25), None)
+            clips = select_clips(
+                segments=transcript,
+                gemini_api_key=settings.gemini_api_key,
+                max_clips=3,
+                min_clips=1,
+                min_dur=settings.clip_min_duration,
+                max_dur=settings.clip_max_duration,
+            )
+            if not clips:
+                logger.warning("AI could not find viral moments in transcript for %s. Skipping.", best_video.title)
+                continue
+
+            best_clip = clips[0]
+            yield (
+                f"[Video {idx+1}/{num_videos}] Selected clip: {best_clip.seo.title if best_clip.seo else 'Viral Hook'} (Rank: {best_clip.index})",
+                _p(0.4),
+                None,
+            )
+
+            # Fast section download: only download the chosen clip segment (with 2s padding)
+            yield (
+                f"[Video {idx+1}/{num_videos}] Sourcing video section [{best_clip.start_display} → {best_clip.end_display}]...",
+                _p(0.55),
+                None,
+            )
+            pad = 2.0
+            try:
+                video_path = download_video_section(
+                    best_video.url,
+                    download_dir,
+                    start_time=best_clip.start_time,
+                    end_time=best_clip.end_time,
+                    padding=pad,
+                )
+                source_is_section = True
+                source_offset = min(best_clip.start_time, pad)
+            except (RuntimeError, OSError, ValueError) as exc:
+                logger.warning("Section download failed (%s), falling back to full download.", exc)
+                video_path = download_video(best_video.url, download_dir, settings.max_source_duration_seconds)
+                source_is_section = False
+                source_offset = 0.0
+        else:
+            # Fallback path: Full download + Whisper local transcription + OCR
+            yield (f"[Video {idx+1}/{num_videos}] Downloading video for Whisper analysis...", _p(0.15), None)
+            video_path = download_video(best_video.url, download_dir, settings.max_source_duration_seconds)
+
+            yield (f"[Video {idx+1}/{num_videos}] Transcribing audio with Whisper...", _p(0.35), None)
+            transcript = transcribe(
+                video_path=video_path,
+                model_size=settings.whisper_model_size,
+                device=settings.whisper_device,
+                compute_type=settings.whisper_compute_type,
+                beam_size=settings.whisper_beam_size,
+                context_hint=settings.whisper_context_hint,
+            )
+
+            # Extract visual context via OCR
+            yield (f"[Video {idx+1}/{num_videos}] Extracting visual context (OCR)...", _p(0.45), None)
+            ocr_text = ""
+            try:
+                from services.ocr_engine import OCREngine
+                ocr_engine = OCREngine(gemini_api_key=settings.gemini_api_key)
+                ocr_text = ocr_engine.extract_text_from_video(video_path, sample_rate_sec=5)
+            except (RuntimeError, OSError, ValueError) as exc:
+                logger.warning("OCR extraction failed for %s: %s", video_path, exc)
+
+            yield (f"[Video {idx+1}/{num_videos}] AI analyzing transcription for viral clips...", _p(0.55), None)
+            clips = select_clips(
+                segments=transcript,
+                gemini_api_key=settings.gemini_api_key,
+                max_clips=3,
+                min_clips=1,
+                min_dur=settings.clip_min_duration,
+                max_dur=settings.clip_max_duration,
+                ocr_text=ocr_text,
+            )
+            if not clips:
+                logger.warning("AI could not find any good clips in video %s. Skipping.", best_video.title)
+                continue
+
+            best_clip = clips[0]
+            yield (
+                f"[Video {idx+1}/{num_videos}] Selected clip: {best_clip.seo.title if best_clip.seo else 'Viral Hook'} (Rank: {best_clip.index})",
+                _p(0.65),
+                None,
+            )
+            source_is_section = False
+            source_offset = 0.0
+
         # Compose Clip
-        yield (f"[Video {idx+1}/{num_videos}] Downloading clip segment & assembling Short...", _p(0.7), None)
-        # process_url_clip handles downloading the sub-segment and running video_engine
+        yield (f"[Video {idx+1}/{num_videos}] Assembling Short...", _p(0.75), None)
         result = process_url_clip(
             clip=best_clip,
             source_path=video_path,
@@ -126,7 +205,10 @@ def run_autopilot_pipeline(
             settings=settings,
             tmp_dir=download_dir,
             run_output_dir=settings.output_dir,
-            custom_broll_path=broll_path if broll_path else None
+            custom_broll_path=broll_path if broll_path else None,
+            source_is_section=source_is_section,
+            source_offset=source_offset,
+            source_video_id=best_video.video_id,
         )
         
         if result.error:

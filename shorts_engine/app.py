@@ -371,13 +371,29 @@ def _render_sidebar() -> Settings:
         st.markdown("### Transcription")
         model_size = st.selectbox(
             "Whisper Model Size",
-            options=["tiny", "base", "small", "medium", "large-v3"],
+            options=["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"],
             index=4,  # default: large-v3
             help=(
                 "faster-whisper-large-v3 delivers highest Greek accuracy and millisecond timestamps.\n"
-                "Use small or base for fast 1–2 minute previews on CPU for long YouTube videos."
+                "large-v3-turbo offers near-identical accuracy at 3x higher speed.\n"
+                "Use small or base for fast previews on CPU."
             ),
             key="whisper_model_size_select",
+        )
+        whisper_compute_type = st.selectbox(
+            "Whisper Precision / Compute Type",
+            options=["int8_float32", "int8", "float32"],
+            index=0,
+            format_func=lambda x: {
+                "int8_float32": "⚡ int8_float32 (Balanced: High accuracy & fast)",
+                "int8": "🚀 int8 (Fastest, lowest memory)",
+                "float32": "🎯 float32 (Maximum precision, unquantized)",
+            }.get(x, x),
+            help=(
+                "int8_float32 uses 8-bit quantized weights with 32-bit accumulators to avoid "
+                "Greek diacritic and accent misclassifications without CPU thermal throttling."
+            ),
+            key="whisper_compute_type_select",
         )
         whisper_beam_size = st.select_slider(
             "Whisper Beam Size",
@@ -429,6 +445,17 @@ def _render_sidebar() -> Settings:
             }.get(x, x),
             help="Vertical position of animated captions in the 9:16 frame.",
             key="subtitle_position_select",
+        )
+        subtitle_mode = st.selectbox(
+            "Caption Style",
+            options=["word", "phrase"],
+            index=0,
+            format_func=lambda x: {
+                "word": "🔥 1-Word Pop (TikTok dynamic)",
+                "phrase": "📖 Natural Phrases (2–3 words grouped)",
+            }.get(x, x),
+            help="1-Word Pop displays words individually with a pop animation. Natural Phrases groups 2-3 words for enhanced reading comfort.",
+            key="subtitle_mode_select",
         )
 
         st.markdown("---")
@@ -674,6 +701,7 @@ def _render_sidebar() -> Settings:
 
     return Settings(
         whisper_model_size=str(model_size),
+        whisper_compute_type=str(whisper_compute_type),
         whisper_beam_size=int(whisper_beam_size),
         whisper_context_hint=str(whisper_context_hint),
 
@@ -698,6 +726,7 @@ def _render_sidebar() -> Settings:
         brand_voice=final_brand_voice,
         niche_template=selected_template_name,
         subtitle_position=str(subtitle_position),
+        subtitle_mode=str(subtitle_mode),
         outro_path=outro_path,
         output_dir=resolved_output_dir,
     )

@@ -338,11 +338,13 @@ def slice_segments(
             if not new_words:
                 new_words = None
 
+        new_text = " ".join(w[2] for w in new_words) if new_words else seg.text
+
         clipped.append(
             TranscriptionSegment(
                 start=new_start,
                 end=new_end,
-                text=seg.text,
+                text=new_text,
                 words=new_words,
             )
         )
@@ -367,7 +369,7 @@ def _seconds_to_display(seconds: float) -> str:
         3610.0 → "60:10.0"
     """
     total_whole = int(seconds)
-    tenths = int(round((seconds % 1) * 10))
+    tenths = round((seconds % 1) * 10)
     minutes = total_whole // 60
     secs = total_whole % 60
     return f"{minutes:02d}:{secs:02d}.{tenths}"

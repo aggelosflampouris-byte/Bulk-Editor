@@ -92,7 +92,7 @@ def test_snap_to_silence_never_cuts_mid_word():
     ]
 
     # Target cut starts at 12.4s (right inside "σπουδαίο" 12.0 - 13.0)
-    snapped_start, snapped_end = snap_to_silence(
+    snapped_start, _ = snap_to_silence(
         start_time=12.4,
         end_time=25.0,
         segments=segments,
@@ -117,6 +117,36 @@ def test_slice_segments_rebasing():
     assert sliced[0].end == 5.0
     assert sliced[1].start == 6.0
     assert sliced[1].end == 15.0
+
+
+def test_slice_segments_text_synchronization():
+    segments = [
+        TranscriptionSegment(
+            start=0.0,
+            end=10.0,
+            text="Πριν την αρχή Καλημέρα σε όλους Μετά το τέλος",
+            words=[
+                (0.0, 1.0, "Πριν"),
+                (1.0, 2.0, "την"),
+                (2.0, 3.0, "αρχή"),
+                (4.0, 5.0, "Καλημέρα"),
+                (5.0, 6.0, "σε"),
+                (6.0, 7.0, "όλους"),
+                (8.0, 9.0, "Μετά"),
+                (9.0, 9.5, "το"),
+                (9.5, 10.0, "τέλος"),
+            ],
+        ),
+    ]
+
+    # Slice between 3.5 and 7.5
+    sliced = slice_segments(segments, start_time=3.5, end_time=7.5)
+    assert len(sliced) == 1
+    # text must only contain the words in the window!
+    assert sliced[0].text == "Καλημέρα σε όλους"
+    assert len(sliced[0].words) == 3
+    assert sliced[0].words[0][2] == "Καλημέρα"
+    assert sliced[0].words[2][2] == "όλους"
 
 
 def test_snap_to_silence_greek_question_mark_and_ellipsis():

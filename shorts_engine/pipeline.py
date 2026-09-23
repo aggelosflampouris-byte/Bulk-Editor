@@ -104,6 +104,8 @@ class ProcessingResult:
     virality_score: float | None = None
     # Clip index when processing multi-clip URL mode
     clip_index: int | None = None
+    # Source YouTube video ID if known
+    source_video_id: str | None = None
 
 
 # ── Shared Stage Helpers ──────────────────────────────────────────────────────
@@ -208,6 +210,7 @@ def build_short_from_clip(
             ass_path,
             primary_keyword=seo.primary_keyword if seo else None,
             subtitle_position=getattr(settings, "subtitle_position", "lower_third"),
+            subtitle_mode=getattr(settings, "subtitle_mode", "word"),
         )
     else:
         warnings.append("No transcript segments provided — subtitles skipped.")
@@ -762,12 +765,19 @@ def process_url_clip(
     total_items: int = 1,
     stem_prefix: str | None = None,
     custom_broll_path: str | Path | None = None,
+    source_is_section: bool = False,
+    source_offset: float = 0.0,
+    source_video_id: str | None = None,
 ) -> ProcessingResult:
     if stem_prefix:
         stem = f"{stem_prefix}_clip_{clip.index:02d}"
     else:
         stem = f"clip_{clip.index:02d}"
-    result = ProcessingResult(input_file=source_path, clip_index=clip.index)
+    result = ProcessingResult(
+        input_file=source_path,
+        clip_index=clip.index,
+        source_video_id=source_video_id,
+    )
     warnings: list[str] = []
 
     def _report(stage: str) -> None:
@@ -779,10 +789,17 @@ def process_url_clip(
     try:
         _report(f"Slicing [{clip.start_display} → {clip.end_display}]...")
         raw_clip_path = tmp_dir / f"{stem}_raw.mp4"
+        if source_is_section:
+            s_start = source_offset
+            s_end = source_offset + (clip.end_time - clip.start_time)
+        else:
+            s_start = clip.start_time
+            s_end = clip.end_time
+
         slice_video(
             source_path=source_path,
-            start_time=clip.start_time,
-            end_time=clip.end_time,
+            start_time=s_start,
+            end_time=s_end,
             output_path=raw_clip_path,
         )
 
@@ -821,6 +838,12 @@ def process_url_clip(
         result.seo = clip.seo
         result.success = True
         result.warnings = warnings
+
+        try:
+            log_project_history(result, run_output_dir)
+        except Exception as exc:
+            logger.warning("Failed to log project history for clip %d: %s", clip.index, exc)
+
         _report("Done ✓")
 
     except Exception as exc:
