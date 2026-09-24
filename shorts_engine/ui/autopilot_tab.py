@@ -91,20 +91,25 @@ def render_autopilot_tab(settings: Any) -> None:
         source_mode = st.radio(
             "Source Mode",
             [
-                "⚡ Auto-Detect Highest Viral Breakout (YouTube Data API)",
-                "📁 Select Specific Video from Channel Library",
+                "🌐 Niche Trend Discovery (Search YouTube for Niche Videos ≤ 3 Weeks Old — Recommended)",
+                "📁 Select Specific Video from Channel Library (Manual Override)",
             ],
             index=0,
-            horizontal=True,
-            label_visibility="collapsed",
+            horizontal=False,
         )
 
-        if "Auto-Detect" in source_mode:
+        niche_focus_query = ""
+        if "Niche Trend" in source_mode:
             st.info(
-                "Autopilot will scan the recent uploads of **@DianismaNews** using real-time view counts, "
-                "calculate the Relative Velocity Ratio (RVR), filter out already converted videos, "
-                "and select the #1 breakout video.",
-                icon="⚡",
+                "⚡ **Niche Autopilot Active:** Searches YouTube for the freshest, highest-velocity videos in our niche "
+                "(Greek politics, economics, debates) uploaded within the last **3 weeks (≤ 21 days)**. "
+                "Automatically excludes older videos from **@DianismaNews** to ensure fresh external material.",
+                icon="🌐",
+            )
+            niche_focus_query = st.text_input(
+                "Niche Keyword / Topic Focus (Optional)",
+                placeholder="e.g. ελληνική πολιτική, εξελίξεις οικονομία, συνεντεύξεις (Leave blank for auto-detected trending topics)",
+                help="Leave blank to automatically discover the top breakout topics across the niche, or enter a specific focus topic.",
             )
         else:
             if dianisma_videos:
@@ -128,6 +133,43 @@ def render_autopilot_tab(settings: Any) -> None:
     broll_path = st.session_state.get("custom_broll_path", "")
     if broll_path:
         st.success(f"Using Custom B-Roll: `{Path(broll_path).name}`")
+
+    # Instrumental Royalty-Free Background Music Section
+    st.markdown("#### 🎵 Background Music (Instrumental & Royalty-Free)")
+    m_col1, m_col2 = st.columns([1.8, 1.2])
+    with m_col1:
+        bg_choice = st.selectbox(
+            "Music Track Bed",
+            [
+                "🎵 Ambient Calm (Instrumental • Royalty-Free)",
+                "🔥 Dramatic Pulse (Instrumental • Royalty-Free)",
+                "⚡ Upbeat Groove (Instrumental • Royalty-Free)",
+                "🚫 None (Voice Only)",
+            ],
+            index=0,
+            help="High-retention instrumental background bed with automated speech ducking (volume dips dynamically when voice is present).",
+        )
+        music_map = {
+            "🎵 Ambient Calm (Instrumental • Royalty-Free)": "ambient_calm",
+            "🔥 Dramatic Pulse (Instrumental • Royalty-Free)": "dramatic_pulse",
+            "⚡ Upbeat Groove (Instrumental • Royalty-Free)": "upbeat_groove",
+            "🚫 None (Voice Only)": "none",
+        }
+        selected_track = music_map.get(bg_choice, "ambient_calm")
+        settings.enable_bg_music = (selected_track != "none")
+        settings.bg_music_track = selected_track
+    with m_col2:
+        bg_vol = st.slider(
+            "Music Volume",
+            min_value=0.05,
+            max_value=0.35,
+            value=getattr(settings, "bg_music_volume", 0.15),
+            step=0.01,
+            format="%.2f",
+            help="Subtle background audio level (0.15 = 15%). Voice ducking automatically compresses volume during narration.",
+        )
+        settings.bg_music_volume = bg_vol
+        settings.bg_music_ducking = True
 
     # Options Row
     opt_col1, opt_col2, opt_col3 = st.columns([1, 1.8, 1.2])
@@ -161,7 +203,7 @@ def render_autopilot_tab(settings: Any) -> None:
     st.markdown("")
 
     # Launch Button
-    btn_label = f"🚀 Launch Autopilot for {'Selected Video' if selected_video else '@DianismaNews'}"
+    btn_label = f"🚀 Launch Autopilot for {'Selected Video' if selected_video else ('Topic: ' + niche_focus_query if niche_focus_query else 'Niche Viral Trends (≤ 3 Weeks Old)')}"
     if st.button(btn_label, type="primary", use_container_width=True):
         try:
             from services.autopilot import run_autopilot_pipeline
@@ -186,6 +228,7 @@ def render_autopilot_tab(settings: Any) -> None:
                 num_videos=int(num_shorts),
                 selected_video=selected_video,
                 production_strategy=production_strategy,
+                niche_query=niche_focus_query,
             ):
                 progress_bar.progress(pct)
                 status_text.markdown(f"**{pct}%** — {msg}")

@@ -33,7 +33,10 @@ from typing import Any
 
 from google.auth.exceptions import GoogleAuthError
 
-from services.channel_analyzer import DIANISMA_CHANNEL_ID, VideoMeta
+try:
+    from services.channel_analyzer import DIANISMA_CHANNEL_ID, VideoMeta
+except ImportError:
+    from shorts_engine.services.channel_analyzer import DIANISMA_CHANNEL_ID, VideoMeta
 
 logger = logging.getLogger(__name__)
 

@@ -359,7 +359,7 @@ def build_hybrid_short(
     current_path = combined_path
 
     # 4. Optional unified background music bed
-    bg_music_path = settings.resolve_bg_music_path() if getattr(settings, "enable_bg_music", False) else None
+    bg_music_path = settings.resolve_bg_music_path() if getattr(settings, "enable_bg_music", True) else None
     if bg_music_path is not None:
         _rpt("Layering background music bed across hybrid Short...")
         bg_dest = tmp_dir / f"hybrid_bgm_{uid}.mp4"
@@ -368,7 +368,7 @@ def build_hybrid_short(
                 video_path=current_path,
                 music_path=bg_music_path,
                 output_path=bg_dest,
-                volume=getattr(settings, "bg_music_volume", 0.10),
+                volume=getattr(settings, "bg_music_volume", 0.15),
                 ducking=getattr(settings, "bg_music_ducking", True),
             )
         except (RuntimeError, OSError, ValueError) as exc:

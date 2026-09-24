@@ -491,7 +491,7 @@ def build_full_ai_short(
     current_path = subtitled_path
 
     # Background music
-    bg_music_path = settings.resolve_bg_music_path() if settings.enable_bg_music else None
+    bg_music_path = settings.resolve_bg_music_path() if getattr(settings, "enable_bg_music", True) else None
     if bg_music_path is not None:
         _rpt("Layering background music bed...")
         bg_path = tmp_dir / f"ai_short_bgm_{uid}.mp4"
@@ -500,7 +500,7 @@ def build_full_ai_short(
                 video_path=current_path,
                 music_path=bg_music_path,
                 output_path=bg_path,
-                volume=getattr(settings, "bg_music_volume", 0.12),
+                volume=getattr(settings, "bg_music_volume", 0.15),
                 ducking=getattr(settings, "bg_music_ducking", True),
             )
         except (RuntimeError, OSError, ValueError) as exc:

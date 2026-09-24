@@ -17,7 +17,6 @@ from services.cache_manager import is_video_already_processed
 from services.channel_analyzer import (
     DIANISMA_CHANNEL_URL,
     VideoMeta,
-    fetch_view_velocity_top,
     fetch_youtube_videos,
     find_viral_recent_videos,
 )
@@ -33,6 +32,11 @@ from services.youtube_uploader import (
     fetch_my_recent_videos,
     is_authenticated,
 )
+
+try:
+    from services.niche_sourcing import find_niche_trend_videos
+except ImportError:
+    from shorts_engine.services.niche_sourcing import find_niche_trend_videos
 
 logger = logging.getLogger(__name__)
 
@@ -58,67 +62,84 @@ def run_autopilot_pipeline(
     num_videos: int = 1,
     selected_video: VideoMeta | None = None,
     production_strategy: str = "auto",
+    niche_query: str = "",
 ) -> Generator[tuple[str, int, Any], None, None]:
     """
     Runs the entire pipeline end-to-end for the top `num_videos` videos.
     If selected_video is provided, processes that exact video from the library.
-    If authenticated, automatically sources recent videos from the channel library
-    via the YouTube Data API v3 without relying on web URL scraping.
+    By default (empty target_url), searches YouTube for fresh viral videos in our niche (≤ 3 weeks old)
+    and strictly excludes @DianismaNews to avoid re-using our own channel's older content.
 
-    Supports dual production modes:
-      - Mode 3: "speaker" (Preserves speaker footage, obscures old captions with frosted plate, overlays B-roll cutaways)
-      - Mode 2: "ai_gen"  (Full AI Short generation with original Greek script, voiceover, 9:16 media, dynamic captions)
-      - "auto" (Dynamically detects on-camera speaker presence to select between Mode 3 and Mode 2)
+    Supports production modes:
+      - "hybrid" (Recommended: Authentic speaker clip + AI breakdown & 9:16 B-roll)
+      - "speaker" (Preserves speaker footage, obscures old captions with frosted plate, overlays B-roll)
+      - "ai_gen"  (Full AI Short generation with original Greek script, voiceover, 9:16 media)
+      - "auto" (Dynamically detects on-camera speaker presence)
 
     Yields (status_message, progress_percentage, result_data).
     """
     if selected_video is not None:
         best_videos = [selected_video]
         yield (f"Selected video from Dianisma library: {selected_video.title}", 8, None)
-    else:
-        videos: list[VideoMeta] = []
-        is_dianisma_or_default = not target_url or any(
-            x in target_url.lower() for x in ("@dianismanews", "dianisma", "uczmnsmxzae4m_hzh6g1jkg")
-        )
-
-        # Attempt to pull from YouTube Data API v3 library first
-        if is_dianisma_or_default:
+    elif target_url and any(x in target_url.lower() for x in ("watch?v=", "youtu.be/", "/shorts/")):
+        yield (f"Analyzing specific video from URL: {target_url}...", 5, None)
+        videos = fetch_youtube_videos(target_url, max_videos=1)
+        best_videos = videos[:num_videos]
+    elif target_url and target_url.strip():
+        # Specific channel URL or search term explicitly requested by caller
+        videos = []
+        is_dianisma = any(x in target_url.lower() for x in ("@dianismanews", "dianisma", "uczmnsmxzae4m_hzh6g1jkg"))
+        if is_dianisma and is_authenticated():
             try:
-                if is_authenticated():
-                    yield ("Sourcing uploads from Dianisma library via YouTube Data API v3...", 5, None)
-                    client = authenticate()
-                    videos = fetch_my_recent_videos(client, max_videos=30)
-                    if videos:
-                        logger.info("Retrieved %d videos from YouTube Data API library.", len(videos))
-            except (YouTubeAuthError, RuntimeError, OSError, ValueError, KeyError, AttributeError) as exc:
-                logger.warning("YouTube Data API library query failed (%s), falling back to URL fetcher.", exc)
+                yield ("Sourcing uploads from Dianisma library via YouTube Data API v3...", 5, None)
+                client = authenticate()
+                videos = fetch_my_recent_videos(client, max_videos=30)
+            except (YouTubeAuthError, RuntimeError, OSError, ValueError, KeyError, AttributeError):
                 videos = []
 
         if not videos:
-            effective_url = target_url.strip() if target_url.strip() else DIANISMA_CHANNEL_URL
-            yield (f"Analyzing channel uploads from {effective_url}...", 5, None)
-            videos = fetch_youtube_videos(effective_url, max_videos=30)
+            yield (f"Analyzing channel uploads from {target_url}...", 5, None)
+            videos = fetch_youtube_videos(target_url, max_videos=30)
 
-        if not videos:
-            raise ValueError("Could not find any videos in the channel library.")
-
-        # Prioritize viral breakout candidates (RVR-boosted virality score)
         viral_picks = find_viral_recent_videos(videos, max_results=max(10, num_videos * 2))
-        candidates = (
-            [vp.video for vp in viral_picks]
-            if viral_picks
-            else fetch_view_velocity_top(videos, top_n=max(5, num_videos * 2))
-        )
-        if not candidates:
-            # Resilient fallback to raw video library if strict scoring filters yielded 0
-            candidates = list(videos)
+        candidates = [vp.video for vp in viral_picks] if viral_picks else list(videos)
+        unprocessed = [v for v in candidates if not is_video_already_processed(v.url, settings.output_dir if settings else None)]
+        best_videos = (unprocessed if unprocessed else candidates)[:num_videos]
+    else:
+        # Default Autopilot Mode: Search YouTube for fresh viral videos in our niche (≤ 3 weeks old)
+        # Excludes @DianismaNews to avoid re-using our own channel's older content
+        yield ("Searching YouTube for fresh viral videos in our niche (≤ 3 weeks old)...", 5, None)
 
-        # Anti-cannibalization: skip videos that have already been processed into shorts
-        unprocessed = [v for v in candidates if not is_video_already_processed(v.url, settings.output_dir)]
+        yt_client = None
+        if is_authenticated():
+            try:
+                yt_client = authenticate()
+            except (YouTubeAuthError, RuntimeError, OSError, ValueError):
+                yt_client = None
+
+        search_q = niche_query.strip() if niche_query.strip() else None
+
+        candidates = find_niche_trend_videos(
+            query=search_q,
+            max_videos=max(10, num_videos * 3),
+            max_age_days=21,
+            youtube_client=yt_client,
+            output_dir=settings.output_dir if settings else None,
+        )
+
+        if not candidates:
+            # Resilient fallback: if no fresh niche videos found via strict filter, query channel URL
+            effective_url = DIANISMA_CHANNEL_URL
+            yield (f"Analyzing channel uploads from {effective_url}...", 7, None)
+            videos = fetch_youtube_videos(effective_url, max_videos=30)
+            viral_picks = find_viral_recent_videos(videos, max_results=max(10, num_videos * 2))
+            candidates = [vp.video for vp in viral_picks] if viral_picks else list(videos)
+
+        unprocessed = [v for v in candidates if not is_video_already_processed(v.url, settings.output_dir if settings else None)]
         best_videos = (unprocessed if unprocessed else candidates)[:num_videos]
 
     if not best_videos:
-        raise ValueError("Could not find any suitable videos in the channel library for Autopilot processing.")
+        raise ValueError("Could not find any suitable videos in the niche for Autopilot processing.")
 
     yield (f"Selected {len(best_videos)} highly viral videos for processing.", 10, None)
 
@@ -127,6 +148,11 @@ def run_autopilot_pipeline(
     # 2. Less VFX and post-prod (enable_vfx=False, clean framing, no split screens)
     # 3. Dynamic and fluid subtitles (subtitle_mode="dynamic")
     # 4. Mask burned-in subtitles to prevent caption overlapping (mask_old_subtitles=True)
+    # 5. Instrumental royalty-free background music bed with voice ducking (enable_bg_music=True)
+    active_bg_track = getattr(settings, "bg_music_track", "ambient_calm")
+    if not active_bg_track or active_bg_track in ("none", ""):
+        active_bg_track = "ambient_calm"
+
     ap_settings = replace(
         settings,
         target_width=1080,
@@ -137,6 +163,10 @@ def run_autopilot_pipeline(
         broll_ken_burns=False,
         subtitle_mode="dynamic",
         mask_old_subtitles=True,
+        enable_bg_music=True,
+        bg_music_track=active_bg_track,
+        bg_music_volume=getattr(settings, "bg_music_volume", 0.15) if getattr(settings, "bg_music_volume", 0) > 0 else 0.15,
+        bg_music_ducking=True,
     )
 
     results = []
