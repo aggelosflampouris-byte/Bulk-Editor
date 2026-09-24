@@ -238,3 +238,45 @@ def test_autopilot_pipeline_enables_bg_music_and_niche_sourcing(tmp_path: Path) 
         # Confirm niche sourcing message was emitted
         assert any("Searching YouTube for fresh viral videos in our niche" in m for m in messages)
         assert any("Selected 1 highly viral videos" in m for m in messages)
+
+
+def test_autopilot_pipeline_dianisma_channel_url_routes_to_niche_discovery(tmp_path: Path) -> None:
+    from shorts_engine.services.autopilot import (
+        DIANISMA_CHANNEL_URL,
+        run_autopilot_pipeline,
+    )
+
+    settings = Settings(gemini_api_key="test_api_key", output_dir=tmp_path)
+    mock_niche_video = VideoMeta(
+        video_id="niche_vid_xyz",
+        title="Breaking Niche News Debate",
+        url="https://www.youtube.com/watch?v=niche_vid_xyz",
+        view_count=120000,
+        duration_seconds=300,
+        upload_date="20260920",
+        like_count=4000,
+        comment_count=500,
+        description="Debate",
+    )
+
+    with (
+        patch("shorts_engine.services.autopilot.find_niche_trend_videos", return_value=[mock_niche_video]) as mock_niche,
+        patch("shorts_engine.services.autopilot.fetch_my_recent_videos") as mock_my_videos,
+        patch("shorts_engine.services.autopilot.download_video_section", side_effect=RuntimeError("stop")),
+        patch("shorts_engine.services.autopilot.fetch_youtube_transcript", return_value=None),
+        patch("shorts_engine.services.autopilot.download_video", return_value=tmp_path / "vid.mp4"),
+        patch("shorts_engine.services.autopilot.transcribe", return_value=[]),
+        patch("shorts_engine.services.autopilot.select_clips", return_value=[]),
+    ):
+        gen = run_autopilot_pipeline(target_url=DIANISMA_CHANNEL_URL, settings=settings, num_videos=1)
+        messages = []
+        try:
+            for msg, _pct, _data in gen:
+                messages.append(msg)
+        except RuntimeError:
+            pass
+
+        # Must route to niche discovery, NEVER to our own channel library
+        mock_my_videos.assert_not_called()
+        mock_niche.assert_called_once()
+        assert any("Searching YouTube for fresh viral videos in our niche" in m for m in messages)

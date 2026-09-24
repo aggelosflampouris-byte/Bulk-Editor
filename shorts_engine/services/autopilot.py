@@ -85,10 +85,15 @@ def run_autopilot_pipeline(
         yield (f"Analyzing specific video from URL: {target_url}...", 5, None)
         videos = fetch_youtube_videos(target_url, max_videos=1)
         best_videos = videos[:num_videos]
-    elif target_url and target_url.strip():
+    elif (
+        target_url
+        and target_url.strip()
+        and target_url.strip() != DIANISMA_CHANNEL_URL
+        and not any(x in target_url.lower() for x in ("uczmnsmxzae4m_hzh6g1jkg",))
+    ):
         # Specific channel URL or search term explicitly requested by caller
         videos = []
-        is_dianisma = any(x in target_url.lower() for x in ("@dianismanews", "dianisma", "uczmnsmxzae4m_hzh6g1jkg"))
+        is_dianisma = target_url.strip().lower() == "@dianismanews"
         if is_dianisma and is_authenticated():
             try:
                 yield ("Sourcing uploads from Dianisma library via YouTube Data API v3...", 5, None)
@@ -98,7 +103,7 @@ def run_autopilot_pipeline(
                 videos = []
 
         if not videos:
-            yield (f"Analyzing channel uploads from {target_url}...", 5, None)
+            yield (f"Analyzing external channel uploads from {target_url}...", 5, None)
             videos = fetch_youtube_videos(target_url, max_videos=30)
 
         viral_picks = find_viral_recent_videos(videos, max_results=max(10, num_videos * 2))
@@ -106,7 +111,8 @@ def run_autopilot_pipeline(
         unprocessed = [v for v in candidates if not is_video_already_processed(v.url, settings.output_dir if settings else None)]
         best_videos = (unprocessed if unprocessed else candidates)[:num_videos]
     else:
-        # Default Autopilot Mode: Search YouTube for fresh viral videos in our niche (≤ 3 weeks old)
+        # Default Autopilot Mode (also active when DIANISMA_CHANNEL_URL or empty URL is passed):
+        # Search YouTube for fresh viral videos in our niche (≤ 3 weeks old)
         # Excludes @DianismaNews to avoid re-using our own channel's older content
         yield ("Searching YouTube for fresh viral videos in our niche (≤ 3 weeks old)...", 5, None)
 
@@ -128,12 +134,29 @@ def run_autopilot_pipeline(
         )
 
         if not candidates:
-            # Resilient fallback: if no fresh niche videos found via strict filter, query channel URL
-            effective_url = DIANISMA_CHANNEL_URL
-            yield (f"Analyzing channel uploads from {effective_url}...", 7, None)
-            videos = fetch_youtube_videos(effective_url, max_videos=30)
-            viral_picks = find_viral_recent_videos(videos, max_results=max(10, num_videos * 2))
-            candidates = [vp.video for vp in viral_picks] if viral_picks else list(videos)
+            # Resilient fallback: search broader niche topics across YouTube (never our own channel)
+            yield ("Searching broader niche topics across YouTube (≤ 3 weeks old)...", 7, None)
+            try:
+                from services.niche_sourcing import (
+                    DEFAULT_NICHE_QUERIES,
+                    fetch_niche_videos_via_ytdlp,
+                )
+            except ImportError:
+                from shorts_engine.services.niche_sourcing import (
+                    DEFAULT_NICHE_QUERIES,
+                    fetch_niche_videos_via_ytdlp,
+                )
+
+            for fallback_query in DEFAULT_NICHE_QUERIES:
+                fallback_videos = fetch_niche_videos_via_ytdlp(
+                    query=fallback_query,
+                    max_results=max(10, num_videos * 3),
+                    max_age_days=21,
+                    output_dir=settings.output_dir if settings else None,
+                )
+                if fallback_videos:
+                    candidates = fallback_videos
+                    break
 
         unprocessed = [v for v in candidates if not is_video_already_processed(v.url, settings.output_dir if settings else None)]
         best_videos = (unprocessed if unprocessed else candidates)[:num_videos]

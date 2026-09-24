@@ -13,14 +13,14 @@ def render_autopilot_tab(settings: Any) -> None:
 <div style="background: linear-gradient(135deg, #18181b, #27272a); padding: 1.75rem 2rem; border-radius: 12px; border: 1px solid #3f3f46; margin-bottom: 1.5rem;">
     <div style="display: flex; align-items: center; justify-content: space-between;">
         <div>
-            <h2 style="color: white; margin: 0 0 0.4rem 0;">🤖 Dianisma Autopilot Studio</h2>
+            <h2 style="color: white; margin: 0 0 0.4rem 0;">🤖 Autopilot Studio • Niche Trend Discovery</h2>
             <p style="color: #a1a1aa; font-size: 0.95rem; margin: 0;">
-                End-to-end Shorts extraction, transcription, B-roll composition, and SEO for <strong>@DianismaNews</strong>.
+                Discovers fresh viral videos on YouTube in our niche (≤ 3 weeks old), extracts high-impact clips, blends AI breakdown & B-roll, and adds royalty-free background music for publishing to <strong>@DianismaNews</strong>.
             </p>
         </div>
         <div style="background: #09090b; padding: 0.5rem 1rem; border-radius: 8px; border: 1px solid #27272a; text-align: right;">
-            <span style="color: #22c55e; font-size: 0.85rem; font-weight: 600;">● Official Data API</span>
-            <div style="color: #71717a; font-size: 0.75rem;">@DianismaNews Dedicated</div>
+            <span style="color: #22c55e; font-size: 0.85rem; font-weight: 600;">● YouTube Niche Discovery</span>
+            <div style="color: #71717a; font-size: 0.75rem;">≤ 21 Days Old • Fresh Trends</div>
         </div>
     </div>
 </div>
@@ -30,7 +30,6 @@ def render_autopilot_tab(settings: Any) -> None:
     try:
         from services.channel_analyzer import (
             DIANISMA_CHANNEL_HANDLE,
-            DIANISMA_CHANNEL_URL,
             VideoMeta,
         )
         from services.youtube_uploader import (
@@ -43,7 +42,6 @@ def render_autopilot_tab(settings: Any) -> None:
     except ImportError:
         from shorts_engine.services.channel_analyzer import (
             DIANISMA_CHANNEL_HANDLE,
-            DIANISMA_CHANNEL_URL,
             VideoMeta,
         )
         from shorts_engine.services.youtube_uploader import (
@@ -74,7 +72,7 @@ def render_autopilot_tab(settings: Any) -> None:
         stat_col1, stat_col2, stat_col3, stat_col4 = st.columns([3, 1.5, 1.5, 1.5])
         with stat_col1:
             title = info.get("title", "Dianisma")
-            st.markdown(f"**Channel:** `{title}` ({DIANISMA_CHANNEL_HANDLE})")
+            st.markdown(f"**Publish Channel:** `{title}` ({DIANISMA_CHANNEL_HANDLE})")
         with stat_col2:
             st.markdown(f"**Videos:** `{info.get('video_count', len(dianisma_videos)):,}`")
         with stat_col3:
@@ -197,7 +195,7 @@ def render_autopilot_tab(settings: Any) -> None:
     with opt_col3, st.expander("⚙️ Override URL"):
         override_url = st.text_input(
             "Custom Channel/Video URL",
-            placeholder=DIANISMA_CHANNEL_URL,
+            placeholder="e.g. https://www.youtube.com/@competitor or video URL",
         )
 
     st.markdown("")
@@ -218,7 +216,7 @@ def render_autopilot_tab(settings: Any) -> None:
         status_text = st.empty()
         log_container = st.container()
 
-        target = override_url.strip() if override_url.strip() else (DIANISMA_CHANNEL_URL if not selected_video else "")
+        target = override_url.strip()
 
         try:
             for msg, pct, data in run_autopilot_pipeline(

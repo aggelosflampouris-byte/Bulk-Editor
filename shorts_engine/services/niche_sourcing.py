@@ -206,7 +206,11 @@ def fetch_niche_videos_via_ytdlp(
 
     filtered: list[VideoMeta] = []
     for v in raw_videos:
-        if _is_channel_excluded("", v.title):
+        if (
+            _is_channel_excluded("", v.title)
+            or "dianisma" in v.title.lower()
+            or "dianisma" in (v.description or "").lower()
+        ):
             continue
         if output_dir and is_video_already_processed(v.url, output_dir):
             continue
