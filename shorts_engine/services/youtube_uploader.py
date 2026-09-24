@@ -31,6 +31,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from google.auth.exceptions import GoogleAuthError
+
+from services.channel_analyzer import DIANISMA_CHANNEL_ID, VideoMeta
+
 logger = logging.getLogger(__name__)
 
 # ── Constants ──────────────────────────────────────────────────────────────────
@@ -119,7 +123,7 @@ def authenticate():
     if token_path.is_file():
         try:
             creds = Credentials.from_authorized_user_file(str(token_path), _SCOPES)
-        except Exception as exc:
+        except (GoogleAuthError, ValueError, KeyError, OSError, TypeError) as exc:
             logger.warning("Cached YouTube token invalid (%s) — re-authenticating.", exc)
             creds = None
 
@@ -128,7 +132,7 @@ def authenticate():
             try:
                 creds.refresh(Request())
                 logger.info("YouTube OAuth2 token refreshed.")
-            except Exception as exc:
+            except (GoogleAuthError, RuntimeError, OSError, ValueError) as exc:
                 logger.warning("Token refresh failed (%s) — re-running auth flow.", exc)
                 creds = None
 
@@ -180,8 +184,8 @@ def is_authenticated() -> bool:
             creds.refresh(Request())
             token_path.write_text(creds.to_json(), encoding="utf-8")
             return True
-    except Exception:
-        pass
+    except (GoogleAuthError, RuntimeError, OSError, ValueError, KeyError, TypeError) as exc:
+        logger.debug("Token validation check failed: %s", exc)
 
     return False
 
@@ -253,9 +257,9 @@ def get_analytics_client():
 
 def fetch_channel_analytics(youtube_analytics_client, days: int = 30) -> dict[str, Any]:
     """Fetch channel metrics for the last N days."""
-    from datetime import date, timedelta
+    from datetime import timedelta
     
-    end_date = date.today()
+    end_date = datetime.now(timezone.utc).date()
     start_date = end_date - timedelta(days=days)
     
     try:
@@ -285,14 +289,16 @@ def fetch_channel_analytics(youtube_analytics_client, days: int = 30) -> dict[st
         raise RuntimeError(f"Failed to fetch analytics: {exc}") from exc
 
 
-def fetch_my_recent_videos(youtube_client, max_videos: int = 30):
+def fetch_my_recent_videos(
+    youtube_client: Any,
+    max_videos: int = 30,
+    channel_id: str | None = None,
+) -> list[VideoMeta]:
     """
-    Fetch the authenticated user's recent videos via the Data API, 
-    bypassing yt-dlp scraping entirely. Returns a list of VideoMeta objects.
+    Fetch recent videos via the YouTube Data API v3, bypassing yt-dlp scraping entirely.
+    Queries the channel's uploads playlist directly. Returns a list of VideoMeta objects.
     """
     import re
-
-    from services.channel_analyzer import VideoMeta
 
     def parse_iso_duration(dur: str) -> int:
         match = re.match(r'^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$', dur)
@@ -303,15 +309,29 @@ def fetch_my_recent_videos(youtube_client, max_videos: int = 30):
 
     try:
         # 1. Get the channel's "uploads" playlist ID
-        channels_response = youtube_client.channels().list(
-            part="contentDetails",
-            mine=True
-        ).execute()
-        
+        if channel_id:
+            channels_response = youtube_client.channels().list(
+                part="contentDetails",
+                id=channel_id,
+            ).execute()
+        else:
+            channels_response = youtube_client.channels().list(
+                part="contentDetails",
+                mine=True,
+            ).execute()
+
         items = channels_response.get("items", [])
+        if not items and not channel_id:
+            # Fallback to Dianisma channel ID if mine=True yields no channel
+            channels_response = youtube_client.channels().list(
+                part="contentDetails",
+                id=DIANISMA_CHANNEL_ID,
+            ).execute()
+            items = channels_response.get("items", [])
+
         if not items:
             return []
-            
+
         uploads_playlist_id = items[0]["contentDetails"]["relatedPlaylists"]["uploads"]
         
         # 2. Fetch video IDs from the uploads playlist
@@ -335,8 +355,7 @@ def fetch_my_recent_videos(youtube_client, max_videos: int = 30):
                 id=",".join(video_ids)
             ).execute()
             
-            for item in video_response.get("items", []):
-                raw_items.append(item)
+            raw_items.extend(video_response.get("items", []))
                 
             next_page_token = playlist_response.get("nextPageToken")
             if not next_page_token:
@@ -485,8 +504,8 @@ def upload_short(
             if status and progress_cb:
                 try:
                     progress_cb(status.resumable_progress, status.total_size)
-                except Exception:
-                    pass
+                except (RuntimeError, OSError, ValueError, TypeError) as cb_exc:
+                    logger.debug("Progress callback error: %s", cb_exc)
 
         video_id: str = response.get("id", "")
         if not video_id:

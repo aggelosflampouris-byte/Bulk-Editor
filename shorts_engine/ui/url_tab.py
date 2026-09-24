@@ -4,9 +4,12 @@ ui/url_tab.py — Tab component for processing videos directly from URLs (YouTub
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import streamlit as st
+
+logger = logging.getLogger(__name__)
 
 try:
     from config import Settings
@@ -187,6 +190,38 @@ def render_video_url_tab(settings: Settings) -> None:
 
         if "queued_url" in st.session_state:
             st.session_state["url_input"] = st.session_state.pop("queued_url")
+
+        # Quick picker from Dianisma Channel Library via YouTube Data API
+        try:
+            from services.youtube_uploader import (
+                YouTubeAuthError,
+                authenticate,
+                fetch_my_recent_videos,
+                is_authenticated,
+            )
+
+            if is_authenticated():
+                if "dianisma_recent_videos" not in st.session_state:
+                    client = authenticate()
+                    st.session_state["dianisma_recent_videos"] = fetch_my_recent_videos(client, max_videos=25)
+                recent_vids = st.session_state.get("dianisma_recent_videos", [])
+                if recent_vids:
+                    options = ["-- Or pick from @DianismaNews library --"] + [
+                        f"[{v.upload_date_display}] {v.title} ({v.view_count:,} views)"
+                        for v in recent_vids
+                    ]
+                    selected_opt = st.selectbox(
+                        "📚 Select from @DianismaNews Uploads",
+                        options,
+                        key="dianisma_quick_pick",
+                    )
+                    if selected_opt != options[0]:
+                        picked_vid = recent_vids[options.index(selected_opt) - 1]
+                        if st.session_state.get("url_input") != picked_vid.url:
+                            st.session_state["url_input"] = picked_vid.url
+                            st.rerun()
+        except (YouTubeAuthError, RuntimeError, OSError, ValueError, KeyError, AttributeError) as exc:
+            logger.debug("Dianisma quick-picker unavailable: %s", exc)
 
         url_input = st.text_input(
             "Video URL",

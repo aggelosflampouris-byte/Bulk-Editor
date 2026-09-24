@@ -282,3 +282,43 @@ def test_normalize_youtube_channel_url() -> None:
     # Plain text search queries shouldn't append /videos
     assert normalize_youtube_channel_url("Greek politics news") == "Greek politics news"
     assert normalize_youtube_channel_url("") == ""
+
+
+def test_autopilot_selected_video_direct_processing(tmp_path: Path) -> None:
+    from shorts_engine.config import Settings
+    from shorts_engine.services.autopilot import run_autopilot_pipeline
+
+    settings = Settings(gemini_api_key="test_key", output_dir=tmp_path)
+    selected = _make_sample_video("direct12345", view_count=75000, days_old=1)
+
+    with patch("shorts_engine.services.autopilot.fetch_youtube_videos") as mock_scrape:
+        gen = run_autopilot_pipeline(settings=settings, selected_video=selected)
+        msg, _pct, _data = next(gen)
+
+        # Channel scraper should NEVER be called when selected_video is supplied
+        mock_scrape.assert_not_called()
+        assert "Selected video from Dianisma library" in msg
+
+
+def test_autopilot_youtube_data_api_sourcing(tmp_path: Path) -> None:
+    from shorts_engine.config import Settings
+    from shorts_engine.services.autopilot import run_autopilot_pipeline
+
+    settings = Settings(gemini_api_key="test_key", output_dir=tmp_path)
+    v1 = _make_sample_video("api_video_1", view_count=85000, days_old=1)
+
+    with (
+        patch("shorts_engine.services.autopilot.is_authenticated", return_value=True),
+        patch("shorts_engine.services.autopilot.authenticate", return_value=MagicMock()),
+        patch("shorts_engine.services.autopilot.fetch_my_recent_videos", return_value=[v1]) as mock_api_fetch,
+        patch("shorts_engine.services.autopilot.fetch_youtube_videos") as mock_scrape,
+    ):
+        gen = run_autopilot_pipeline(target_url="@DianismaNews", settings=settings)
+        msg1, _pct, _data = next(gen)
+        assert "YouTube Data API" in msg1
+
+        # Advance generator to execute the API fetch
+        msg2, _pct, _data = next(gen)
+        mock_api_fetch.assert_called_once()
+        mock_scrape.assert_not_called()
+        assert "Selected 1 highly viral videos" in msg2

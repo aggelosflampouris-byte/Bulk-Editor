@@ -29,6 +29,11 @@ _DEFAULT_MAX_VIDEOS: int = 30
 _YTDLP_TIMEOUT_SECONDS: int = 60
 _RECENCY_WINDOW_DAYS: int = 21  # 3 weeks
 
+# Channel Configuration for Dianisma
+DIANISMA_CHANNEL_HANDLE: str = "@DianismaNews"
+DIANISMA_CHANNEL_ID: str = "UCZmznsMXZaE4m_hZH6g1JKg"
+DIANISMA_CHANNEL_URL: str = "https://www.youtube.com/@DianismaNews/videos"
+
 
 # ── Public Types ───────────────────────────────────────────────────────────────
 
@@ -62,7 +67,7 @@ class VideoMeta:
     def upload_date_display(self) -> str:
         """Human-readable upload date e.g. '2024-03-15'."""
         try:
-            return datetime.strptime(self.upload_date, "%Y%m%d").strftime("%Y-%m-%d")
+            return datetime.strptime(self.upload_date, "%Y%m%d").replace(tzinfo=timezone.utc).strftime("%Y-%m-%d")
         except ValueError:
             return self.upload_date
 
@@ -841,7 +846,7 @@ def analyze_niche(
                 # strict=False allows unescaped control chars (like \n) inside strings
                 parsed = json.loads(raw_text, strict=False)
                 break
-            except Exception as model_exc:
+            except (json.JSONDecodeError, ValueError, RuntimeError, TypeError, KeyError, AttributeError) as model_exc:
                 logger.warning("Channel analyzer: model '%s' failed or returned invalid JSON: %s", model_name, model_exc)
                 continue
 
@@ -877,12 +882,12 @@ def analyze_niche(
                             competitor_videos,
                             channel_avg_views=channel_avg_views,
                         )
-                except Exception as comp_exc:
+                except (RuntimeError, OSError, ValueError, KeyError) as comp_exc:
                     logger.warning("Competitor discovery failed: %s", comp_exc)
         else:
             insights.analysis_error = "AI models failed to generate valid JSON insights after multiple attempts."
 
-    except Exception as exc:
+    except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError) as exc:
         error_msg = f"Gemini analysis failed: {exc}"
         logger.error(error_msg)
         insights.analysis_error = error_msg

@@ -13,6 +13,8 @@ from config import Settings
 from pipeline import process_url_clip
 from services.cache_manager import is_video_already_processed
 from services.channel_analyzer import (
+    DIANISMA_CHANNEL_URL,
+    VideoMeta,
     fetch_view_velocity_top,
     fetch_youtube_videos,
     find_viral_recent_videos,
@@ -22,6 +24,12 @@ from services.downloader import download_video, download_video_section
 from services.seo_generator import generate_seo
 from services.transcriber import transcribe
 from services.youtube_transcript_fetcher import fetch_youtube_transcript
+from services.youtube_uploader import (
+    YouTubeAuthError,
+    authenticate,
+    fetch_my_recent_videos,
+    is_authenticated,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,32 +49,60 @@ def get_optimal_schedule_time() -> datetime:
 
 
 def run_autopilot_pipeline(
-    target_url: str,
-    settings: Settings,
+    target_url: str = "",
+    settings: Settings = None,
     broll_path: str = "",
     num_videos: int = 1,
+    selected_video: VideoMeta | None = None,
 ) -> Generator[tuple[str, int, Any], None, None]:
     """
     Runs the entire pipeline end-to-end for the top `num_videos` videos.
-    Yields (status_message, progress_percentage, result_data)
+    If selected_video is provided, processes that exact video from the library.
+    If authenticated, automatically sources recent videos from the channel library
+    via the YouTube Data API v3 without relying on web URL scraping.
+    Yields (status_message, progress_percentage, result_data).
     """
-    yield ("Analyzing channel / niche...", 5, None)
+    if selected_video is not None:
+        best_videos = [selected_video]
+        yield (f"Selected video from Dianisma library: {selected_video.title}", 8, None)
+    else:
+        videos: list[VideoMeta] = []
+        is_dianisma_or_default = not target_url or any(
+            x in target_url.lower() for x in ("@dianismanews", "dianisma", "uczmnsmxzae4m_hzh6g1jkg")
+        )
 
-    videos = fetch_youtube_videos(target_url, max_videos=30)
-    if not videos:
-        raise ValueError("Could not find any videos on this channel.")
+        # Attempt to pull from YouTube Data API v3 library first
+        if is_dianisma_or_default:
+            try:
+                if is_authenticated():
+                    yield ("Sourcing uploads from Dianisma library via YouTube Data API v3...", 5, None)
+                    client = authenticate()
+                    videos = fetch_my_recent_videos(client, max_videos=30)
+                    if videos:
+                        logger.info("Retrieved %d videos from YouTube Data API library.", len(videos))
+            except (YouTubeAuthError, RuntimeError, OSError, ValueError, KeyError, AttributeError) as exc:
+                logger.warning("YouTube Data API library query failed (%s), falling back to URL fetcher.", exc)
+                videos = []
 
-    # Prioritize viral breakout candidates (RVR-boosted virality score)
-    viral_picks = find_viral_recent_videos(videos, max_results=max(10, num_videos * 2))
-    candidates = (
-        [vp.video for vp in viral_picks]
-        if viral_picks
-        else fetch_view_velocity_top(videos, top_n=max(5, num_videos * 2))
-    )
+        if not videos:
+            effective_url = target_url.strip() if target_url.strip() else DIANISMA_CHANNEL_URL
+            yield (f"Analyzing channel uploads from {effective_url}...", 5, None)
+            videos = fetch_youtube_videos(effective_url, max_videos=30)
 
-    # Anti-cannibalization: skip videos that have already been processed into shorts
-    unprocessed = [v for v in candidates if not is_video_already_processed(v.url, settings.output_dir)]
-    best_videos = (unprocessed if unprocessed else candidates)[:num_videos]
+        if not videos:
+            raise ValueError("Could not find any videos in the channel library.")
+
+        # Prioritize viral breakout candidates (RVR-boosted virality score)
+        viral_picks = find_viral_recent_videos(videos, max_results=max(10, num_videos * 2))
+        candidates = (
+            [vp.video for vp in viral_picks]
+            if viral_picks
+            else fetch_view_velocity_top(videos, top_n=max(5, num_videos * 2))
+        )
+
+        # Anti-cannibalization: skip videos that have already been processed into shorts
+        unprocessed = [v for v in candidates if not is_video_already_processed(v.url, settings.output_dir)]
+        best_videos = (unprocessed if unprocessed else candidates)[:num_videos]
 
     yield (f"Selected {len(best_videos)} highly viral videos for processing.", 10, None)
 
