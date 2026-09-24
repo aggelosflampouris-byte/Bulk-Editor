@@ -4,7 +4,7 @@ tests/test_seo_generator.py — Unit tests for SEO generation and transcript cor
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -66,6 +66,26 @@ def test_call_gemini_with_fallback():
     mock_client.models.generate_content.side_effect = side_effect
     res = _call_gemini_with_fallback(mock_client, "test", MagicMock())
     assert res == "Success from fallback"
+
+
+def test_call_gemini_with_fallback_retries_503_with_backoff():
+    mock_client = MagicMock()
+    first_call = True
+
+    def side_effect(model, contents, config):
+        nonlocal first_call
+        if first_call:
+            first_call = False
+            raise RuntimeError("503 UNAVAILABLE: High demand spike")
+        mock_resp = MagicMock()
+        mock_resp.text = "Success after 503 retry"
+        return mock_resp
+
+    mock_client.models.generate_content.side_effect = side_effect
+    with patch("time.sleep") as mock_sleep:
+        res = _call_gemini_with_fallback(mock_client, "test", MagicMock())
+        assert res == "Success after 503 retry"
+        mock_sleep.assert_called_once_with(2.0)
 
 
 def test_call_gemini_with_fallback_sets_thinking_budget_zero():

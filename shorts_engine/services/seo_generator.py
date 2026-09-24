@@ -22,14 +22,17 @@ from dataclasses import dataclass
 
 from google import genai
 from google.genai import types as genai_types
+from google.genai.errors import APIError
 
 logger = logging.getLogger(__name__)
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
 _GEMINI_MODELS = (
-    "gemini-3.6-flash",
     "gemini-3.5-flash-lite",
+    "gemini-flash-lite-latest",
+    "gemini-3-flash-preview",
+    "gemini-3.6-flash",
     "gemini-3.7-flash",
     "gemini-3.5-flash",
 )
@@ -43,9 +46,9 @@ def _call_gemini_with_fallback(
 ) -> str:
     """
     Attempt content generation across known Flash models in fallback order.
-    Catches 404 (model deprecated) and 503 (high demand) to ensure resilience.
+    Implements exponential backoff on transient errors (503 UNAVAILABLE, timeouts)
+    and immediate failover on rate limits (429) or missing models (404).
     """
-
     last_err: Exception | None = None
     for model in _GEMINI_MODELS:
         attempts_for_model = 2
@@ -57,13 +60,22 @@ def _call_gemini_with_fallback(
                     config=config,
                 )
                 return response.text or ""
-            except Exception as exc:
+            except (APIError, OSError, ValueError, RuntimeError) as exc:
                 last_err = exc
                 err_str = str(exc)
                 if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "Quota exceeded" in err_str:
                     logger.warning("Gemini Rate Limit on %s — immediately failing over to next model.", model)
                     break
-                logger.warning("Gemini model '%s' failed: %s — trying fallback...", model, exc)
+                if "404" in err_str or "NOT_FOUND" in err_str:
+                    logger.debug("Gemini model '%s' not found — skipping to next.", model)
+                    break
+                if ("503" in err_str or "UNAVAILABLE" in err_str) and attempt < attempts_for_model - 1:
+                    backoff = 2.0 * (attempt + 1)
+                    logger.warning("Gemini model '%s' temporarily unavailable (503). Retrying in %.1fs...", model, backoff)
+                    import time
+                    time.sleep(backoff)
+                    continue
+                logger.warning("Gemini model '%s' failed on attempt %d: %s — trying fallback...", model, attempt + 1, exc)
                 break
     if last_err is not None:
         raise last_err
@@ -181,10 +193,10 @@ class SeoMetadata:
         return cls(
             title=short_title or "Greek Short",
             description=transcript_excerpt,
-            tags=tuple([
+            tags=(
                 "shorts", "greek", "viral", "trending", "reels",
                 "video", "fyp", "explore", "content", "greece",
-            ]),
+            ),
             primary_keyword="shorts",
             pinned_comment="Ποια είναι η δική σας άποψη; Γράψτε στα σχόλια! 👇",
             curiosity_title="Greek Short (Curiosity)",

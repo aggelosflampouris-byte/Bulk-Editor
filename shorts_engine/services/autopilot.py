@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from config import Settings
+from google.genai.errors import APIError
 from pipeline import process_url_clip
 from services.cache_manager import is_video_already_processed
 from services.channel_analyzer import (
@@ -176,8 +177,13 @@ def run_autopilot_pipeline(
                     "publish_at": get_optimal_schedule_time() + timedelta(days=idx),
                 })
                 continue
-            except (RuntimeError, OSError, ValueError, KeyError) as exc:
+            except (RuntimeError, OSError, ValueError, KeyError, APIError) as exc:
                 logger.error("Full AI Short generation failed for %s: %s", best_video.title, exc)
+                yield (
+                    f"[Video {idx+1}/{num_videos}] Generation failed for '{best_video.title[:35]}': {exc}",
+                    _p(0.9),
+                    None,
+                )
                 continue
 
         yield (f"[Video {idx+1}/{num_videos}] Pre-download triage: fetching YouTube transcript...", _p(0.1), None)
@@ -291,7 +297,7 @@ def run_autopilot_pipeline(
                             "publish_at": get_optimal_schedule_time() + timedelta(days=idx),
                         })
                         continue
-                    except (RuntimeError, OSError, ValueError, KeyError) as exc:
+                    except (RuntimeError, OSError, ValueError, KeyError, APIError) as exc:
                         logger.error("Full AI fallback failed for %s: %s", best_video.title, exc)
         else:
             # Fallback path: Full download + Whisper local transcription + OCR
@@ -324,7 +330,7 @@ def run_autopilot_pipeline(
                             "publish_at": get_optimal_schedule_time() + timedelta(days=idx),
                         })
                         continue
-                    except (RuntimeError, OSError, ValueError, KeyError) as exc:
+                    except (RuntimeError, OSError, ValueError, KeyError, APIError) as exc:
                         logger.error("Full AI fallback failed for %s: %s", best_video.title, exc)
 
             yield (f"[Video {idx+1}/{num_videos}] Transcribing audio with Whisper...", _p(0.35), None)
