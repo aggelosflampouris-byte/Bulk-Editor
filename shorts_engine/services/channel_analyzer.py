@@ -75,11 +75,12 @@ class VideoMeta:
     def is_short_candidate(self) -> bool:
         """
         A video is a good Short extraction candidate if:
-          - It is at least 65 seconds long (so it's not already a Short)
+          - It is at least 15 seconds long (sufficient speech content to process)
+          - It is under 4 hours (14400 seconds)
           - It has a meaningful title
         """
         return (
-            self.duration_seconds >= 65
+            self.duration_seconds >= 15
             and self.duration_seconds < 14400
             and bool(self.title.strip())
         )

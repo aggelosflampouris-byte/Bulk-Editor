@@ -101,10 +101,16 @@ def run_autopilot_pipeline(
             if viral_picks
             else fetch_view_velocity_top(videos, top_n=max(5, num_videos * 2))
         )
+        if not candidates:
+            # Resilient fallback to raw video library if strict scoring filters yielded 0
+            candidates = list(videos)
 
         # Anti-cannibalization: skip videos that have already been processed into shorts
         unprocessed = [v for v in candidates if not is_video_already_processed(v.url, settings.output_dir)]
         best_videos = (unprocessed if unprocessed else candidates)[:num_videos]
+
+    if not best_videos:
+        raise ValueError("Could not find any suitable videos in the channel library for Autopilot processing.")
 
     yield (f"Selected {len(best_videos)} highly viral videos for processing.", 10, None)
 
@@ -160,13 +166,15 @@ def run_autopilot_pipeline(
         if transcript:
             # AI selects viral clips directly from pre-fetched transcript
             yield (f"[Video {idx+1}/{num_videos}] AI analyzing transcript for viral clips...", _p(0.25), None)
+            total_dur = (transcript[-1].end - transcript[0].start) if transcript else 0.0
+            eff_min = min(ap_settings.clip_min_duration, max(15.0, total_dur * 0.9)) if total_dur > 0 else ap_settings.clip_min_duration
             clips = select_clips(
                 segments=transcript,
                 gemini_api_key=settings.gemini_api_key,
                 max_clips=3,
                 min_clips=1,
-                min_dur=settings.clip_min_duration,
-                max_dur=settings.clip_max_duration,
+                min_dur=eff_min,
+                max_dur=ap_settings.clip_max_duration,
             )
             if not clips:
                 logger.warning("AI could not find viral moments in transcript for %s. Skipping.", best_video.title)
@@ -246,13 +254,15 @@ def run_autopilot_pipeline(
                 logger.warning("OCR extraction failed for %s: %s", video_path, exc)
 
             yield (f"[Video {idx+1}/{num_videos}] AI analyzing transcription for viral clips...", _p(0.55), None)
+            total_dur = (transcript[-1].end - transcript[0].start) if transcript else 0.0
+            eff_min = min(ap_settings.clip_min_duration, max(15.0, total_dur * 0.9)) if total_dur > 0 else ap_settings.clip_min_duration
             clips = select_clips(
                 segments=transcript,
                 gemini_api_key=settings.gemini_api_key,
                 max_clips=3,
                 min_clips=1,
-                min_dur=settings.clip_min_duration,
-                max_dur=settings.clip_max_duration,
+                min_dur=eff_min,
+                max_dur=ap_settings.clip_max_duration,
                 ocr_text=ocr_text,
             )
             if not clips:

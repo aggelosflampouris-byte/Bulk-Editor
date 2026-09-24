@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 
 from google import genai
 from google.genai import types as genai_types
+from google.genai.errors import APIError
 
 try:
     from services.seo_generator import (
@@ -280,7 +281,13 @@ def _normalize_clip_times(
     return start, end
 
 
-def _parse_single_clip(raw: dict, index: int, min_dur: float, max_dur: float) -> ClipCandidate | None:
+def _parse_single_clip(
+    raw: dict,
+    index: int,
+    min_dur: float,
+    max_dur: float,
+    source_end: float | None = None,
+) -> ClipCandidate | None:
     """
     Parse a single raw clip dict into a ClipCandidate.
 
@@ -289,10 +296,11 @@ def _parse_single_clip(raw: dict, index: int, min_dur: float, max_dur: float) ->
     fundamentally malformed (missing required keys, invalid timestamps).
 
     Args:
-        raw:     Dict from the parsed JSON array.
-        index:   1-based clip index for the ClipCandidate.
-        min_dur: Minimum acceptable duration in seconds.
-        max_dur: Maximum acceptable duration in seconds.
+        raw:        Dict from the parsed JSON array.
+        index:      1-based clip index for the ClipCandidate.
+        min_dur:    Minimum acceptable duration in seconds.
+        max_dur:    Maximum acceptable duration in seconds.
+        source_end: Optional upper bound on end timestamp (e.g. video duration).
 
     Returns:
         A ClipCandidate instance, or None if the clip must be rejected.
@@ -320,6 +328,9 @@ def _parse_single_clip(raw: dict, index: int, min_dur: float, max_dur: float) ->
     elif duration < min_dur:
         logger.warning("Clip #%d: duration %.1fs < min %.1fs — extending end.", index, duration, min_dur)
         end = start + min_dur
+
+    if source_end is not None and end > source_end:
+        end = source_end
 
     hook_summary: str = str(raw.get("hook_summary") or "").strip() or "No hook summary provided."
     broll_query: str = str(raw.get("broll_query") or "").strip() or "people talking"
@@ -617,21 +628,25 @@ def select_clips(
     template = get_template(niche_template)
     niche_context = template.channel_niche_context or niche_line
 
+    source_duration = (segments[-1].end - segments[0].start) if segments else 0.0
+    effective_min = min(min_dur, source_duration) if source_duration > 0 else min_dur
+    effective_max = min(max_dur, max(effective_min, source_duration)) if source_duration > 0 else max_dur
+
     prompt = _CLIP_SELECTION_PROMPT.format(
         source_title=source_title or "Unknown",
         channel_niche=niche_line,
         niche_context=niche_context,
         min_clips=min_clips,
         max_clips=max_clips,
-        min_dur=int(min_dur),
-        max_dur=int(max_dur),
+        min_dur=int(max(1, effective_min)),
+        max_dur=int(max(effective_min, effective_max)),
         transcript=transcript_block,
         ocr_text=ocr_text or "No visual context available.",
     )
 
     logger.info(
         "Calling Gemini for clip selection (min=%d, max=%d, dur=[%d-%d]s, transcript_len=%d chars)...",
-        min_clips, max_clips, int(min_dur), int(max_dur), len(transcript_block),
+        min_clips, max_clips, int(effective_min), int(effective_max), len(transcript_block),
     )
 
     try:
@@ -643,13 +658,12 @@ def select_clips(
                 max_output_tokens=_MAX_OUTPUT_TOKENS,
                 temperature=0.3,  # Deterministic clip selection
                 response_mime_type="application/json",
-                thinking_config=genai_types.ThinkingConfig(thinking_budget=0),
             ),
         )
-    except (RuntimeError, ValueError, KeyError, OSError, TypeError) as exc:
+    except (APIError, RuntimeError, ValueError, KeyError, OSError, TypeError) as exc:
         logger.error("Gemini clip selection API call failed: %s — using fallback.", exc)
         return _build_fallback_clips(
-            segments, max_clips, min_dur, max_dur, min_clips=min_clips,
+            segments, max_clips, effective_min, effective_max, min_clips=min_clips,
             api_key=gemini_api_key, source_title=source_title, brand_voice=brand_voice
         )
 
@@ -658,20 +672,30 @@ def select_clips(
     except ValueError as exc:
         logger.error("Clip JSON parse failed: %s — using fallback.", exc)
         return _build_fallback_clips(
-            segments, max_clips, min_dur, max_dur, min_clips=min_clips,
+            segments, max_clips, effective_min, effective_max, min_clips=min_clips,
             api_key=gemini_api_key, source_title=source_title, brand_voice=brand_voice
         )
 
     # Parse and validate each clip; skip malformed ones
+    source_end = segments[-1].end if segments else None
     candidates: list[ClipCandidate] = []
     for i, raw_clip in enumerate(raw_clips[:max_clips]):
-        clip = _parse_single_clip(raw_clip, index=i + 1, min_dur=min_dur, max_dur=max_dur)
+        clip = _parse_single_clip(
+            raw_clip,
+            index=i + 1,
+            min_dur=effective_min,
+            max_dur=effective_max,
+            source_end=source_end,
+        )
         if clip is not None:
             candidates.append(clip)
 
     if not candidates:
         logger.warning("No valid clips parsed from Gemini response — using fallback.")
-        return _build_fallback_clips(segments, max_clips, min_dur, max_dur, min_clips=min_clips, api_key=gemini_api_key, source_title=source_title, brand_voice=brand_voice)
+        return _build_fallback_clips(
+            segments, max_clips, effective_min, effective_max, min_clips=min_clips,
+            api_key=gemini_api_key, source_title=source_title, brand_voice=brand_voice
+        )
 
     # Remove overlapping clips (keep the earlier one in the ranked order)
     deduplicated: list[ClipCandidate] = []
