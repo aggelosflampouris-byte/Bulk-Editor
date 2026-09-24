@@ -166,6 +166,23 @@ def generate_script_and_scenes(
     title = str(data.get("title") or topic_title or "Επικαιρότητα").strip()
     hook = str(data.get("hook") or title).strip()
     narration = str(data.get("narration_script") or topic_context[:300]).strip()
+
+    # Apply Logic & "Make Sense" Guardrail
+    try:
+        from services.logic_guardrail import evaluate_logical_coherence
+    except ImportError:
+        from shorts_engine.services.logic_guardrail import evaluate_logical_coherence
+
+    coherence = evaluate_logical_coherence(
+        topic_title=topic_title,
+        part1_text=hook,
+        part2_text=narration,
+        gemini_api_key=gemini_api_key,
+    )
+    if coherence.repaired_script:
+        logger.info("[AI Short] Coherence guardrail refined narration script: %s", coherence.repaired_script)
+        narration = coherence.repaired_script
+
     raw_scenes = data.get("scenes") or []
     if not isinstance(raw_scenes, list) or not raw_scenes:
         raw_scenes = [
@@ -228,23 +245,22 @@ async def _async_synthesize_voiceover_stream(
         words_list = s_text.split()
         if not words_list:
             continue
-        total_chars = sum(len(w) for w in words_list)
+        total_chars = max(1, sum(len(w) for w in words_list))
         word_tuples: list[tuple[float, float, str]] = []
         cur_w_start = s_start
         for w_idx, w in enumerate(words_list):
             if w_idx == len(words_list) - 1:
                 cur_w_end = s_end
             else:
-                fraction = len(w) / max(1, total_chars)
-                cur_w_dur = max(0.12, fraction * s_dur)
-                cur_w_end = min(s_end, cur_w_start + cur_w_dur)
-            word_tuples.append((cur_w_start, max(cur_w_start + 0.05, cur_w_end), w))
+                w_dur = (len(w) / total_chars) * s_dur
+                cur_w_end = cur_w_start + w_dur
+            word_tuples.append((round(cur_w_start, 3), round(max(cur_w_start + 0.06, cur_w_end), 3), w))
             cur_w_start = cur_w_end
 
         segments.append(
             TranscriptionSegment(
-                start=s_start,
-                end=s_end,
+                start=round(s_start, 3),
+                end=round(s_end, 3),
                 text=s_text,
                 words=word_tuples,
             )
@@ -253,19 +269,21 @@ async def _async_synthesize_voiceover_stream(
     if not segments:
         dur = probe_duration(output_path)
         words_list = text.split()
-        total_chars = sum(len(w) for w in words_list)
+        total_chars = max(1, sum(len(w) for w in words_list))
         word_tuples = []
         cur_start = 0.0
         for w_idx, w in enumerate(words_list):
-            fraction = len(w) / max(1, total_chars)
-            w_dur = max(0.15, fraction * dur)
-            w_end = min(dur, cur_start + w_dur)
-            word_tuples.append((cur_start, max(cur_start + 0.05, w_end), w))
-            cur_start = w_end
+            if w_idx == len(words_list) - 1:
+                cur_end = dur
+            else:
+                w_dur = (len(w) / total_chars) * dur
+                cur_end = cur_start + w_dur
+            word_tuples.append((round(cur_start, 3), round(max(cur_start + 0.06, cur_end), 3), w))
+            cur_start = cur_end
         segments.append(
             TranscriptionSegment(
                 start=0.0,
-                end=dur,
+                end=round(dur, 3),
                 text=text,
                 words=word_tuples,
             )

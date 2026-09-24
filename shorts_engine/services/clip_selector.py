@@ -747,6 +747,27 @@ def select_clips(
                 )
             )
 
+    # Enforce Sentence Coherence & Boundary Protection on all candidates
+    try:
+        from services.logic_guardrail import enforce_clip_coherence
+    except ImportError:
+        from shorts_engine.services.logic_guardrail import enforce_clip_coherence
+
+    coherent_clips: list[ClipCandidate] = []
+    for c in deduplicated:
+        adj_s, adj_e, _text = enforce_clip_coherence(segments, c.start_time, c.end_time)
+        coherent_clips.append(
+            ClipCandidate(
+                index=c.index,
+                start_time=round(adj_s, 3),
+                end_time=round(adj_e, 3),
+                hook_summary=c.hook_summary,
+                seo=c.seo,
+                broll_query=c.broll_query,
+            )
+        )
+    deduplicated = coherent_clips
+
     logger.info(
         "Clip selection complete: %d clips selected (satisfies min_clips=%d).",
         len(deduplicated), min_clips,

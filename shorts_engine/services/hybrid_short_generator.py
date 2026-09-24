@@ -170,6 +170,23 @@ def generate_hybrid_script(
     title = str(data.get("title") or topic_title or "Επικαιρότητα").strip()
     hook = str(data.get("hook") or title).strip()
     narration = str(data.get("narration_script") or "Ποια είναι η γνώμη σας για αυτές τις εξελίξεις; Γράψτε μας στα σχόλια!").strip()
+
+    # Apply Logic & "Make Sense" Guardrail
+    try:
+        from services.logic_guardrail import evaluate_logical_coherence
+    except ImportError:
+        from shorts_engine.services.logic_guardrail import evaluate_logical_coherence
+
+    coherence = evaluate_logical_coherence(
+        topic_title=topic_title,
+        part1_text=speaker_text,
+        part2_text=narration,
+        gemini_api_key=gemini_api_key,
+    )
+    if coherence.repaired_script:
+        logger.info("[Hybrid Engine] Coherence guardrail refined narration script: %s", coherence.repaired_script)
+        narration = coherence.repaired_script
+
     raw_scenes = data.get("scenes") or []
     if not isinstance(raw_scenes, list) or not raw_scenes:
         raw_scenes = [

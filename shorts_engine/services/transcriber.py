@@ -422,11 +422,30 @@ def segments_to_ass(
 
     dialogue_lines: list[str] = []
     
-    # Flatten, sort, and sanitize all words with strictly monotonic start times
+    # Check if any segment has word-level timestamps
+    has_any_words = any(bool(seg.words) for seg in segments)
+
     raw_words: list[tuple[float, float, str]] = []
-    for seg in segments:
-        if seg.words:
-            raw_words.extend(seg.words)
+    if has_any_words:
+        for seg in segments:
+            if seg.words:
+                raw_words.extend(seg.words)
+            elif seg.text and seg.text.strip():
+                # Segment in a mixed transcript missing word timestamps: interpolate across segment
+                # so subtitles never drop off or freeze halfway through the video!
+                w_list = seg.text.strip().split()
+                if w_list:
+                    s_dur = max(seg.end - seg.start, 0.12 * len(w_list))
+                    total_c = max(1, sum(len(w) for w in w_list))
+                    cur_t = seg.start
+                    for w_idx, w in enumerate(w_list):
+                        if w_idx == len(w_list) - 1:
+                            w_end = max(cur_t + 0.06, seg.end)
+                        else:
+                            w_dur = (len(w) / total_c) * s_dur
+                            w_end = cur_t + w_dur
+                        raw_words.append((round(cur_t, 3), round(max(cur_t + 0.05, w_end), 3), w))
+                        cur_t = w_end
 
     raw_words.sort(key=lambda w: (w[0], w[1]))
     all_words: list[tuple[float, float, str]] = []
@@ -439,11 +458,11 @@ def segments_to_ass(
         if all_words:
             prev_s = all_words[-1][0]
             if w_start_val <= prev_s:
-                w_start_val = prev_s + 0.05
+                w_start_val = prev_s + 0.04
                 w_end_val = max(w_end_val, w_start_val + 0.05)
         all_words.append((w_start_val, w_end_val, clean_t))
 
-    min_word_duration = 0.22
+    min_word_duration = 0.20
     gap_bridge_threshold = 0.35
 
     # If no words available, fallback to segments
@@ -480,28 +499,38 @@ def segments_to_ass(
                 chunk.append(curr_w)
                 idx += 1
 
-            # Format each active word inside the chunk for seamless fluid highlighting
+            # Compute strictly non-overlapping, strictly monotonic active intervals for each word in chunk
+            chunk_intervals: list[tuple[float, float]] = []
             for w_i, active_w in enumerate(chunk):
-                w_start = active_w[0]
+                cur_s = active_w[0]
+                if chunk_intervals:
+                    prev_e = chunk_intervals[-1][1]
+                    cur_s = max(cur_s, prev_e)
+
                 if w_i + 1 < len(chunk):
-                    w_end = chunk[w_i + 1][0]
+                    next_s = chunk[w_i + 1][0]
+                    cur_e = max(cur_s + 0.06, next_s)
                 else:
-                    w_end = max(active_w[1], w_start + min_word_duration)
+                    cur_e = max(active_w[1], cur_s + min_word_duration)
                     if idx < len(all_words):
                         next_chunk_start = all_words[idx][0]
-                        if next_chunk_start > w_start:
-                            if w_end >= next_chunk_start or (next_chunk_start - w_end < gap_bridge_threshold):
-                                w_end = next_chunk_start
+                        if next_chunk_start > cur_s:
+                            gap = next_chunk_start - cur_e
+                            if 0 <= gap <= gap_bridge_threshold:
+                                cur_e = next_chunk_start
                             else:
-                                w_end = min(w_end + 0.15, next_chunk_start)
+                                cur_e = min(cur_e + 0.15, next_chunk_start)
                         else:
-                            w_end = w_start + 0.05
+                            cur_e = cur_s + 0.08
                     else:
-                        w_end = w_end + 0.15
+                        cur_e = cur_e + 0.20
 
-                if w_end <= w_start:
-                    w_end = w_start + 0.05
+                if cur_e <= cur_s:
+                    cur_e = cur_s + 0.08
 
+                chunk_intervals.append((cur_s, cur_e))
+
+            for w_i, (w_start, w_end) in enumerate(chunk_intervals):
                 t_start = _seconds_to_ass_time(w_start)
                 t_end = _seconds_to_ass_time(w_end)
 
