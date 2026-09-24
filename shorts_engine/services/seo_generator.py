@@ -61,11 +61,8 @@ def _call_gemini_with_fallback(
                 last_err = exc
                 err_str = str(exc)
                 if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "Quota exceeded" in err_str:
-                    if attempt < attempts_for_model - 1:
-                        import time
-                        logger.warning("Gemini Rate Limit hit on %s. Waiting 45s before retry...", model)
-                        time.sleep(45)
-                        continue
+                    logger.warning("Gemini Rate Limit on %s — immediately failing over to next model.", model)
+                    break
                 logger.warning("Gemini model '%s' failed: %s — trying fallback...", model, exc)
                 break
     if last_err is not None:

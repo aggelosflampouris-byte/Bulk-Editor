@@ -268,6 +268,8 @@ class Settings:
     subtitle_mode: str = "dynamic"
     # Dynamic jump-cut punch-in zoom on speech pauses (False = clean, steady framing)
     enable_dynamic_zoom: bool = False
+    # Mask/obscure lower-third burned-in text before burning new subtitles
+    mask_old_subtitles: bool = True
 
     # ── SEO Engine ─────────────────────────────────────────────
     # Optional Brand Voice injection to tailor Gemini's writing tone

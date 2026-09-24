@@ -56,12 +56,19 @@ def run_autopilot_pipeline(
     broll_path: str = "",
     num_videos: int = 1,
     selected_video: VideoMeta | None = None,
+    production_strategy: str = "auto",
 ) -> Generator[tuple[str, int, Any], None, None]:
     """
     Runs the entire pipeline end-to-end for the top `num_videos` videos.
     If selected_video is provided, processes that exact video from the library.
     If authenticated, automatically sources recent videos from the channel library
     via the YouTube Data API v3 without relying on web URL scraping.
+
+    Supports dual production modes:
+      - Mode 3: "speaker" (Preserves speaker footage, obscures old captions with frosted plate, overlays B-roll cutaways)
+      - Mode 2: "ai_gen"  (Full AI Short generation with original Greek script, voiceover, 9:16 media, dynamic captions)
+      - "auto" (Dynamically detects on-camera speaker presence to select between Mode 3 and Mode 2)
+
     Yields (status_message, progress_percentage, result_data).
     """
     if selected_video is not None:
@@ -118,6 +125,7 @@ def run_autopilot_pipeline(
     # 1. Strictly 9:16 ratio (1080x1920)
     # 2. Less VFX and post-prod (enable_vfx=False, clean framing, no split screens)
     # 3. Dynamic and fluid subtitles (subtitle_mode="dynamic")
+    # 4. Mask burned-in subtitles to prevent caption overlapping (mask_old_subtitles=True)
     ap_settings = replace(
         settings,
         target_width=1080,
@@ -127,6 +135,7 @@ def run_autopilot_pipeline(
         broll_split_screen=False,
         broll_ken_burns=False,
         subtitle_mode="dynamic",
+        mask_old_subtitles=True,
     )
 
     results = []
@@ -143,6 +152,33 @@ def run_autopilot_pipeline(
         import uuid
         download_dir = Path(tempfile.gettempdir()) / f"autopilot_{uuid.uuid4().hex}"
         download_dir.mkdir(parents=True, exist_ok=True)
+
+        # Mode 2: If user explicitly forced Full AI Generation from topic
+        if production_strategy == "ai_gen":
+            yield (
+                f"[Video {idx+1}/{num_videos}] Strategy: Full AI Short Generation (AI Script + Greek Voiceover + 9:16 Media)...",
+                _p(0.2),
+                None,
+            )
+            from services.ai_short_generator import build_full_ai_short
+            try:
+                final_output, seo = build_full_ai_short(
+                    topic_title=best_video.title,
+                    topic_context=f"Video Title: {best_video.title}\nDescription: {best_video.description}",
+                    settings=ap_settings,
+                    tmp_dir=download_dir,
+                    output_dir=ap_settings.output_dir,
+                    report_cb=lambda msg: None,
+                )
+                results.append({
+                    "seo": seo,
+                    "path": final_output,
+                    "publish_at": get_optimal_schedule_time() + timedelta(days=idx),
+                })
+                continue
+            except (RuntimeError, OSError, ValueError, KeyError) as exc:
+                logger.error("Full AI Short generation failed for %s: %s", best_video.title, exc)
+                continue
 
         yield (f"[Video {idx+1}/{num_videos}] Pre-download triage: fetching YouTube transcript...", _p(0.1), None)
 
@@ -228,10 +264,68 @@ def run_autopilot_pipeline(
                 video_path = download_video(best_video.url, download_dir, settings.max_source_duration_seconds)
                 source_is_section = False
                 source_offset = 0.0
+
+            # Content Classifier: if auto mode, inspect video for on-camera speaker
+            if production_strategy == "auto":
+                from services.content_decision_engine import classify_production_mode
+                detected_mode = classify_production_mode(video_path, user_preference="auto")
+                if detected_mode == "ai_gen":
+                    yield (
+                        f"[Video {idx+1}/{num_videos}] No clear on-camera speaker -> Switching to Full AI Short Generation...",
+                        _p(0.6),
+                        None,
+                    )
+                    from services.ai_short_generator import build_full_ai_short
+                    try:
+                        final_output, seo = build_full_ai_short(
+                            topic_title=best_video.title,
+                            topic_context=f"Video Title: {best_video.title}\nDescription: {best_video.description}",
+                            settings=ap_settings,
+                            tmp_dir=download_dir,
+                            output_dir=ap_settings.output_dir,
+                            report_cb=lambda msg: None,
+                        )
+                        results.append({
+                            "seo": seo,
+                            "path": final_output,
+                            "publish_at": get_optimal_schedule_time() + timedelta(days=idx),
+                        })
+                        continue
+                    except (RuntimeError, OSError, ValueError, KeyError) as exc:
+                        logger.error("Full AI fallback failed for %s: %s", best_video.title, exc)
         else:
             # Fallback path: Full download + Whisper local transcription + OCR
             yield (f"[Video {idx+1}/{num_videos}] Downloading video for Whisper analysis...", _p(0.15), None)
             video_path = download_video(best_video.url, download_dir, settings.max_source_duration_seconds)
+
+            # Content Classifier: if auto mode, inspect video for on-camera speaker
+            if production_strategy == "auto":
+                from services.content_decision_engine import classify_production_mode
+                detected_mode = classify_production_mode(video_path, user_preference="auto")
+                if detected_mode == "ai_gen":
+                    yield (
+                        f"[Video {idx+1}/{num_videos}] No clear on-camera speaker -> Switching to Full AI Short Generation...",
+                        _p(0.25),
+                        None,
+                    )
+                    from services.ai_short_generator import build_full_ai_short
+                    try:
+                        final_output, seo = build_full_ai_short(
+                            topic_title=best_video.title,
+                            topic_context=f"Video Title: {best_video.title}\nDescription: {best_video.description}",
+                            settings=ap_settings,
+                            tmp_dir=download_dir,
+                            output_dir=ap_settings.output_dir,
+                            report_cb=lambda msg: None,
+                        )
+                        results.append({
+                            "seo": seo,
+                            "path": final_output,
+                            "publish_at": get_optimal_schedule_time() + timedelta(days=idx),
+                        })
+                        continue
+                    except (RuntimeError, OSError, ValueError, KeyError) as exc:
+                        logger.error("Full AI fallback failed for %s: %s", best_video.title, exc)
 
             yield (f"[Video {idx+1}/{num_videos}] Transcribing audio with Whisper...", _p(0.35), None)
             transcript = transcribe(

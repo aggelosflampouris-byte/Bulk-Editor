@@ -292,6 +292,15 @@ def build_short_from_clip(
 
     # Subtitle Burn-in
     if ass_path is not None and ass_path.is_file():
+        if getattr(settings, "mask_old_subtitles", True):
+            _report("Masking old burned-in subtitles with frosted plate...")
+            masked_path: Path = tmp_dir / f"{stem}_masked.mp4"
+            try:
+                from services.subtitle_masker import mask_burned_in_subtitles
+                current_path = mask_burned_in_subtitles(current_path, masked_path)
+            except (RuntimeError, OSError, ValueError) as exc:
+                logger.warning("Subtitle masking skipped: %s", exc)
+
         _report("Burning subtitles...")
         burned_path: Path = tmp_dir / f"{stem}_burned.mp4"
         burn_subtitles(current_path, ass_path, burned_path)
