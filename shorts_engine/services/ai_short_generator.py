@@ -356,7 +356,10 @@ def build_full_ai_short(
         "-shortest",
         str(muxed_path),
     ]
-    subprocess.run(cmd_mux, capture_output=True, check=False)
+    res = subprocess.run(cmd_mux, capture_output=True, check=False)
+    if not muxed_path.is_file():
+        logger.warning("FFmpeg muxing failed or did not produce output (%s) — copying visual bed.", res.stderr[:200] if res.stderr else "no output")
+        shutil.copy2(str(visual_bed), str(muxed_path))
 
     # Whisper transcription on synthesized speech
     _rpt("Transcribing speech for dynamic fluid subtitles...")
@@ -382,7 +385,7 @@ def build_full_ai_short(
 
     subtitled_path = tmp_dir / "ai_short_subtitled.mp4"
     burn_subtitles(
-        video_path=muxed_path,
+        input_path=muxed_path,
         ass_path=ass_path,
         output_path=subtitled_path,
     )
@@ -390,15 +393,17 @@ def build_full_ai_short(
     current_path = subtitled_path
 
     # Background music
-    if settings.enable_bg_music and getattr(settings, "bg_music_track", "none") != "none":
+    bg_music_path = settings.resolve_bg_music_path() if settings.enable_bg_music else None
+    if bg_music_path is not None:
         _rpt("Layering background music bed...")
         bg_path = tmp_dir / "ai_short_bgm.mp4"
         try:
             current_path = mix_background_music(
                 video_path=current_path,
+                music_path=bg_music_path,
                 output_path=bg_path,
-                track_preset=settings.bg_music_track,
-                volume=0.12,
+                volume=getattr(settings, "bg_music_volume", 0.12),
+                ducking=getattr(settings, "bg_music_ducking", True),
             )
         except (RuntimeError, OSError, ValueError) as exc:
             logger.warning("BGM mixing skipped: %s", exc)

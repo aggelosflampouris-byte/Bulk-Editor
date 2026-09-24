@@ -164,3 +164,75 @@ def test_ai_short_package_creation() -> None:
     assert pkg.hook.startswith("Αυτό")
     assert len(pkg.scenes) == 1
     assert pkg.scenes[0]["pexels_query"] == "solar energy"
+
+
+def test_build_full_ai_short_flow(tmp_path: Path) -> None:
+    from shorts_engine.config import Settings
+    from shorts_engine.services.ai_short_generator import build_full_ai_short
+    from shorts_engine.services.seo_generator import SeoMetadata
+    from shorts_engine.services.transcriber import TranscriptionSegment
+
+    settings = Settings(gemini_api_key="test_key", enable_bg_music=False)
+    tmp_dir = tmp_path / "work"
+    output_dir = tmp_path / "out"
+    tmp_dir.mkdir()
+    output_dir.mkdir()
+
+    fake_pkg = AIShortPackage(
+        title="AI News",
+        hook="Hook",
+        narration_script="Narration text in Greek",
+        scenes=[{"scene_index": 1, "narration_chunk": "Narration text in Greek", "pexels_query": "news"}],
+        seo=SeoMetadata(
+            title="Title",
+            description="Desc",
+            tags=("test",),
+            primary_keyword="news",
+            pinned_comment="Comment",
+            curiosity_title="c",
+            authority_title="a",
+            contrarian_title="co",
+        ),
+    )
+
+    def fake_voiceover(text: str, out_path: Path, voice: str = "el-GR-NestorasNeural") -> Path:
+        out_path.write_bytes(b"dummy audio")
+        return out_path
+
+    def fake_assemble(*args: object, **kwargs: object) -> Path:
+        p = tmp_dir / "scene.mp4"
+        p.write_bytes(b"dummy video")
+        return p
+
+    def fake_burn(input_path: Path, ass_path: Path, output_path: Path) -> Path:
+        assert input_path.is_file()
+        assert ass_path.is_file()
+        output_path.write_bytes(b"dummy subtitled video")
+        return output_path
+
+    with (
+        patch("shorts_engine.services.ai_short_generator.generate_script_and_scenes", return_value=fake_pkg),
+        patch("shorts_engine.services.ai_short_generator.synthesize_voiceover", side_effect=fake_voiceover),
+        patch("shorts_engine.services.ai_short_generator._assemble_scene_video", side_effect=fake_assemble),
+        patch("shorts_engine.services.ai_short_generator.probe_duration", return_value=12.0),
+        patch("subprocess.run", return_value=MagicMock(returncode=0)),
+        patch("shorts_engine.services.ai_short_generator.transcribe", return_value=[
+            TranscriptionSegment(start=0.0, end=10.0, text="Narration text in Greek", words=[])
+        ]),
+        patch("shorts_engine.services.ai_short_generator.burn_subtitles", side_effect=fake_burn) as mock_burn,
+    ):
+        out_file, seo = build_full_ai_short(
+            topic_title="Greek Energy",
+            topic_context="Details",
+            settings=settings,
+            tmp_dir=tmp_dir,
+            output_dir=output_dir,
+        )
+
+        assert out_file.is_file()
+        assert seo.title == "Title"
+        mock_burn.assert_called_once()
+        assert "input_path" in mock_burn.call_args.kwargs
+        assert "ass_path" in mock_burn.call_args.kwargs
+        assert "output_path" in mock_burn.call_args.kwargs
+
