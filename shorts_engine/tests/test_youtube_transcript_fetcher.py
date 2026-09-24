@@ -47,15 +47,38 @@ def test_fetch_youtube_transcript_success():
         assert segments[1].end == 7.5
 
 
+def test_fetch_youtube_transcript_rolling_teletext_clamping():
+    # Simulate overlapping YouTube teletext snippets (e.g. Dianisma rolling captions)
+    mock_snippet_1 = MagicMock(text="η κατανομή των", start=10.0, duration=4.5)
+    mock_snippet_2 = MagicMock(text="τιμών και η αγορά", start=12.5, duration=4.0)
+    mock_fetched = [mock_snippet_1, mock_snippet_2]
+
+    mock_api = MagicMock()
+    mock_api.fetch.return_value = mock_fetched
+
+    with patch("shorts_engine.services.youtube_transcript_fetcher.YouTubeTranscriptApi", return_value=mock_api):
+        segments = fetch_youtube_transcript("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+        assert len(segments) == 2
+        # Snippet 1 end should be clamped to snippet 2's start (12.5), not 14.5
+        assert segments[0].start == 10.0
+        assert segments[0].end == 12.5
+        assert segments[0].words is not None
+        assert segments[0].words[-1][1] <= 12.5
+        assert segments[1].start == 12.5
+        assert segments[1].end == 16.5
+
+
 def test_fetch_youtube_transcript_unavailable():
     from youtube_transcript_api import TranscriptsDisabled
 
     mock_api = MagicMock()
     mock_api.fetch.side_effect = TranscriptsDisabled("dQw4w9WgXcQ")
 
-    with patch("shorts_engine.services.youtube_transcript_fetcher.YouTubeTranscriptApi", return_value=mock_api):
-        with pytest.raises(YouTubeTranscriptUnavailableError):
-            fetch_youtube_transcript("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+    with (
+        patch("shorts_engine.services.youtube_transcript_fetcher.YouTubeTranscriptApi", return_value=mock_api),
+        pytest.raises(YouTubeTranscriptUnavailableError),
+    ):
+        fetch_youtube_transcript("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
 
 
 def test_format_transcript_for_llm():

@@ -317,7 +317,7 @@ def transcribe(
         del model
         import gc
         gc.collect()
-    except Exception as exc:
+    except (RuntimeError, AttributeError) as exc:
         logger.debug("Model memory reclamation failed (non-fatal): %s", exc)
 
     return segments
@@ -339,14 +339,14 @@ def _seconds_to_ass_time(seconds: float) -> str:
     Convert a float timestamp (seconds) to ASS time format: H:MM:SS.cc
 
     ASS centiseconds are two digits (hundredths of a second).
+    Uses integer division on centiseconds to eliminate floating-point rounding
+    and prevent three-digit centisecond overflows (e.g. 59.100).
     """
-    hours = int(seconds // 3600)
-    remainder = seconds % 3600
-    minutes = int(remainder // 60)
-    secs = remainder % 60
-    centiseconds = round((secs % 1) * 100)
-    whole_secs = int(secs)
-    return f"{hours}:{minutes:02d}:{whole_secs:02d}.{centiseconds:02d}"
+    total_cs = max(0, round(seconds * 100))
+    hours, rem = divmod(total_cs, 360000)
+    minutes, rem = divmod(rem, 6000)
+    secs, cs = divmod(rem, 100)
+    return f"{hours}:{minutes:02d}:{secs:02d}.{cs:02d}"
 
 
 def _escape_ass_text(text: str) -> str:
@@ -421,20 +421,44 @@ def segments_to_ass(
 
     dialogue_lines: list[str] = []
     
-    # Flatten all words
-    all_words: list[tuple[float, float, str]] = []
+    # Flatten, sort, and sanitize all words with strictly monotonic start times
+    raw_words: list[tuple[float, float, str]] = []
     for seg in segments:
         if seg.words:
-            all_words.extend(seg.words)
+            raw_words.extend(seg.words)
+
+    raw_words.sort(key=lambda w: (w[0], w[1]))
+    all_words: list[tuple[float, float, str]] = []
+    for w_s, w_e, w_t in raw_words:
+        clean_t = w_t.strip()
+        if not clean_t:
+            continue
+        w_start_val = max(0.0, float(w_s))
+        w_end_val = max(w_start_val + 0.05, float(w_e))
+        if all_words:
+            prev_s = all_words[-1][0]
+            if w_start_val <= prev_s:
+                w_start_val = prev_s + 0.05
+                w_end_val = max(w_end_val, w_start_val + 0.05)
+        all_words.append((w_start_val, w_end_val, clean_t))
 
     min_word_duration = 0.22
     gap_bridge_threshold = 0.35
 
     # If no words available, fallback to segments
     if not all_words:
-        for seg in segments:
-            start = _seconds_to_ass_time(seg.start)
-            end = _seconds_to_ass_time(seg.end)
+        sorted_segs = sorted(segments, key=lambda s: s.start)
+        for k, seg in enumerate(sorted_segs):
+            s_start = max(0.0, float(seg.start))
+            s_end = max(s_start + 0.05, float(seg.end))
+            if k + 1 < len(sorted_segs):
+                next_start = max(0.0, float(sorted_segs[k + 1].start))
+                if next_start > s_start:
+                    s_end = min(s_end, next_start)
+                else:
+                    s_end = s_start + 0.05
+            start = _seconds_to_ass_time(s_start)
+            end = _seconds_to_ass_time(s_end)
             text_field = _escape_ass_text(seg.text)
             dialogue_lines.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text_field}")
     elif subtitle_mode == "phrase":
@@ -459,11 +483,17 @@ def segments_to_ass(
             p_end = max(chunk[-1][1], p_start + 0.40)
             if idx < len(all_words):
                 next_start = all_words[idx][0]
-                gap = next_start - p_end
-                if 0.0 <= gap < gap_bridge_threshold:
-                    p_end = max(p_end, next_start)
-                elif gap >= gap_bridge_threshold:
-                    p_end = min(p_end + 0.15, next_start)
+                if next_start > p_start:
+                    if p_end >= next_start:
+                        p_end = next_start
+                    else:
+                        gap = next_start - p_end
+                        if gap < gap_bridge_threshold:
+                            p_end = next_start
+                        else:
+                            p_end = min(p_end + 0.15, next_start)
+                else:
+                    p_end = p_start + 0.05
             else:
                 p_end = p_end + 0.20
 
@@ -486,14 +516,20 @@ def segments_to_ass(
         for i, (w_start, w_end, w_text) in enumerate(all_words):
             display_end = max(w_start + min_word_duration, w_end)
             
-            # Bridge short gaps to next word to avoid flickering
+            # Bridge short gaps to next word without exceeding next word's start time
             if i + 1 < len(all_words):
-                next_start = all_words[i+1][0]
-                gap = next_start - w_end
-                if 0.0 <= gap < gap_bridge_threshold:
-                    display_end = max(display_end, next_start)
-                elif gap >= gap_bridge_threshold:
-                    display_end = min(display_end + 0.15, next_start)
+                next_start = all_words[i + 1][0]
+                if next_start > w_start:
+                    if display_end >= next_start:
+                        display_end = next_start
+                    else:
+                        gap = next_start - display_end
+                        if gap < gap_bridge_threshold:
+                            display_end = next_start
+                        else:
+                            display_end = min(display_end + 0.15, next_start)
+                else:
+                    display_end = w_start + 0.05
             else:
                 display_end = display_end + 0.15
 

@@ -144,29 +144,48 @@ def fetch_youtube_transcript(
         logger.error("Unexpected error retrieving YouTube transcript: %s", exc)
         raise YouTubeTranscriptError(f"Unexpected transcript error: {exc}") from exc
 
-    segments: list[TranscriptionSegment] = []
+    raw_snippets: list[tuple[float, float, str]] = []
     for snippet in fetched:
-        text = snippet.text.strip()
+        raw_text = snippet.text if hasattr(snippet, "text") else snippet.get("text", "")
+        text = str(raw_text).strip()
         if not text:
             continue
-        start = float(snippet.start)
-        duration = float(snippet.duration)
-        end = start + duration
+        start = float(snippet.start if hasattr(snippet, "start") else snippet.get("start", 0.0))
+        duration = float(snippet.duration if hasattr(snippet, "duration") else snippet.get("duration", 0.0))
+        raw_snippets.append((start, duration, text))
 
-        # Estimate word-level chunks across the snippet duration for downstream alignment
+    raw_snippets.sort(key=lambda item: item[0])
+
+    segments: list[TranscriptionSegment] = []
+    for i, (start, duration, text) in enumerate(raw_snippets):
+        # YouTube auto-generated captions report UI retention persistence (~4-5s)
+        # rather than true spoken duration, causing adjacent lines to heavily overlap.
+        # Clamp snippet boundary to next snippet's start to reflect spoken flow.
+        if i + 1 < len(raw_snippets):
+            next_start = raw_snippets[i + 1][0]
+            if next_start > start:
+                effective_end = min(start + duration, next_start)
+            else:
+                effective_end = start + duration
+        else:
+            effective_end = start + duration
+
+        effective_duration = max(effective_end - start, 0.05)
+
+        # Estimate word-level chunks across the effective duration for downstream alignment
         words_raw = text.split()
         words_timed: list[tuple[float, float, str]] | None = None
         if words_raw:
-            w_step = duration / len(words_raw)
+            w_step = effective_duration / len(words_raw)
             words_timed = [
-                (round(start + i * w_step, 3), round(start + (i + 1) * w_step, 3), w)
-                for i, w in enumerate(words_raw)
+                (round(start + j * w_step, 3), round(start + (j + 1) * w_step, 3), w)
+                for j, w in enumerate(words_raw)
             ]
 
         segments.append(
             TranscriptionSegment(
                 start=round(start, 3),
-                end=round(end, 3),
+                end=round(effective_end, 3),
                 text=text,
                 words=words_timed,
             )

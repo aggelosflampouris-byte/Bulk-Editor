@@ -21,6 +21,9 @@ def test_seconds_to_ass_time() -> None:
     assert _seconds_to_ass_time(0.0) == "0:00:00.00"
     assert _seconds_to_ass_time(65.432) == "0:01:05.43"
     assert _seconds_to_ass_time(3661.05) == "1:01:01.05"
+    # Verify centisecond rounding does not produce 3-digit overflow (e.g. 59.100)
+    assert _seconds_to_ass_time(59.996) == "0:01:00.00"
+    assert _seconds_to_ass_time(1.999) == "0:00:02.00"
 
 
 def test_escape_ass_text() -> None:
@@ -110,6 +113,91 @@ def test_segments_to_ass_phrase_mode() -> None:
     ass = segments_to_ass(segments, subtitle_mode="phrase")
     assert "[Events]" in ass
     assert "Dialogue:" in ass
+
+
+def _ass_time_to_seconds(ts: str) -> float:
+    h, m, s_cs = ts.split(":")
+    s, cs = s_cs.split(".")
+    return int(h) * 3600 + int(m) * 60 + int(s) + int(cs) / 100.0
+
+
+def test_segments_to_ass_zero_dialogue_overlap_word_mode() -> None:
+    # Test realistic scenario with overlapping segments and short-interval words
+    segments = [
+        TranscriptionSegment(
+            start=1.0,
+            end=3.5,
+            text="Πώς τα καρτέλ κλέβουν",
+            words=[
+                (1.0, 1.15, "Πώς"),
+                (1.15, 1.25, "τα"),  # Short duration (0.10s) clamped to min_word_duration or next_start
+                (1.22, 1.80, "καρτέλ"),  # Starts before prev word display_end would have finished
+                (1.75, 2.20, "κλέβουν"),
+            ],
+        ),
+        TranscriptionSegment(
+            start=2.10,
+            end=4.0,
+            text="τα χρήματά σου",
+            words=[
+                (2.10, 2.25, "τα"),
+                (2.30, 2.90, "χρήματά"),
+                (2.90, 3.40, "σου"),
+            ],
+        ),
+    ]
+
+    ass = segments_to_ass(segments, subtitle_mode="word")
+    dialogues = [line for line in ass.splitlines() if line.startswith("Dialogue:")]
+    assert len(dialogues) >= 6
+
+    for i in range(1, len(dialogues)):
+        prev_end = _ass_time_to_seconds(dialogues[i - 1].split(",")[2])
+        curr_start = _ass_time_to_seconds(dialogues[i].split(",")[1])
+        assert curr_start >= prev_end, f"Overlap detected between lines {i-1} and {i}: {prev_end} > {curr_start}"
+
+
+def test_segments_to_ass_zero_dialogue_overlap_phrase_mode() -> None:
+    segments = [
+        TranscriptionSegment(
+            start=0.0,
+            end=4.0,
+            text="η κατανομή των τιμών στην αγορά",
+            words=[
+                (0.0, 0.4, "η"),
+                (0.35, 0.9, "κατανομή"),
+                (0.85, 1.3, "των"),
+                (1.25, 1.8, "τιμών"),
+                (1.75, 2.1, "στην"),
+                (2.05, 2.8, "αγορά"),
+            ],
+        )
+    ]
+    ass = segments_to_ass(segments, subtitle_mode="phrase")
+    dialogues = [line for line in ass.splitlines() if line.startswith("Dialogue:")]
+    assert len(dialogues) >= 2
+
+    for i in range(1, len(dialogues)):
+        prev_end = _ass_time_to_seconds(dialogues[i - 1].split(",")[2])
+        curr_start = _ass_time_to_seconds(dialogues[i].split(",")[1])
+        assert curr_start >= prev_end, f"Overlap detected between phrase lines {i-1} and {i}: {prev_end} > {curr_start}"
+
+
+def test_segments_to_ass_zero_dialogue_overlap_fallback_mode() -> None:
+    # Segments that have overlapping timestamps from rolling teletext
+    segments = [
+        TranscriptionSegment(start=1.0, end=4.5, text="Πρώτη πρόταση."),
+        TranscriptionSegment(start=3.0, end=6.5, text="Δεύτερη πρόταση."),
+        TranscriptionSegment(start=5.5, end=8.0, text="Τρίτη πρόταση."),
+    ]
+    ass = segments_to_ass(segments)
+    dialogues = [line for line in ass.splitlines() if line.startswith("Dialogue:")]
+    assert len(dialogues) == 3
+
+    for i in range(1, len(dialogues)):
+        prev_end = _ass_time_to_seconds(dialogues[i - 1].split(",")[2])
+        curr_start = _ass_time_to_seconds(dialogues[i].split(",")[1])
+        assert curr_start >= prev_end, f"Fallback overlap detected between lines {i-1} and {i}: {prev_end} > {curr_start}"
 
 
 @patch("subprocess.run")
