@@ -397,6 +397,65 @@ def run_autopilot_pipeline(
             source_is_section = False
             source_offset = 0.0
 
+        # Check if production strategy is hybrid
+        if production_strategy == "hybrid":
+            yield (
+                f"[Video {idx+1}/{num_videos}] Strategy: Hybrid Short (Authentic Speaker Clip + AI Breakdown)...",
+                _p(0.7),
+                None,
+            )
+            try:
+                from services.hybrid_short_generator import build_hybrid_short
+                from services.timeline_utils import slice_segments
+                from services.video_engine import slice_video
+            except ImportError:
+                from shorts_engine.services.hybrid_short_generator import (
+                    build_hybrid_short,
+                )
+                from shorts_engine.services.timeline_utils import slice_segments
+                from shorts_engine.services.video_engine import slice_video
+
+            clip_dur = max(6.0, best_clip.end_time - best_clip.start_time)
+            part1_dur = min(13.0, clip_dur)
+            s_start = source_offset if source_is_section else best_clip.start_time
+            s_end = s_start + part1_dur
+
+            part1_raw = download_dir / f"hybrid_part1_raw_{best_clip.index}.mp4"
+            slice_video(
+                source_path=video_path,
+                start_time=s_start,
+                end_time=s_end,
+                output_path=part1_raw,
+            )
+
+            part1_segments = slice_segments(transcript, best_clip.start_time, best_clip.start_time + part1_dur)
+
+            try:
+                final_output, seo = build_hybrid_short(
+                    clip_video_path=part1_raw,
+                    speaker_segments=part1_segments,
+                    topic_title=best_video.title,
+                    topic_context=f"Video Title: {best_video.title}\nDescription: {best_video.description}",
+                    settings=ap_settings,
+                    tmp_dir=download_dir,
+                    output_dir=ap_settings.output_dir,
+                    report_cb=lambda msg: None,
+                )
+                results.append({
+                    "seo": seo,
+                    "path": final_output,
+                    "publish_at": get_optimal_schedule_time() + timedelta(days=idx),
+                })
+                continue
+            except (RuntimeError, OSError, ValueError, KeyError, APIError) as exc:
+                logger.error("Hybrid generation failed for %s: %s", best_video.title, exc)
+                yield (
+                    f"[Video {idx+1}/{num_videos}] Hybrid generation failed for '{best_video.title[:35]}': {exc}",
+                    _p(0.9),
+                    None,
+                )
+                continue
+
         # Compose Clip
         yield (f"[Video {idx+1}/{num_videos}] Assembling Short...", _p(0.75), None)
         result = process_url_clip(

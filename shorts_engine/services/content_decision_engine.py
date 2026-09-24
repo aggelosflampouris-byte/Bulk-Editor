@@ -40,7 +40,7 @@ def classify_production_mode(
         'speaker' or 'ai_gen'.
     """
     pref = user_preference.lower().strip()
-    if pref in ("speaker", "ai_gen"):
+    if pref in ("speaker", "ai_gen", "hybrid"):
         logger.info("Using explicit user production strategy: '%s'", pref)
         return pref
 

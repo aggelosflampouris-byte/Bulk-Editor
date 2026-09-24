@@ -137,19 +137,21 @@ def render_autopilot_tab(settings: Any) -> None:
         strategy_label = st.selectbox(
             "Production Mode",
             [
+                "🔥 Hybrid: Speaker Clip + AI Breakdown (Recommended)",
                 "🤖 Smart Auto-Select (Speaker Detect vs Full AI)",
                 "👤 Speaker Preservation (B-Roll + Subtitle Masking)",
                 "✨ Full AI Short Generation (AI Script + Voiceover + 9:16 Media)",
             ],
             index=0,
-            help="Auto: inspects video to detect if an on-camera speaker is present. If speaker is present, masks old burned-in captions, overlays B-roll cutaways, and adds dynamic karaoke captions. If no speaker is present, creates an original Short with Gemini script, Greek voiceover, and 9:16 Pexels media.",
+            help="Hybrid: Extracts a punchy 8-15s authentic clip of the speaker, masks old captions and burns new karaoke subtitles, then binds it seamlessly with an AI voiceover and 9:16 Pexels B-roll breakdown explaining the facts. Auto: detects speaker presence dynamically. Speaker: retains full speaker clip with B-roll. AI Gen: produces Short from scratch.",
         )
         strategy_map = {
+            "🔥 Hybrid: Speaker Clip + AI Breakdown (Recommended)": "hybrid",
             "🤖 Smart Auto-Select (Speaker Detect vs Full AI)": "auto",
             "👤 Speaker Preservation (B-Roll + Subtitle Masking)": "speaker",
             "✨ Full AI Short Generation (AI Script + Voiceover + 9:16 Media)": "ai_gen",
         }
-        production_strategy = strategy_map.get(strategy_label, "auto")
+        production_strategy = strategy_map.get(strategy_label, "hybrid")
     with opt_col3, st.expander("⚙️ Override URL"):
         override_url = st.text_input(
             "Custom Channel/Video URL",

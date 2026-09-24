@@ -211,7 +211,8 @@ def transcribe(
             save_cache_pickle,
         )
 
-    cache_key = f"{video_path.name}_{model_size}_{device}_{compute_type}_{beam_size}"
+    stat = video_path.stat()
+    cache_key = f"{video_path.name}_{stat.st_size}_{int(stat.st_mtime)}_{model_size}_{device}_{compute_type}_{beam_size}"
     cached_segments = load_cache_pickle("transcription", cache_key)
     if cached_segments is not None:
         return cached_segments
