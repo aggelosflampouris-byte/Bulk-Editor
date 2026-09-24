@@ -1,7 +1,10 @@
-import pytest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
+import pytest
+
 from shorts_engine.services.ocr_engine import OCREngine
+
 
 @pytest.fixture
 def mock_genai():
@@ -38,8 +41,8 @@ def test_ocr_engine_missing_key():
         OCREngine(gemini_api_key="")
 
 def test_extract_text_from_video(mock_genai, mock_cv2, tmp_path):
-    mock_genai_module, mock_client = mock_genai
-    mock_cv2_module, mock_cap = mock_cv2
+    _mock_genai_module, mock_client = mock_genai
+    _mock_cv2_module, mock_cap = mock_cv2
     
     # Create a dummy video file so path.exists() is true
     dummy_vid = tmp_path / "dummy.mp4"

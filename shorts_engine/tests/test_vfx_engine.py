@@ -158,7 +158,7 @@ class TestApplyVfx:
                 "-of", "csv=p=0",
                 str(out),
             ],
-            capture_output=True, text=True,
+            capture_output=True, text=True, check=False,
         )
         assert "audio" in probe.stdout
 

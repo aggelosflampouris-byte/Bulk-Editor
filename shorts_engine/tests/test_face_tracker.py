@@ -20,7 +20,7 @@ def _generate_synthetic_video(path: Path, width: int, height: int, duration: flo
         "-preset", "ultrafast",
         str(path),
     ]
-    res = subprocess.run(cmd, capture_output=True, text=True)
+    res = subprocess.run(cmd, capture_output=True, text=True, check=False)
     assert res.returncode == 0, f"FFmpeg failed: {res.stderr}"
     return path
 

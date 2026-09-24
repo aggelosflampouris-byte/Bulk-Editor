@@ -36,7 +36,7 @@ def _generate_synthetic_video(path: Path, width: int, height: int, duration: flo
         "-b:a", "64k",
         str(path),
     ]
-    res = subprocess.run(cmd, capture_output=True, text=True)
+    res = subprocess.run(cmd, capture_output=True, text=True, check=False)
     assert res.returncode == 0, f"FFmpeg failed to generate synthetic video: {res.stderr}"
     return path
 
@@ -132,7 +132,7 @@ def test_probe_has_audio_and_concatenate_silent_outro(test_videos, tmp_path):
         "-preset", "ultrafast",
         str(silent_outro),
     ]
-    res = subprocess.run(cmd, capture_output=True, text=True)
+    res = subprocess.run(cmd, capture_output=True, text=True, check=False)
     assert res.returncode == 0
 
     assert probe_has_audio(test_videos["main_1080"]) is True
