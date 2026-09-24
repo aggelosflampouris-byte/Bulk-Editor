@@ -143,13 +143,13 @@ def assert_system_binaries() -> None:
 #   ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow,
 #   Alignment, MarginL, MarginR, MarginV, Encoding
 ASS_STYLE_LINE: str = (
-    "Style: Default,Impact,130,&H00FFFFFF,&H000000FF,&H00000000,&H66000000,"
+    "Style: Default,Impact,96,&H00FFFFFF,&H000000FF,&H00000000,&H66000000,"
     "-1,0,0,0,100,100,0,0,1,5,3,2,80,80,540,1"
 )
 
 # Highlight style — Same as default since we do inline color overrides now
 ASS_HIGHLIGHT_STYLE_LINE: str = (
-    "Style: Highlight,Impact,130,&H00FFFFFF,&H000000FF,&H00000000,&H66000000,"
+    "Style: Highlight,Impact,96,&H00FFFFFF,&H000000FF,&H00000000,&H66000000,"
     "-1,0,0,0,100,100,0,0,1,5,3,2,80,80,540,1"
 )
 
@@ -264,8 +264,10 @@ class Settings:
     # ── Subtitles ─────────────────────────────────────────────
     # Vertical placement of captions: "lower_third" | "center" | "top"
     subtitle_position: str = "lower_third"
-    # Caption animation style: "word" (1-word pop) | "phrase" (natural 2-3 word phrases)
-    subtitle_mode: str = "word"
+    # Caption animation style: "dynamic" (fluid 2-3 words active highlight) | "phrase" | "word"
+    subtitle_mode: str = "dynamic"
+    # Dynamic jump-cut punch-in zoom on speech pauses (False = clean, steady framing)
+    enable_dynamic_zoom: bool = False
 
     # ── SEO Engine ─────────────────────────────────────────────
     # Optional Brand Voice injection to tailor Gemini's writing tone
@@ -333,10 +335,10 @@ class Settings:
                 "Choose from: int8, int8_float32, float32, int16."
             )
 
-        if self.subtitle_mode not in {"word", "phrase"}:
+        if self.subtitle_mode not in {"dynamic", "word", "phrase"}:
             errors.append(
                 f"Invalid subtitle_mode '{self.subtitle_mode}'. "
-                "Choose from: word, phrase."
+                "Choose from: dynamic, word, phrase."
             )
 
         if self.broll_overlay_duration <= 0:
@@ -366,9 +368,8 @@ class Settings:
             if not (0.01 <= self.bg_music_volume <= 0.50):
                 errors.append("bg_music_volume must be between 0.01 and 0.50.")
 
-            if self.bg_music_track == "custom":
-                if self.bg_music_path is None or not self.bg_music_path.is_file():
-                    errors.append(f"Custom background music file not found: {self.bg_music_path}")
+            if self.bg_music_track == "custom" and (self.bg_music_path is None or not self.bg_music_path.is_file()):
+                errors.append(f"Custom background music file not found: {self.bg_music_path}")
 
         if not (1 <= self.min_clips <= 10):
             errors.append("min_clips must be between 1 and 10.")

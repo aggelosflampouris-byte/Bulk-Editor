@@ -128,7 +128,7 @@ def apply_dynamic_zoom_ffmpeg(
     ]
 
     logger.info("Executing native FFmpeg dynamic speech zoom (%d intervals)...", len(zoom_intervals))
-    res = subprocess.run(cmd, capture_output=True, text=True)
+    res = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if res.returncode != 0:
         logger.warning("FFmpeg dynamic zoom failed (%s), falling back...", res.stderr)
         raise RuntimeError(f"FFmpeg dynamic zoom failed: {res.stderr}")
@@ -148,43 +148,56 @@ def compose_timeline(
     clip_start_offset: float = 0.0,
     ken_burns: bool = False,
     split_screen: bool = False,
+    enable_dynamic_zoom: bool = True,
 ) -> Path:
     """
     Compose the final video using a multi-layer NLE approach.
+    When enable_dynamic_zoom is False and no B-roll is supplied, clean
+    camera framing is preserved without re-encoding or artificial jump cuts.
     """
+    import shutil
+
+    has_broll = bool(broll_video_path and broll_video_path.exists())
+
+    if not enable_dynamic_zoom and not has_broll:
+        logger.info("Clean post-production: dynamic zoom and B-roll bypassed for %s.", main_video_path.name)
+        shutil.copy2(str(main_video_path), str(output_path))
+        return output_path
+
     logger.info("Compositing timeline for %s", main_video_path.name)
 
-    # Fast path: If only dynamic zoom on main speaker is needed (no B-roll)
-    try:
-        from services.video_engine import probe_duration
-        dur = probe_duration(main_video_path)
-        zoom_intervals = compute_zoom_intervals(dur, segments, clip_start_offset)
-        
-        if not broll_video_path or not broll_video_path.exists():
-            return apply_dynamic_zoom_ffmpeg(
-                video_path=main_video_path,
-                output_path=output_path,
-                zoom_intervals=zoom_intervals,
-                target_width=target_width,
-                target_height=target_height,
-                zoom_factor=1.25,
-            )
-        else:
-            # We have B-roll, but we still want punch-ins on the main video
-            zoomed_main_path = main_video_path.with_name(f"{main_video_path.stem}_zoomed.mp4")
-            apply_dynamic_zoom_ffmpeg(
-                video_path=main_video_path,
-                output_path=zoomed_main_path,
-                zoom_intervals=zoom_intervals,
-                target_width=target_width,
-                target_height=target_height,
-                zoom_factor=1.25,
-            )
-            main_video_path = zoomed_main_path
-    except Exception as exc:
-        logger.error("FFmpeg dynamic zoom failed: %s", exc)
-        if not broll_video_path or not broll_video_path.exists():
-            raise
+    # Dynamic zoom branch (only if enabled)
+    if enable_dynamic_zoom:
+        try:
+            from services.video_engine import probe_duration
+            dur = probe_duration(main_video_path)
+            zoom_intervals = compute_zoom_intervals(dur, segments, clip_start_offset)
+            
+            if not has_broll:
+                return apply_dynamic_zoom_ffmpeg(
+                    video_path=main_video_path,
+                    output_path=output_path,
+                    zoom_intervals=zoom_intervals,
+                    target_width=target_width,
+                    target_height=target_height,
+                    zoom_factor=1.25,
+                )
+            else:
+                # We have B-roll, but we still want punch-ins on the main video
+                zoomed_main_path = main_video_path.with_name(f"{main_video_path.stem}_zoomed.mp4")
+                apply_dynamic_zoom_ffmpeg(
+                    video_path=main_video_path,
+                    output_path=zoomed_main_path,
+                    zoom_intervals=zoom_intervals,
+                    target_width=target_width,
+                    target_height=target_height,
+                    zoom_factor=1.25,
+                )
+                main_video_path = zoomed_main_path
+        except Exception as exc:
+            logger.error("FFmpeg dynamic zoom failed: %s", exc)
+            if not has_broll:
+                raise
 
     # Layer 0: Main Speaker (now zoomed)
     main_clip = VideoFileClip(str(main_video_path))

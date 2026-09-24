@@ -5,6 +5,7 @@ services/autopilot.py — End-to-End Autopilot Orchestration
 import logging
 import tempfile
 from collections.abc import Generator
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -19,9 +20,10 @@ from services.channel_analyzer import (
     fetch_youtube_videos,
     find_viral_recent_videos,
 )
-from services.clip_selector import select_clips
+from services.clip_selector import ClipCandidate, select_clips
 from services.downloader import download_video, download_video_section
 from services.seo_generator import generate_seo
+from services.timeline_utils import snap_to_silence
 from services.transcriber import transcribe
 from services.youtube_transcript_fetcher import fetch_youtube_transcript
 from services.youtube_uploader import (
@@ -106,6 +108,21 @@ def run_autopilot_pipeline(
 
     yield (f"Selected {len(best_videos)} highly viral videos for processing.", 10, None)
 
+    # Configure Autopilot production settings:
+    # 1. Strictly 9:16 ratio (1080x1920)
+    # 2. Less VFX and post-prod (enable_vfx=False, clean framing, no split screens)
+    # 3. Dynamic and fluid subtitles (subtitle_mode="dynamic")
+    ap_settings = replace(
+        settings,
+        target_width=1080,
+        target_height=1920,
+        enable_vfx=False,
+        enable_dynamic_zoom=False,
+        broll_split_screen=False,
+        broll_ken_burns=False,
+        subtitle_mode="dynamic",
+    )
+
     results = []
 
     for idx, best_video in enumerate(best_videos):
@@ -156,6 +173,25 @@ def run_autopilot_pipeline(
                 continue
 
             best_clip = clips[0]
+            try:
+                snapped_s, snapped_e = snap_to_silence(
+                    start_time=best_clip.start_time,
+                    end_time=best_clip.end_time,
+                    segments=transcript,
+                    min_dur=ap_settings.clip_min_duration,
+                    max_dur=ap_settings.clip_max_duration,
+                )
+                best_clip = ClipCandidate(
+                    index=best_clip.index,
+                    start_time=snapped_s,
+                    end_time=snapped_e,
+                    hook_summary=best_clip.hook_summary,
+                    seo=best_clip.seo,
+                    broll_query=best_clip.broll_query,
+                )
+            except (RuntimeError, ValueError, KeyError) as snap_exc:
+                logger.debug("Boundary snapping skipped in autopilot: %s", snap_exc)
+
             yield (
                 f"[Video {idx+1}/{num_videos}] Selected clip: {best_clip.seo.title if best_clip.seo else 'Viral Hook'} (Rank: {best_clip.index})",
                 _p(0.4),
@@ -224,6 +260,25 @@ def run_autopilot_pipeline(
                 continue
 
             best_clip = clips[0]
+            try:
+                snapped_s, snapped_e = snap_to_silence(
+                    start_time=best_clip.start_time,
+                    end_time=best_clip.end_time,
+                    segments=transcript,
+                    min_dur=ap_settings.clip_min_duration,
+                    max_dur=ap_settings.clip_max_duration,
+                )
+                best_clip = ClipCandidate(
+                    index=best_clip.index,
+                    start_time=snapped_s,
+                    end_time=snapped_e,
+                    hook_summary=best_clip.hook_summary,
+                    seo=best_clip.seo,
+                    broll_query=best_clip.broll_query,
+                )
+            except (RuntimeError, ValueError, KeyError) as snap_exc:
+                logger.debug("Boundary snapping skipped in autopilot fallback: %s", snap_exc)
+
             yield (
                 f"[Video {idx+1}/{num_videos}] Selected clip: {best_clip.seo.title if best_clip.seo else 'Viral Hook'} (Rank: {best_clip.index})",
                 _p(0.65),
@@ -238,9 +293,9 @@ def run_autopilot_pipeline(
             clip=best_clip,
             source_path=video_path,
             all_segments=transcript,
-            settings=settings,
+            settings=ap_settings,
             tmp_dir=download_dir,
-            run_output_dir=settings.output_dir,
+            run_output_dir=ap_settings.output_dir,
             custom_broll_path=broll_path if broll_path else None,
             source_is_section=source_is_section,
             source_offset=source_offset,

@@ -80,6 +80,8 @@ or clear resolution. Never cut mid-sentence or mid-thought.
 - NICHE TEMPLATE CONTEXT: {niche_context}
 
 CONSTRAINTS:
+- 9:16 VERTICAL RATIO REQUIREMENT: All generated content is strictly set at 9:16 vertical ratio (1080x1920). Prioritize moments where the speaker or central subject is tightly centered in the frame, ensuring maximum visual engagement in 9:16 vertical layout.
+- SPEECH FLUIDITY REQUIREMENT: Ensure speech is dynamic and fluid. The clip MUST begin at the natural start of a complete sentence or hook and end after a completed thought/conclusion. NEVER cut mid-word, mid-syllable, or mid-breath.
 - You MUST select AT LEAST {min_clips} clips and at most {max_clips} clips (aim for {max_clips} clips if the video duration allows).
 - Each clip's duration (end_time - start_time) MUST be between {min_dur} and \
 {max_dur} seconds (inclusive). The ideal sweet spot is 35–50 seconds.
@@ -644,7 +646,7 @@ def select_clips(
                 thinking_config=genai_types.ThinkingConfig(thinking_budget=0),
             ),
         )
-    except Exception as exc:
+    except (RuntimeError, ValueError, KeyError, OSError, TypeError) as exc:
         logger.error("Gemini clip selection API call failed: %s — using fallback.", exc)
         return _build_fallback_clips(
             segments, max_clips, min_dur, max_dur, min_clips=min_clips,

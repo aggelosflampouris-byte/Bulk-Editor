@@ -27,7 +27,12 @@ if str(_APP_DIR.parent) not in sys.path:
 
 import streamlit as st
 
-from config import DEFAULT_OUTPUT_DIR, Settings, assert_system_binaries, inject_ffmpeg_path
+from config import (
+    DEFAULT_OUTPUT_DIR,
+    Settings,
+    assert_system_binaries,
+    inject_ffmpeg_path,
+)
 from services.niche_templates import get_template, template_options
 
 # ── Logging Setup ──────────────────────────────────────────────────────────────
@@ -448,13 +453,14 @@ def _render_sidebar() -> Settings:
         )
         subtitle_mode = st.selectbox(
             "Caption Style",
-            options=["word", "phrase"],
+            options=["dynamic", "phrase", "word"],
             index=0,
             format_func=lambda x: {
-                "word": "🔥 1-Word Pop (TikTok dynamic)",
+                "dynamic": "⚡ Dynamic Karaoke (Fluid 2–3 words)",
                 "phrase": "📖 Natural Phrases (2–3 words grouped)",
+                "word": "🔥 1-Word Pop (Single word)",
             }.get(x, x),
-            help="1-Word Pop displays words individually with a pop animation. Natural Phrases groups 2-3 words for enhanced reading comfort.",
+            help="Dynamic Karaoke keeps 2-3 words on screen while highlighting each active word in real time. Ideal for authoritative news.",
             key="subtitle_mode_select",
         )
 
@@ -727,6 +733,7 @@ def _render_sidebar() -> Settings:
         niche_template=selected_template_name,
         subtitle_position=str(subtitle_position),
         subtitle_mode=str(subtitle_mode),
+        enable_dynamic_zoom=False,
         outro_path=outro_path,
         output_dir=resolved_output_dir,
     )

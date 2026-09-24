@@ -390,11 +390,11 @@ def segments_to_ass(
     highlight_style_line: str | None = None,
     primary_keyword: str | None = None,
     subtitle_position: str = "lower_third",
-    subtitle_mode: str = "word",
+    subtitle_mode: str = "dynamic",
 ) -> str:
     """
     Generate an ASS subtitle payload from a list of transcription segments.
-    Supports animated 1-word-per-line pop or natural 2-3 word phrases.
+    Supports animated dynamic phrase karaoke, natural phrase chunks, or 1-word pop.
 
     Args:
         segments:            Ordered transcript segments.
@@ -402,7 +402,7 @@ def segments_to_ass(
         highlight_style_line: Optional highlight style override.
         primary_keyword:     Keyword to highlight in yellow.
         subtitle_position:   "lower_third" | "center" | "top".
-        subtitle_mode:       "word" (1-word pop) | "phrase" (2-3 words phrase chunks).
+        subtitle_mode:       "dynamic" (fluid 2-3 words active highlight) | "phrase" | "word".
     """
     margin_v = _SUBTITLE_MARGIN_V.get(subtitle_position, _SUBTITLE_MARGIN_V["lower_third"])
 
@@ -461,6 +461,60 @@ def segments_to_ass(
             end = _seconds_to_ass_time(s_end)
             text_field = _escape_ass_text(seg.text)
             dialogue_lines.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text_field}")
+    elif subtitle_mode == "dynamic":
+        # Group words into 2-3 word natural phrases with real-time active-word karaoke highlighting
+        idx = 0
+        while idx < len(all_words):
+            chunk = [all_words[idx]]
+            idx += 1
+            while idx < len(all_words) and len(chunk) < 3:
+                curr_w = all_words[idx]
+                prev_w = chunk[-1]
+                # Break on long pauses between words
+                if curr_w[0] - prev_w[1] > 0.40:
+                    break
+                combined_len = sum(len(w[2]) for w in chunk) + len(curr_w[2]) + len(chunk)
+                if combined_len > 22:
+                    break
+                chunk.append(curr_w)
+                idx += 1
+
+            # Format each active word inside the chunk for seamless fluid highlighting
+            for w_i, active_w in enumerate(chunk):
+                w_start = active_w[0]
+                if w_i + 1 < len(chunk):
+                    w_end = chunk[w_i + 1][0]
+                else:
+                    w_end = max(active_w[1], w_start + min_word_duration)
+                    if idx < len(all_words):
+                        next_chunk_start = all_words[idx][0]
+                        if next_chunk_start > w_start:
+                            if w_end >= next_chunk_start or (next_chunk_start - w_end < gap_bridge_threshold):
+                                w_end = next_chunk_start
+                            else:
+                                w_end = min(w_end + 0.15, next_chunk_start)
+                        else:
+                            w_end = w_start + 0.05
+                    else:
+                        w_end = w_end + 0.15
+
+                if w_end <= w_start:
+                    w_end = w_start + 0.05
+
+                t_start = _seconds_to_ass_time(w_start)
+                t_end = _seconds_to_ass_time(w_end)
+
+                words_formatted: list[str] = []
+                for j, w in enumerate(chunk):
+                    w_safe = _escape_ass_text(w[2])
+                    if j == w_i:
+                        # Active spoken word in bright yellow with subtle dynamic scale pop
+                        words_formatted.append(rf"{{\c&H00FFFF&\fscx106\fscy106}}{w_safe}{{\r}}")
+                    else:
+                        words_formatted.append(rf"{{\c&H00FFFFFF&}}{w_safe}{{\r}}")
+
+                phrase_text = " ".join(words_formatted)
+                dialogue_lines.append(f"Dialogue: 0,{t_start},{t_end},Default,,0,0,0,,{phrase_text}")
     elif subtitle_mode == "phrase":
         # Group words into 2-3 word natural phrases
         idx = 0
@@ -565,7 +619,7 @@ def write_ass_file(
     highlight_style_line: str | None = None,
     primary_keyword: str | None = None,
     subtitle_position: str = "lower_third",
-    subtitle_mode: str = "word",
+    subtitle_mode: str = "dynamic",
 ) -> Path:
     """
     Generate and write an ASS subtitle file for the given segments.
@@ -577,7 +631,7 @@ def write_ass_file(
         highlight_style_line: Optional highlight style override.
         primary_keyword:      Optional keyword to statically highlight.
         subtitle_position:    Vertical placement: "lower_third" | "center" | "top".
-        subtitle_mode:        "word" | "phrase".
+        subtitle_mode:        "dynamic" | "phrase" | "word".
 
     Returns:
         The resolved, written output_path.

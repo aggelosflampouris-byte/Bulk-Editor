@@ -91,9 +91,26 @@ def test_segments_to_ass_keyword_highlight() -> None:
             ],
         )
     ]
-    ass = segments_to_ass(segments, primary_keyword="Ελλάδα")
+    ass = segments_to_ass(segments, primary_keyword="Ελλάδα", subtitle_mode="word")
     # Verify yellow color override for "Ελλάδα"
     assert r"{\c&H00FFFF&}Ελλάδα" in ass
+
+
+def test_segments_to_ass_dynamic_mode_highlight() -> None:
+    segments = [
+        TranscriptionSegment(
+            start=0.5,
+            end=2.0,
+            text="Η Ελλάδα κερδίζει",
+            words=[
+                (0.5, 0.8, "Η"),
+                (0.9, 1.4, "Ελλάδα"),
+                (1.5, 2.0, "κερδίζει"),
+            ],
+        )
+    ]
+    ass = segments_to_ass(segments, subtitle_mode="dynamic")
+    assert r"{\c&H00FFFF&\fscx106\fscy106}Ελλάδα{\r}" in ass
 
 
 def test_segments_to_ass_phrase_mode() -> None:
@@ -181,6 +198,33 @@ def test_segments_to_ass_zero_dialogue_overlap_phrase_mode() -> None:
         prev_end = _ass_time_to_seconds(dialogues[i - 1].split(",")[2])
         curr_start = _ass_time_to_seconds(dialogues[i].split(",")[1])
         assert curr_start >= prev_end, f"Overlap detected between phrase lines {i-1} and {i}: {prev_end} > {curr_start}"
+
+
+def test_segments_to_ass_zero_dialogue_overlap_dynamic_mode() -> None:
+    segments = [
+        TranscriptionSegment(
+            start=0.0,
+            end=4.0,
+            text="η κατανομή των τιμών στην αγορά",
+            words=[
+                (0.0, 0.4, "η"),
+                (0.35, 0.9, "κατανομή"),
+                (0.85, 1.3, "των"),
+                (1.25, 1.8, "τιμών"),
+                (1.75, 2.1, "στην"),
+                (2.05, 2.8, "αγορά"),
+            ],
+        )
+    ]
+    ass = segments_to_ass(segments, subtitle_mode="dynamic")
+    dialogues = [line for line in ass.splitlines() if line.startswith("Dialogue:")]
+    assert len(dialogues) >= 6
+    assert any("&H00FFFF&" in line for line in dialogues)
+
+    for i in range(1, len(dialogues)):
+        prev_end = _ass_time_to_seconds(dialogues[i - 1].split(",")[2])
+        curr_start = _ass_time_to_seconds(dialogues[i].split(",")[1])
+        assert curr_start >= prev_end, f"Overlap detected between dynamic lines {i-1} and {i}: {prev_end} > {curr_start}"
 
 
 def test_segments_to_ass_zero_dialogue_overlap_fallback_mode() -> None:

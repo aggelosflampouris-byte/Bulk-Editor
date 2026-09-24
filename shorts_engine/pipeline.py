@@ -18,11 +18,11 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+import sys
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-import sys
 from pathlib import Path
 
 _PKG_DIR = Path(__file__).resolve().parent
@@ -163,10 +163,16 @@ def _apply_crop_stage(
         except Exception as exc:
             logger.warning("Active speaker tracking failed: %s — using center-crop.", exc)
 
-    if is_already_9_16(source_path, settings.target_width, settings.target_height):
+    src_w, src_h = probe_resolution(source_path)
+    # Strict 9:16 check: only skip crop if resolution matches exact target dimensions (within 2px)
+    if (
+        is_already_9_16(source_path, settings.target_width, settings.target_height)
+        and abs(src_w - settings.target_width) <= 2
+        and abs(src_h - settings.target_height) <= 2
+    ):
         shutil.copy2(str(source_path), str(output_path))
-        report_fn("Crop skipped — video is already 9:16.")
-        logger.info("Crop stage skipped for '%s' (already 9:16).", source_path.name)
+        report_fn("Crop skipped — video is already 1080x1920 (9:16).")
+        logger.info("Crop stage skipped for '%s' (already exact 9:16).", source_path.name)
     else:
         report_fn("Cropping to 9:16 (active speaker tracking)...")
         crop_to_9_16(
@@ -280,6 +286,7 @@ def build_short_from_clip(
             clip_start_offset=clip_start_offset,
             ken_burns=settings.broll_ken_burns,
             split_screen=settings.broll_split_screen,
+            enable_dynamic_zoom=getattr(settings, "enable_dynamic_zoom", False),
         )
         current_path = overlaid_path
 

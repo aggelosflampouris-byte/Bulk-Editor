@@ -237,6 +237,7 @@ def test_autopilot_transcript_triage_uses_section_download(tmp_path: Path) -> No
         ),
         patch("shorts_engine.services.autopilot.fetch_youtube_transcript", return_value=dummy_segments),
         patch("shorts_engine.services.autopilot.select_clips", return_value=[dummy_candidate]),
+        patch("shorts_engine.services.autopilot.snap_to_silence", side_effect=lambda start_time, end_time, **kw: (start_time, end_time)),
         patch("shorts_engine.services.autopilot.download_video_section", return_value=fake_section_file) as mock_section_down,
         patch("shorts_engine.services.autopilot.download_video") as mock_full_down,
         patch("shorts_engine.services.autopilot.process_url_clip") as mock_process,
@@ -322,3 +323,67 @@ def test_autopilot_youtube_data_api_sourcing(tmp_path: Path) -> None:
         mock_api_fetch.assert_called_once()
         mock_scrape.assert_not_called()
         assert "Selected 1 highly viral videos" in msg2
+
+
+def test_autopilot_enforces_9_16_clean_postprod_and_dynamic_captions(tmp_path: Path) -> None:
+    from shorts_engine.config import Settings
+    from shorts_engine.services.autopilot import run_autopilot_pipeline
+    from shorts_engine.services.channel_analyzer import ViralRecentVideo
+    from shorts_engine.services.clip_selector import ClipCandidate
+
+    # Pass in non-default settings (e.g. enable_vfx=True, subtitle_mode="word", target_width=720)
+    settings = Settings(
+        gemini_api_key="test_key",
+        output_dir=tmp_path,
+        enable_vfx=True,
+        broll_split_screen=True,
+        subtitle_mode="word",
+        target_width=720,
+        target_height=1280,
+    )
+    v1 = _make_sample_video("v_ap_916", view_count=30000, days_old=1)
+    dummy_clip = ClipCandidate(
+        index=1,
+        start_time=5.0,
+        end_time=35.0,
+        hook_summary="Hook",
+        seo=None,
+        broll_query="athens",
+    )
+    fake_video = tmp_path / "video.mp4"
+    fake_video.touch()
+
+    with (
+        patch("shorts_engine.services.autopilot.fetch_youtube_videos", return_value=[v1]),
+        patch(
+            "shorts_engine.services.autopilot.find_viral_recent_videos",
+            return_value=[ViralRecentVideo(video=v1, days_old=1, virality_score=85.0, virality_label="Hot", rvr=2.0)],
+        ),
+        patch("shorts_engine.services.autopilot.fetch_youtube_transcript", return_value=[]),
+        patch("shorts_engine.services.autopilot.download_video", return_value=fake_video),
+        patch("shorts_engine.services.autopilot.transcribe", return_value=[]),
+        patch("shorts_engine.services.autopilot.select_clips", return_value=[dummy_clip]),
+        patch("shorts_engine.services.autopilot.snap_to_silence", side_effect=lambda start_time, end_time, **kw: (start_time, end_time)),
+        patch("shorts_engine.services.autopilot.process_url_clip") as mock_process,
+    ):
+        mock_result = MagicMock()
+        mock_result.error = None
+        mock_result.output_file = tmp_path / "out.mp4"
+        mock_process.return_value = mock_result
+
+        gen = run_autopilot_pipeline("https://youtube.com/@channel", settings, num_videos=1)
+        for _ in gen:
+            pass
+
+        mock_process.assert_called_once()
+        passed_settings = mock_process.call_args[1]["settings"]
+        # Must enforce strict 9:16 (1080x1920)
+        assert passed_settings.target_width == 1080
+        assert passed_settings.target_height == 1920
+        # Must enforce clean post-production (no heavy VFX, no split screens)
+        assert passed_settings.enable_vfx is False
+        assert passed_settings.enable_dynamic_zoom is False
+        assert passed_settings.broll_split_screen is False
+        assert passed_settings.broll_ken_burns is False
+        # Must enforce dynamic fluid captions
+        assert passed_settings.subtitle_mode == "dynamic"
