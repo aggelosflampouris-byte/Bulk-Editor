@@ -80,6 +80,12 @@ _FIRST_PERSON_PLURAL_REPLACEMENTS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\bμας δείχνει\b", re.IGNORECASE), "δείχνει"),
     (re.compile(r"\bμας αποκαλύπτει\b", re.IGNORECASE), "αποκαλύπτει"),
     (re.compile(r"\bβλέπουμε ότι\b", re.IGNORECASE), "αποδεικνύεται ότι"),
+    # Brand pronunciation: ensure Dianisma / Diansma is pronounced in Greek as "Διάνυσμα"
+    (re.compile(r"[@#]?dianismanews\b", re.IGNORECASE), "κανάλι Διάνυσμα"),
+    (re.compile(r"\b(στο|από|για|το|του|των|με|σε)\s+dianisma\b", re.IGNORECASE), r"\1 Διάνυσμα"),
+    (re.compile(r"\b(στο|από|για|το|του|των|με|σε)\s+diansma\b", re.IGNORECASE), r"\1 Διάνυσμα"),
+    (re.compile(r"[@#]?dianisma\b", re.IGNORECASE), "Διάνυσμα"),
+    (re.compile(r"[@#]?diansma\b", re.IGNORECASE), "Διάνυσμα"),
 ]
 
 

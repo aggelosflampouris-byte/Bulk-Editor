@@ -97,7 +97,7 @@ Respond ONLY with a valid JSON object — no markdown, no code fences, no \
 explanation. The JSON must have exactly these keys:
 
 {{
-  "title": "<Greek title, max 60 chars. MUST BE AN ORIGINAL PHRASE that summarizes the core topic. DO NOT USE DIRECT QUOTES. 1-2 strategic emojis allowed>",
+  "title": "<Greek title, 50-85 chars (YouTube max 100). MUST BE A COMPLETE, GRAMMATICALLY FINISHED PHRASE OR QUESTION, NEVER CUT OFF MID-SENTENCE OR MID-WORD. 1-2 strategic emojis allowed>",
   "curiosity_title": "<Greek title focusing purely on the curiosity gap/mystery>",
   "authority_title": "<Greek title focusing on authority, facts, or ultimate solutions>",
   "contrarian_title": "<Greek title focusing on a controversial, edgy, or 'why you are wrong' angle>",
@@ -115,7 +115,7 @@ TITLE & STYLE RULES (CRITICAL):
   * You may use third-person ("Τι αποκαλύπτουν τα στοιχεία...") or curiosity-driven hooks ("Ο λόγος που...").
   * Avoid cheap clickbait, but ensure the title creates a strong curiosity gap.
 - EMOJIS ALLOWED: You MAY use 1 or 2 highly relevant emojis (e.g., 🤯, 🔥, 📈, 🚨) to act as visual pattern interrupts and increase CTR. Do not overuse them.
-- NO DIRECT QUOTES (CRITICAL): The titles MUST be completely original, punchy phrases that act as a hook or summary. They MUST NEVER be sentences copied from the transcript. Max 60 characters.
+- NO DIRECT QUOTES & COMPLETE PHRASES (CRITICAL): The titles MUST be completely original, punchy, self-contained complete phrases or questions (50-85 characters, YouTube max 100). They MUST NEVER be sentences copied verbatim from the transcript. NEVER leave words or sentences half-cut or dangling (e.g., never end on prepositions or conjunctions like 'στις', 'για', 'από', 'και', 'με', 'να').
 
 DESCRIPTION & TAGS RULES:
 - description must follow the 3-part structure:
@@ -345,6 +345,21 @@ def _extract_json_from_response(text: str) -> dict:
         ) from exc
 
 
+def _clean_seo_title(title_text: str, max_chars: int = 100) -> str:
+    """
+    Clean and enforce YouTube's 100-character title limit without cutting words in half.
+    Preserves complete thoughts and avoids dangling punctuation or broken words.
+    """
+    clean = str(title_text or "").strip().strip('"\'')
+    if not clean:
+        return "Ελληνικό Βίντεο"
+    if len(clean) <= max_chars:
+        return clean
+    # Truncate at the last word boundary before max_chars
+    truncated = clean[:max_chars].rsplit(" ", 1)[0].rstrip(" ,;:-—")
+    return truncated if truncated else clean[:max_chars]
+
+
 def _validate_seo_dict(data: dict) -> SeoMetadata:
     """
     Validate the parsed SEO dict and coerce it into a SeoMetadata instance.
@@ -368,9 +383,7 @@ def _validate_seo_dict(data: dict) -> SeoMetadata:
 
     raw_title = str(data["title"])
     clean_title = raw_title.strip()
-    if not clean_title:
-        clean_title = "Ελληνικό Βίντεο"
-    title: str = clean_title[:60]  # Hard-cap to YouTube's limit
+    title: str = _clean_seo_title(clean_title, max_chars=100)
 
     clean_description = str(data["description"]).strip()
     description: str = clean_description[:5000]
@@ -386,12 +399,12 @@ def _validate_seo_dict(data: dict) -> SeoMetadata:
         if cleaned and cleaned not in tags:
             tags.append(cleaned)
 
-    # Parse new advanced SEO fields with safe fallbacks
+    # Parse new advanced SEO fields with safe fallbacks (YouTube max 100 chars, no cut-off words)
     primary_keyword = str(data.get("primary_keyword", "")).strip()
     pinned_comment = str(data.get("pinned_comment", "")).strip()
-    curiosity_title = str(data.get("curiosity_title", "")).strip()[:60]
-    authority_title = str(data.get("authority_title", "")).strip()[:60]
-    contrarian_title = str(data.get("contrarian_title", "")).strip()[:60]
+    curiosity_title = _clean_seo_title(str(data.get("curiosity_title", "")), max_chars=100)
+    authority_title = _clean_seo_title(str(data.get("authority_title", "")), max_chars=100)
+    contrarian_title = _clean_seo_title(str(data.get("contrarian_title", "")), max_chars=100)
 
     # Pad with essential category tags if fewer than 10 tags provided
     _PADDING_TAGS = [
@@ -663,7 +676,7 @@ errors, wrong word boundaries, missing/wrong diacritics (τόνοι), or grammar
 
 Common Whisper Greek errors to ALWAYS correct:
 - Phonetic misinterpretations: Fix words that sound similar but make no sense in the context of the sentence.
-- Repetitions / Hallucinations: Remove unnatural repeating phrases or stuttering if they are clearly AI glitches.
+- Repetitions & Hallucinations (CRITICAL): Eliminate phantom phrases that Whisper hallucinates during background music or pauses (e.g. "Υπότιτλοι:", "Υποτιτλισμός:", "Ευχαριστούμε για την παρακολούθηση", "Κάντε like", "Εγγραφείτε στο κανάλι", "Σας ευχαριστώ πολύ", or repeating stutter loops like "και και και", "της της της"). If a line contains AI hallucinations or broken disjointed words, reconstruct the authentic speech or eliminate the phantom text.
 - Passive verb endings misheard as separate words (e.g. "Χαίρο με" / "χαίρο με" -> "Χαίρομαι" / "χαίρομαι", "σκέφτο με" -> "σκέφτομαι")
 - Verb forms: "είσαστε" -> "είστε", "βλέπωμε" -> "βλέπουμε"
 - "ό,τι" vs "ότι", "πως" vs "πώς", "που" vs "πού"
@@ -691,7 +704,7 @@ Correct EACH line so it reads as accurate, natural, grammatically correct Greek.
 2. PRESERVE THE LINE INDEX: Each output line MUST start with its exact index tag matching the input (e.g. [0] ..., [1] ...).
 3. Do NOT merge or split lines.
 4. Do NOT add unnecessary punctuation; keep subtitles clean and natural.
-5. Do NOT change the speaker's intended meaning, but aggressively fix nonsense and speech-to-text AI glitches.
+5. Do NOT change the speaker's intended meaning, but aggressively clean out AI hallucinations, phantom subtitle text, and speech-to-text glitches.
 6. LOGICAL GUARDRAIL (CRITICAL): Ensure the sentence actually makes sense. If the literal words form a confusing or disjointed sentence, rewrite them slightly to form a coherent, logical statement that fits the context.
 7. If a line is already correct, output it with its tag unchanged.
 8. Output ONLY the tagged lines, nothing else.
@@ -782,10 +795,34 @@ def align_words_with_corrected_text(
                 
         # op == 'delete' means old words were deleted, so we just skip them and don't add to aligned.
 
-    # Ensure the final word ends correctly within segment limits if possible
-    # We don't strictly enforce seg_end here since words might legitimately overrun,
-    # but we could clamp it if needed. For now, trust the relative mapping.
-    
+    # Guarantee strictly monotonic boundaries and clamp within [seg_start, seg_end]
+    if aligned:
+        target_dur = max(0.1, seg_end - seg_start)
+        first_w = aligned[0][0]
+        last_w = max(first_w + 0.05, aligned[-1][1])
+        actual_span = max(0.05, last_w - first_w)
+
+        # If words drift outside the segment window, rescale proportionally to strictly fit [seg_start, seg_end]
+        if last_w > seg_end + 0.08 or first_w < seg_start - 0.08:
+            scale = target_dur / actual_span
+            rescaled: list[tuple[float, float, str]] = []
+            cur_s = seg_start
+            for ws, we, wt in aligned:
+                dur = max(0.04, (we - ws) * scale)
+                cur_e = round(cur_s + dur, 3)
+                rescaled.append((round(cur_s, 3), cur_e, wt))
+                cur_s = cur_e
+            aligned = rescaled
+        else:
+            rescaled = []
+            cur_s = max(seg_start, aligned[0][0])
+            for ws, we, wt in aligned:
+                s = max(cur_s, ws)
+                e = max(s + 0.04, we)
+                rescaled.append((round(s, 3), round(e, 3), wt))
+                cur_s = e
+            aligned = rescaled
+
     return aligned
 
 

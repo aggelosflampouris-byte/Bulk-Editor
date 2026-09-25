@@ -78,20 +78,21 @@ REQUIREMENTS (3-ACT VIRAL EXPLAINER SCRIPT BLUEPRINT):
 CRITICAL PERSPECTIVE & VOICE RULE:
 - NEVER use first-person plural ("εμείς", "μας", "μας είπαν", "βλέπουμε", "έχουμε", "είδαμε", "πάμε να δούμε", "γράψτε μας", "ο καλεσμένος μας").
 - Use objective investigative third-person or direct second-person singular ("δες", "πρόσεξε", "γράψε στα σχόλια").
+- CHANNEL BRAND PRONUNCIATION: The channel '@DianismaNews' is Greek and MUST ALWAYS be spoken as 'Διάνυσμα' or 'στο κανάλι Διάνυσμα' (never write English 'Dianisma' or 'Diansma' in spoken voiceover scripts!).
 
 1. "narration_script": A captivating, authoritative, natural spoken Greek script (50–75 words total, ~30–38 seconds) strictly structured as:
    - ACT 1 (0–5s) PROVOCATIVE PREMISE: Hard-hitting viral hook exposing an economic scandal, counter-intuitive fact, or breaking dispute (e.g., "Οι επίσημες δηλώσεις υποστηρίζουν ότι ο πληθωρισμός πέφτει, αλλά τα στοιχεία στα ράφια των σούπερ μάρκετ σοκάρουν...").
    - ACT 2 (5–28s) VERIFIED DATA REALITY: Rapid-fire breakdown citing concrete numbers, percentages, budget figures, or official records (e.g., "Σύμφωνα με τα επίσημα στοιχεία της ΕΛΣΤΑΤ, οι τιμές στα βασικά τρόφιμα αυξήθηκαν κατά 18%...").
-   - ACT 3 (28–35s) COMMENT-DRIVING POLARIZING QUESTION: Polarizing community debate trigger compelling viewers to comment immediately (e.g., "Υπάρχουν πραγματικές μειώσεις στις τιμές ή μόνο υποσχέσεις υπουργών; Γράψε τη γνώμη σου στα σχόλια!").
+   - ACT 3 (28–35s) COMMENT-DRIVING POLARIZING QUESTION: Polarizing community debate trigger compelling viewers to comment immediately (e.g., "Υπάρχουν πραγματικές μειώσεις στις τιμές ή μόνο υποσχέσεις υπουργών; Γράψε τη γνώμη σου στα σχόλια και κάνε εγγραφή στο κανάλι Διάνυσμα!").
 2. "scenes": An array of 3 to 4 sequential visual scenes. For each scene:
    - "scene_index": integer (1, 2, 3...)
    - "narration_chunk": The exact sentence or portion of the script spoken during this scene.
    - "visual_prompt": A vivid visual description suitable for 9:16 vertical video stock.
    - "pexels_query": A clean 2–4 word English search query for stock video (e.g., "electric power grid", "money inflation bank", "athens greece parliament").
 3. "seo":
-   - "title": High-CTR Greek title with an emoji (max 65 chars).
-   - "description": 2–3 sentence Greek YouTube description with relevant hashtags (#Shorts, #Ελλάδα, #Επικαιρότητα).
-   - "tags": Array of 8–12 relevant tags in Greek and English.
+   - "title": High-CTR complete Greek title with an emoji (50-85 chars, YouTube max 100, complete sentence/phrase, never cut off).
+   - "description": 2–3 sentence Greek YouTube description with relevant hashtags (#Shorts, #Ελλάδα, #Διάνυσμα).
+   - "tags": Array of 12–16 relevant tags in Greek and English.
    - "primary_keyword": The single most impactful Greek keyword in the script.
 
 Return ONLY a valid JSON object matching this schema:
@@ -232,7 +233,13 @@ async def _async_synthesize_voiceover_stream(
     voice: str = _DEFAULT_VOICE,
 ) -> list[TranscriptionSegment]:
     import edge_tts
-    comm = edge_tts.Communicate(text, voice)
+    # Ensure Greek pronunciation for Dianisma / Diansma in speech synthesis
+    clean_speech = re.sub(r"[@#]?dianismanews\b", "κανάλι Διάνυσμα", text, flags=re.IGNORECASE)
+    clean_speech = re.sub(r"\b(στο|από|για|το|του|των|με|σε)\s+dianisma\b", r"\1 Διάνυσμα", clean_speech, flags=re.IGNORECASE)
+    clean_speech = re.sub(r"\b(στο|από|για|το|του|των|με|σε)\s+diansma\b", r"\1 Διάνυσμα", clean_speech, flags=re.IGNORECASE)
+    clean_speech = re.sub(r"[@#]?dianisma\b", "Διάνυσμα", clean_speech, flags=re.IGNORECASE)
+    clean_speech = re.sub(r"[@#]?diansma\b", "Διάνυσμα", clean_speech, flags=re.IGNORECASE)
+    comm = edge_tts.Communicate(clean_speech, voice)
     audio_bytes = bytearray()
     raw_sentences: list[dict[str, Any]] = []
 

@@ -143,7 +143,7 @@ SEO & TITLE RULES (CRITICAL):
   * You may use third-person ("Τι αποκαλύπτουν τα στοιχεία...") or curiosity-driven hooks ("Ο λόγος που...").
   * Avoid cheap clickbait, but ensure the title creates a strong curiosity gap.
 - EMOJIS ALLOWED: You MAY use 1 or 2 highly relevant emojis (e.g., 🤯, 🔥, 📈, 🚨) to act as visual pattern interrupts and increase CTR. Do not overuse them.
-- NO DIRECT QUOTES (CRITICAL): The title and alt_titles MUST be completely original, punchy phrases that act as a hook or summary. They MUST NEVER be sentences copied from the transcript. Max 60 characters.
+- NO DIRECT QUOTES & COMPLETE PHRASES (CRITICAL): The title and alt_titles MUST be completely original, punchy phrases that act as a hook or summary (50-85 chars, YouTube max 100). They MUST NEVER be sentences copied verbatim from the transcript, and must be completely finished thoughts (never cut off mid-word or mid-sentence).
 - description must follow the 3-part structure (Hook -> Value -> CTA + hashtags like #Shorts #Ελλάδα).
 - tags must be a list of 12 to 18 high-performing keywords and search phrases optimized for the YouTube search algorithm (mix of Greek search queries, entities/names mentioned, topic keywords, and TREND-JACKING broad category terms even if not explicitly mentioned). Do NOT include '#' symbol prefix in any tag.
 - broll_query must describe a concrete visual scene, not an abstract concept.

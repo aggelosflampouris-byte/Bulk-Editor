@@ -260,3 +260,48 @@ def test_extract_speech_audio(mock_run: MagicMock, tmp_path: Path) -> None:
     assert "-ac" in cmd
     assert "1" in cmd
     assert "dynaudnorm" in cmd[cmd.index("-af") + 1]
+
+
+def test_is_hallucinated_text() -> None:
+    from shorts_engine.services.transcriber import is_hallucinated_text
+
+    # Standard Greek Whisper hallucinations
+    assert is_hallucinated_text("Υπότιτλοι:") is True
+    assert is_hallucinated_text("Ευχαριστούμε που παρακολουθήσατε") is True
+    assert is_hallucinated_text("Κάντε like και subscribe") is True
+    assert is_hallucinated_text("Subtitles by") is True
+
+    # Repetition stutter loops
+    assert is_hallucinated_text("και και και και") is True
+    assert is_hallucinated_text("της της της της") is True
+
+    # Silence glitch (long duration with 1 character)
+    assert is_hallucinated_text("α", duration=3.5) is True
+
+    # Authentic speech
+    assert is_hallucinated_text("Οι λογαριασμοί ρεύματος αυξήθηκαν κατακόρυφα.") is False
+    assert is_hallucinated_text("Σύμφωνα με τα επίσημα στοιχεία της ΕΛΣΤΑΤ.") is False
+
+
+def test_dynamic_subtitle_chunking_avoids_dangling_particles() -> None:
+    from shorts_engine.services.transcriber import TranscriptionSegment, segments_to_ass
+
+    # Sentence where "των" would dangle if blindly cut at 5 words
+    words = [
+        (0.0, 0.4, "όμιλοι"),
+        (0.4, 0.9, "θησαυρίζουν"),
+        (0.9, 1.2, "στις"),
+        (1.2, 1.6, "πλάτες"),
+        (1.6, 1.9, "των"),
+        (1.9, 2.5, "καταναλωτών"),
+    ]
+    seg = TranscriptionSegment(start=0.0, end=2.5, text="όμιλοι θησαυρίζουν στις πλάτες των καταναλωτών", words=words)
+    ass_out = segments_to_ass([seg], subtitle_mode="dynamic")
+    dialogues = [line for line in ass_out.splitlines() if line.startswith("Dialogue:")]
+    assert len(dialogues) > 0
+    # First dialogue line should not have "των" as its last word
+    first_line_text = dialogues[0].split(",")[-1]
+    # Strip ASS tags
+    plain_words = [w for w in first_line_text.replace(r"{\rHighlightBox}", "").replace(r"{\rDefault}", "").split() if w]
+    assert plain_words[-1] != "των"
+

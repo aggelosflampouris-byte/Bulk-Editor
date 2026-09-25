@@ -356,4 +356,51 @@ def test_correct_transcript_greek_acronym_sense_checking(monkeypatch: pytest.Mon
     assert "ΔΕΗ" in corrected[2].text
 
 
+def test_clean_seo_title_preserves_complete_titles_under_100_chars() -> None:
+    from shorts_engine.services.seo_generator import _clean_seo_title
+
+    # 73-character title that used to be chopped at 60 chars ("στις πλάτ")
+    title_73 = "ΒΟΜΒΑ για το ρεύμα: Κάποιοι παντελονιάζουν 7,5 ΔΙΣ στις πλάτες των καταναλωτών"
+    cleaned = _clean_seo_title(title_73, max_chars=100)
+    assert cleaned == title_73
+    assert "πλάτες" in cleaned
+    assert not cleaned.endswith("πλάτ")
+
+
+def test_clean_seo_title_truncates_at_word_boundary_when_exceeding_100_chars() -> None:
+    from shorts_engine.services.seo_generator import _clean_seo_title
+
+    long_title = "Αποκάλυψη-σοκ για τα τιμολόγια ρεύματος στην Ελλάδα: Πώς οι μεγάλοι όμιλοι αποκομίζουν δισεκατομμύρια ευρώ κέρδη εις βάρος των πολιτών"
+    cleaned = _clean_seo_title(long_title, max_chars=100)
+    assert len(cleaned) <= 100
+    # Must end on a complete word, not mid-word
+    assert not cleaned.endswith((" ", "-", "—", ","))
+    last_word = cleaned.split()[-1]
+    assert last_word in long_title
+
+
+def test_align_words_with_corrected_text_clamps_to_segment_bounds() -> None:
+    from shorts_engine.services.seo_generator import align_words_with_corrected_text
+
+    original_words = [
+        (0.0, 1.0, "γεια"),
+        (1.0, 2.0, "σας"),
+    ]
+    # Corrected text has more words inserted
+    corrected_text = "γεια σας κύριες και κύριοι"
+    aligned = align_words_with_corrected_text(
+        original_words=original_words,
+        corrected_text=corrected_text,
+        seg_start=0.0,
+        seg_end=2.0,
+    )
+    assert len(aligned) == 5
+    assert aligned[0][0] >= 0.0
+    assert aligned[-1][1] <= 2.05
+    # Strictly monotonic
+    for i in range(1, len(aligned)):
+        assert aligned[i][0] >= aligned[i - 1][0]
+
+
+
 

@@ -172,3 +172,17 @@ def test_sanitize_voiceover_script_strips_first_person_plural() -> None:
     assert "δες" in cleaned2
     assert "μας είπε" not in cleaned2
 
+
+def test_sanitize_voiceover_script_pronounces_dianisma_in_greek() -> None:
+    raw_script = "Κάντε εγγραφή στο @DianismaNews και δείτε περισσότερα στο Dianisma!"
+    cleaned = sanitize_voiceover_script(raw_script)
+    assert "@DianismaNews" not in cleaned
+    assert "Dianisma" not in cleaned
+    assert "Διάνυσμα" in cleaned
+
+    raw_script2 = "Αποκάλυψη από το diansma για την ακρίβεια."
+    cleaned2 = sanitize_voiceover_script(raw_script2)
+    assert "diansma" not in cleaned2
+    assert "Διάνυσμα" in cleaned2
+
+

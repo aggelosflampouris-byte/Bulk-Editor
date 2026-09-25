@@ -122,6 +122,7 @@ CRITICAL VOICE & PERSPECTIVE RULE:
 - The AI voiceover must NEVER use first-person plural ("εμείς", "μας", "μας είπαν", "βλέπουμε", "έχουμε", "είδαμε", "πάμε να δούμε", "γράψτε μας", "ο καλεσμένος μας", "ο καλεσμένος").
 - NEVER refer to the on-camera speaker as "ο καλεσμένος μας" or "ο καλεσμένος". Refer to the speaker by their name/title, or neutrally as "ο ομιλητής", "στη δήλωσή του", "η τοποθέτηση", or direct investigative commentary.
 - In the outro, use second-person singular engagement ("Ποια είναι η άποψή σου; Γράψε στα σχόλια και κάνε εγγραφή!" or "Εσύ τι πιστεύεις; Γράψε στα σχόλια!"), NEVER "γράψτε μας".
+- CHANNEL BRAND PRONUNCIATION: The channel '@DianismaNews' is Greek and MUST ALWAYS be spoken as 'Διάνυσμα' or 'στο κανάλι Διάνυσμα' (never write English '@DianismaNews', 'Dianisma', or 'Diansma' in spoken voiceover scripts!).
 
 ACT 1: PROVOCATIVE PREMISE (Opening Hook, 3–5s, 10–18 words in spoken Greek):
 - A razor-sharp teaser framing the controversy or scandal, challenging the premise, and hyping the speaker's statement (e.g. "Αυτή η δήλωση στη Βουλή για τα οικονομικά άναψε φωτιές. Δείτε τι υποστήριξε ο...").
@@ -130,7 +131,7 @@ ACT 2: VERIFIED DATA REALITY & CONTRASTING FACTS (Commentary Breakdown, 8–14s,
 - An investigative fact-checking breakdown that steps in directly after the speaker, citing concrete numbers, percentages, budget sums, or official records from the research dossier (e.g. "Όμως τα επίσημα στοιχεία δείχνουν κάτι εντελώς διαφορετικό: [συγκεκριμένοι αριθμοί/στοιχεία]...").
 
 ACT 3: COMMENT-DRIVING POLARIZING QUESTION (Closing Outro, 4–6s, 10–18 words in spoken Greek):
-- A polarizing closing verdict and community debate trigger designed to maximize comment volume (e.g. "Εσύ πιστεύεις τα λόγια ή τα επίσημα νούμερα; Γράψε στα σχόλια και κάνε εγγραφή στο @DianismaNews!").
+- A polarizing closing verdict and community debate trigger designed to maximize comment volume (e.g. "Εσύ πιστεύεις τα λόγια ή τα επίσημα νούμερα; Γράψε στα σχόλια και κάνε εγγραφή στο κανάλι Διάνυσμα!").
 
 4. "scenes": 3 sequential 9:16 visual scenes with English Pexels video search queries matching each AI beat.
 5. "seo": High-CTR metadata.
@@ -167,9 +168,9 @@ Return ONLY a valid JSON object matching this schema:
     }}
   ],
   "seo": {{
-    "title": "string",
-    "description": "string",
-    "tags": ["string"],
+    "title": "Complete, punchy Greek title, 50-85 chars, finished thought, never cut off",
+    "description": "Engaging description with Hook, Value breakdown, Call to Action, and hashtags #Shorts #Ελλάδα #Διάνυσμα",
+    "tags": ["12-16 high-volume Greek search tags"],
     "primary_keyword": "string"
   }}
 }}

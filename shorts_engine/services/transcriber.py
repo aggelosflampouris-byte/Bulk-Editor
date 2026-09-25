@@ -57,6 +57,65 @@ class TranscriptionSegment:
         return f"TranscriptionSegment(start={self.start:.2f}, end={self.end:.2f}, text={self.text!r})"
 
 
+# Common Whisper hallucinations in Greek during pauses, silence, or background music
+_KNOWN_HALLUCINATIONS: frozenset[str] = frozenset({
+    "υπότιτλοι",
+    "υπότιτλοι:",
+    "υποτιτλισμός",
+    "υποτιτλισμός:",
+    "ευχαριστούμε που παρακολουθήσατε",
+    "ευχαριστώ που παρακολουθήσατε",
+    "ευχαριστούμε για την παρακολούθηση",
+    "ευχαριστώ για την παρακολούθηση",
+    "ευχαριστούμε πολύ για την παρακολούθηση",
+    "κάντε like και subscribe",
+    "κάντε like",
+    "κάντε εγγραφή",
+    "κάντε εγγραφή στο κανάλι",
+    "εγγραφείτε στο κανάλι",
+    "μην ξεχάσετε να κάνετε εγγραφή",
+    "τα λέμε στο επόμενο βίντεο",
+    "τα λέμε στο επόμενο",
+    "σας ευχαριστώ πολύ",
+    "σας ευχαριστούμε",
+    "συνεχίζεται",
+    "συνεχίζεται...",
+    "subtitles by",
+    "thank you for watching",
+    "thanks for watching",
+    "subscribe to our channel",
+})
+
+# Words that should not hang alone at the end of a subtitle screen
+_DANGLING_SUBTITLE_END_WORDS: frozenset[str] = frozenset({
+    "των", "της", "του", "τον", "την", "το", "τα", "τις", "τους",
+    "στις", "στους", "στο", "στη", "στα", "στον", "στην", "σε",
+    "για", "από", "με", "και", "κι", "να", "ότι", "πως", "προς",
+})
+
+
+def is_hallucinated_text(text: str, duration: float = 0.0) -> bool:
+    """
+    Detect whether a speech segment is a Whisper hallucination or repetitive AI glitch.
+    """
+    clean = text.translate(str.maketrans("", "", string.punctuation + "…«»")).lower().strip()
+    if not clean:
+        return True
+    if clean in _KNOWN_HALLUCINATIONS:
+        return True
+    words = clean.split()
+    if len(words) >= 3:
+        # Check if entire segment is just the same word repeated (e.g. "και και και")
+        if len(set(words)) == 1:
+            return True
+        # Check if consecutive repeating words dominate (e.g. "και και ναι ναι")
+        repeats = sum(1 for i in range(1, len(words)) if words[i] == words[i - 1])
+        if repeats >= 2 and (repeats / len(words)) >= 0.4:
+            return True
+    # If duration is long (> 2.5s) with only 1-2 characters, it's silence hallucination
+    return bool(duration > 2.5 and len(clean) <= 2)
+
+
 # Domain-specific Greek vocabulary injected into the Whisper initial_prompt
 # to anchor the decoder to the correct vocabulary before transcription starts.
 _DOMAIN_PROMPTS: dict[str, str] = {
@@ -280,7 +339,12 @@ def transcribe(
 
     segments: list[TranscriptionSegment] = []
     for seg in raw_segments:
-        if not seg.text.strip():
+        seg_text = seg.text.strip()
+        if not seg_text:
+            continue
+        seg_dur = max(0.0, seg.end - seg.start)
+        if is_hallucinated_text(seg_text, seg_dur):
+            logger.info("Discarding hallucinated transcript segment [%.2f-%.2f]: %s", seg.start, seg.end, seg_text)
             continue
         # Extract word-level timing when available
         word_data: list[tuple[float, float, str]] | None = None
@@ -505,6 +569,19 @@ def segments_to_ass(
                     break
                 chunk.append(curr_w)
                 idx += 1
+
+            # Avoid leaving dangling Greek articles/prepositions alone at the end of a subtitle chunk
+            if len(chunk) > 1 and idx < len(all_words):
+                last_word_clean = chunk[-1][2].lower().strip(".,!?:;…\"'«»")
+                if last_word_clean in _DANGLING_SUBTITLE_END_WORDS:
+                    next_w = all_words[idx]
+                    tentative_len = sum(len(w[2]) for w in chunk) + len(next_w[2]) + 1
+                    if tentative_len <= 38 and (next_w[0] - chunk[-1][1]) <= 0.35:
+                        chunk.append(next_w)
+                        idx += 1
+                    else:
+                        chunk.pop()
+                        idx -= 1
 
             # Compute strictly non-overlapping, strictly monotonic active intervals for each word in chunk
             chunk_intervals: list[tuple[float, float]] = []
