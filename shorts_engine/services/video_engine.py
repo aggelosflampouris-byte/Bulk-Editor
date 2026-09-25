@@ -892,3 +892,129 @@ def mix_background_music(
     )
     return output_path
 
+
+def apply_pacing_pattern_interrupts(
+    video_path: Path,
+    output_path: Path,
+    cut_interval: float = 3.5,
+    zoom_factor: float = 1.12,
+    target_width: int = 1080,
+    target_height: int = 1920,
+) -> Path:
+    """
+    Quso.ai Algorithmic Pacing & Pattern-Interrupt Controller.
+
+    Enforces the YouTube Shorts <= 3.5s visual stillness limit on monologue or
+    continuous talking-head shots. Rhythmically toggles between normal framing
+    and dynamic 1.10x–1.14x punch-zoom cuts every `cut_interval` seconds,
+    preventing viewer drop-off caused by static camera shots.
+
+    Args:
+        video_path:    Input 9:16 video clip.
+        output_path:   Destination path for the paced video.
+        cut_interval:  Seconds before triggering an angle/scale switch (default 3.5s).
+        zoom_factor:   Punch-zoom magnification (default 1.12 = +12% scale).
+        target_width:  Target canvas width (default 1080).
+        target_height: Target canvas height (default 1920).
+
+    Returns:
+        The written output_path.
+    """
+    if not video_path.is_file():
+        raise FileNotFoundError(f"Input video not found: {video_path}")
+
+    duration = probe_duration(video_path)
+    if duration <= cut_interval:
+        # Too short for pattern interrupts; pass-through
+        import shutil as _shutil
+        _shutil.copy2(str(video_path), str(output_path))
+        return output_path
+
+    # Generate rhythmic segments
+    segments: list[tuple[float, float, bool]] = []
+    curr = 0.0
+    is_punched = False
+
+    while curr < duration:
+        nxt = min(curr + cut_interval, duration)
+        # Avoid creating a tiny flash cut at the very end (< 1.2s)
+        if duration - nxt < 1.2:
+            nxt = duration
+        segments.append((curr, nxt, is_punched))
+        is_punched = not is_punched
+        curr = nxt
+
+    if len(segments) <= 1:
+        import shutil as _shutil
+        _shutil.copy2(str(video_path), str(output_path))
+        return output_path
+
+    filter_chains: list[str] = []
+    concat_tags: list[str] = []
+
+    # Ensure integer dimensions for punch-zoom
+    z_w = round(target_width * zoom_factor)
+    z_h = round(target_height * zoom_factor)
+    if z_w % 2 != 0:
+        z_w += 1
+    if z_h % 2 != 0:
+        z_h += 1
+
+    for i, (st, et, punched) in enumerate(segments):
+        tag = f"p{i}"
+        concat_tags.append(f"[{tag}]")
+        if punched:
+            # Punch zoom: Scale up, center-crop to target, ensure 1:1 SAR
+            chain = (
+                f"[0:v]trim={st:.3f}:{et:.3f},setpts=PTS-STARTPTS,"
+                f"scale={z_w}:{z_h},"
+                f"crop={target_width}:{target_height}:(in_w-{target_width})/2:(in_h-{target_height})/2,"
+                f"setsar=1[{tag}]"
+            )
+        else:
+            # Normal framing: Scale preserving ratio, pad to canvas, setsar=1
+            chain = (
+                f"[0:v]trim={st:.3f}:{et:.3f},setpts=PTS-STARTPTS,"
+                f"scale={target_width}:{target_height}:force_original_aspect_ratio=decrease,"
+                f"pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2,"
+                f"setsar=1[{tag}]"
+            )
+        filter_chains.append(chain)
+
+    concat_inputs = "".join(concat_tags)
+    filter_chains.append(f"{concat_inputs}concat=n={len(segments)}:v=1:a=0[v_out]")
+
+    has_audio = probe_has_audio(video_path)
+    audio_map_args: list[str]
+    if has_audio:
+        norm_af = "aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo"
+        filter_chains.append(f"[0:a]{norm_af}[a_out]")
+        audio_map_args = ["-map", "[a_out]", "-c:a", "aac", "-b:a", "128k"]
+    else:
+        audio_map_args = ["-an"]
+
+    filter_complex = ";".join(filter_chains)
+
+    hw_input_args = get_hwaccel_input_args()
+    cmd = [
+        "ffmpeg", "-y",
+        *hw_input_args,
+        "-i", str(video_path),
+        "-filter_complex", filter_complex,
+        "-map", "[v_out]",
+        *audio_map_args,
+        *get_encoder_args(crf_equivalent=23),
+        *get_pix_fmt_args(),
+        "-movflags", "+faststart",
+        str(output_path),
+    ]
+
+    run_ffmpeg(cmd)
+
+    logger.info(
+        "Applied pacing pattern interrupts (%d segments, cut_interval=%.1fs) on '%s' → '%s'.",
+        len(segments), cut_interval, video_path.name, output_path.name,
+    )
+    return output_path
+
+

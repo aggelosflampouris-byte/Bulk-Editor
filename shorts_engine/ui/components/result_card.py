@@ -116,6 +116,30 @@ def render_result_card(result: ProcessingResult, index: int) -> None:
                         unsafe_allow_html=True,
                     )
 
+                # Show Inflowave retention audit if available
+                if getattr(result, "retention_audit", None):
+                    audit = result.retention_audit
+                    grade_color = "#10b981" if audit.grade in ("S", "A") else ("#f59e0b" if audit.grade == "B" else "#ef4444")
+                    st.markdown(
+                        f'<div style="margin:0.5rem 0;padding:0.6rem 0.85rem;'
+                        f'background:#18181b;border:1px solid #27272a;border-left:4px solid {grade_color};border-radius:6px;">'
+                        f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+                        f'<span style="font-weight:700;color:#f4f4f5;font-size:0.88rem;">⚡ Retention Score: {audit.score}/100</span>'
+                        f'<span style="background:{grade_color}22;color:{grade_color};font-weight:700;padding:2px 8px;border-radius:4px;font-size:0.8rem;">Grade {audit.grade}</span>'
+                        f'</div>'
+                        f'<div style="margin-top:0.35rem;font-size:0.75rem;color:#a1a1aa;display:flex;gap:12px;">'
+                        f'<span>🎯 Hook Speed: <b>{audit.hook_speed_score}/100</b> ({audit.intro_silence_seconds:.2f}s)</span>'
+                        f'<span>⏱️ Pacing: <b>{audit.pacing_cadence_score}/100</b> ({audit.words_per_second:.1f} wps)</span>'
+                        f'<span>🔥 Curiosity: <b>{audit.curiosity_gap_score}/100</b></span>'
+                        f'</div>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+                    if audit.actionable_recommendations:
+                        with st.expander("🔍 Retention & Pacing Diagnostics", expanded=False):
+                            for rec in audit.actionable_recommendations:
+                                st.markdown(f"- {rec}")
+
                 # Show what B-roll query was searched so the user can verify
                 if result.broll_query:
                     st.markdown(

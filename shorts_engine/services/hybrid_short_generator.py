@@ -51,6 +51,7 @@ try:
         write_ass_file,
     )
     from services.video_engine import (
+        apply_pacing_pattern_interrupts,
         burn_subtitles,
         crop_to_9_16,
         mix_background_music,
@@ -83,6 +84,7 @@ except ImportError:
         write_ass_file,
     )
     from shorts_engine.services.video_engine import (
+        apply_pacing_pattern_interrupts,
         burn_subtitles,
         crop_to_9_16,
         mix_background_music,
@@ -106,10 +108,17 @@ FACT-CHECKING & DEEP RESEARCH DOSSIER:
 {research_context}
 
 YOUR TASK:
-Create a dynamic, journalistic BACK-AND-FORTH dialogue between the AI Journalist Voice and the Speaker Clip in natural, punchy Greek:
-1. "opening_hook": A razor-sharp 3–5s teaser (10–18 words in spoken Greek) that frames the controversy and hypes the speaker's statement (e.g. "Αυτή η δήλωση στη Βουλή για τα οικονομικά άναψε φωτιές. Δείτε τι υποστήριξε ο...").
-2. "commentary_script": An investigative fact-checking breakdown (8–14s, 25–40 words in spoken Greek) that steps in AFTER the speaker speaks, citing concrete facts, figures, or counter-arguments from the research dossier (e.g. "Όμως τα επίσημα στοιχεία δείχνουν κάτι εντελώς διαφορετικό: [συγκεκριμένοι αριθμοί/στοιχεία]...").
-3. "outro_script": A punchy closing verdict (4–6s, 10–18 words in spoken Greek) challenging the viewer (e.g. "Εσείς πιστεύετε τα λόγια ή τα επίσημα νούμερα; Γράψτε μας στα σχόλια και κάντε εγγραφή στο @DianismaNews!").
+Create a dynamic, journalistic BACK-AND-FORTH dialogue between the AI Journalist Voice and the Speaker Clip in natural, punchy Greek, strictly adhering to the 3-ACT VIRAL EXPLAINER SCRIPT BLUEPRINT:
+
+ACT 1: PROVOCATIVE PREMISE (Opening Hook, 3–5s, 10–18 words in spoken Greek):
+- A razor-sharp teaser framing the controversy or scandal, challenging the premise, and hyping the speaker's statement (e.g. "Αυτή η δήλωση στη Βουλή για τα οικονομικά άναψε φωτιές. Δείτε τι υποστήριξε ο...").
+
+ACT 2: VERIFIED DATA REALITY & CONTRASTING FACTS (Commentary Breakdown, 8–14s, 25–40 words in spoken Greek):
+- An investigative fact-checking breakdown that steps in directly after the speaker, citing concrete numbers, percentages, budget sums, or official records from the research dossier (e.g. "Όμως τα επίσημα στοιχεία δείχνουν κάτι εντελώς διαφορετικό: [συγκεκριμένοι αριθμοί/στοιχεία]...").
+
+ACT 3: COMMENT-DRIVING POLARIZING QUESTION (Closing Outro, 4–6s, 10–18 words in spoken Greek):
+- A polarizing closing verdict and community debate trigger designed to maximize comment volume (e.g. "Εσείς πιστεύετε τα λόγια ή τα επίσημα νούμερα; Γράψτε μας στα σχόλια και κάντε εγγραφή στο @DianismaNews!").
+
 4. "scenes": 3 sequential 9:16 visual scenes with English Pexels video search queries matching each AI beat.
 5. "seo": High-CTR metadata.
 
@@ -464,6 +473,10 @@ def build_hybrid_short(
         # Slice Bite 1
         b1_raw = tmp_dir / f"hybrid_spk_b1_{uid}.mp4"
         slice_video(masked_speaker, start_time=0.0, end_time=best_split_time, output_path=b1_raw)
+        if best_split_time > 3.5:
+            b1_paced = tmp_dir / f"hybrid_spk_b1_paced_{uid}.mp4"
+            apply_pacing_pattern_interrupts(b1_raw, b1_paced, cut_interval=3.5, zoom_factor=1.12, target_width=target_w, target_height=target_h)
+            b1_raw = b1_paced
         b1_segs = slice_segments(rebased_segs, 0.0, best_split_time)
         b1_sub = b1_raw
         if b1_segs:
@@ -494,6 +507,10 @@ def build_hybrid_short(
         # Slice Bite 2
         b2_raw = tmp_dir / f"hybrid_spk_b2_{uid}.mp4"
         slice_video(masked_speaker, start_time=best_split_time, end_time=total_spk_dur, output_path=b2_raw)
+        if (total_spk_dur - best_split_time) > 3.5:
+            b2_paced = tmp_dir / f"hybrid_spk_b2_paced_{uid}.mp4"
+            apply_pacing_pattern_interrupts(b2_raw, b2_paced, cut_interval=3.5, zoom_factor=1.12, target_width=target_w, target_height=target_h)
+            b2_raw = b2_paced
         b2_segs_raw = slice_segments(rebased_segs, best_split_time, total_spk_dur)
         # Rebase timestamps starting at 0.0
         b2_segs = [
@@ -536,12 +553,17 @@ def build_hybrid_short(
 
     else:
         # Single Speaker Bite structure: [Beat 1: Hook] -> [Beat 2: Speaker] -> [Beat 3: Commentary] -> [Beat 4: Outro]
-        spk_sub = masked_speaker
+        speaker_for_sub = masked_speaker
+        if total_spk_dur > 3.5:
+            spk_paced = tmp_dir / f"hybrid_spk_full_paced_{uid}.mp4"
+            apply_pacing_pattern_interrupts(masked_speaker, spk_paced, cut_interval=3.5, zoom_factor=1.12, target_width=target_w, target_height=target_h)
+            speaker_for_sub = spk_paced
+        spk_sub = speaker_for_sub
         if rebased_segs:
             ass_spk = tmp_dir / f"hybrid_spk_full_{uid}.ass"
             write_ass_file(rebased_segs, ass_spk, primary_keyword=None, subtitle_position=getattr(settings, "subtitle_position", "lower_third"), subtitle_mode="dynamic")
             spk_sub_dest = tmp_dir / f"hybrid_spk_full_sub_{uid}.mp4"
-            burn_subtitles(masked_speaker, ass_spk, spk_sub_dest)
+            burn_subtitles(speaker_for_sub, ass_spk, spk_sub_dest)
             if spk_sub_dest.is_file():
                 spk_sub = spk_sub_dest
         timeline_parts.append(spk_sub)

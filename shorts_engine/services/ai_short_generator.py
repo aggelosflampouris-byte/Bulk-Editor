@@ -74,11 +74,11 @@ SOURCE TOPIC:
 Title: {topic_title}
 Context / Background: {topic_context}
 
-REQUIREMENTS:
-1. "narration_script": A captivating, authoritative, natural spoken Greek script (50–75 words total, ~30–38 seconds).
-   - Sentence 1: Hard-hitting viral hook (e.g., "Αυτό που συμβαίνει με τη ΔΕΗ δεν έχει προηγούμενο...")
-   - Sentences 2–4: Core facts, numbers, and political/economic context.
-   - Final sentence: Strong closing thought or call-to-action ("Εσείς τι πιστεύετε; Γράψτε μας στα σχόλια!").
+REQUIREMENTS (3-ACT VIRAL EXPLAINER SCRIPT BLUEPRINT):
+1. "narration_script": A captivating, authoritative, natural spoken Greek script (50–75 words total, ~30–38 seconds) strictly structured as:
+   - ACT 1 (0–5s) PROVOCATIVE PREMISE: Hard-hitting viral hook exposing an economic scandal, counter-intuitive fact, or breaking dispute (e.g., "Μας είπαν ότι ο πληθωρισμός πέφτει, αλλά τα στοιχεία στα ράφια των σούπερ μάρκετ σοκάρουν...").
+   - ACT 2 (5–28s) VERIFIED DATA REALITY: Rapid-fire breakdown citing concrete numbers, percentages, budget figures, or official records (e.g., "Σύμφωνα με τα επίσημα στοιχεία της ΕΛΣΤΑΤ, οι τιμές στα βασικά τρόφιμα αυξήθηκαν κατά 18%...").
+   - ACT 3 (28–35s) COMMENT-DRIVING POLARIZING QUESTION: Polarizing community debate trigger compelling viewers to comment immediately (e.g., "Εσείς βλέπετε μειώσεις στο καλάθι σας ή μόνο στα λόγια των υπουργών; Γράψτε μας τη γνώμη σας στα σχόλια!").
 2. "scenes": An array of 3 to 4 sequential visual scenes. For each scene:
    - "scene_index": integer (1, 2, 3...)
    - "narration_chunk": The exact sentence or portion of the script spoken during this scene.

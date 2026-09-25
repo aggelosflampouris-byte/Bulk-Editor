@@ -41,6 +41,7 @@ from services.clip_selector import ClipCandidate, select_clips
 from services.compositor import compose_timeline
 from services.downloader import download_video, probe_url_metadata
 from services.face_tracker import track_active_speaker
+from services.logic_guardrail import RetentionAudit, audit_retention_signals
 from services.ocr_engine import OCREngine
 from services.seo_generator import (
     SeoMetadata,
@@ -106,6 +107,8 @@ class ProcessingResult:
     clip_index: int | None = None
     # Source YouTube video ID if known
     source_video_id: str | None = None
+    # Inflowave-inspired hook & retention audit diagnostic
+    retention_audit: RetentionAudit | None = None
 
 
 # ── Shared Stage Helpers ──────────────────────────────────────────────────────
@@ -452,7 +455,21 @@ def process_single(
         result.seo = seo
         result.success = True
         result.warnings = warnings
-        
+
+        try:
+            from services.video_engine import probe_duration
+            out_dur = probe_duration(final_output)
+            result.retention_audit = audit_retention_signals(
+                segments=segments,
+                text=transcript_text,
+                duration=out_dur,
+                hook_summary=seo.title if seo else "",
+                title=seo.title if seo else "",
+            )
+            result.virality_score = round(result.retention_audit.score / 10.0, 1)
+        except (OSError, ValueError, RuntimeError, TypeError, KeyError) as exc:
+            logger.warning("Retention audit failed for single video: %s", exc)
+
         try:
             log_project_history(result, run_output_dir)
         except Exception as e:
@@ -563,6 +580,10 @@ def _transcribe_and_select(
                 hook_summary=cand.hook_summary,
                 seo=cand.seo,
                 broll_query=cand.broll_query,
+                emotional_intensity=cand.emotional_intensity,
+                standalone_narrative=cand.standalone_narrative,
+                hook_potency=cand.hook_potency,
+                speech_velocity=cand.speech_velocity,
             )
         )
 
@@ -854,6 +875,21 @@ def process_url_clip(
         result.seo = clip.seo
         result.success = True
         result.warnings = warnings
+        result.virality_score = clip.virality_score
+        result.hook_text = clip.hook_summary
+
+        try:
+            from services.video_engine import probe_duration
+            actual_dur = probe_duration(final_output)
+            result.retention_audit = audit_retention_signals(
+                segments=clip_segments,
+                text=clip_transcript,
+                duration=actual_dur,
+                hook_summary=clip.hook_summary,
+                title=clip.seo.title if clip.seo else "",
+            )
+        except (OSError, ValueError, RuntimeError, TypeError, KeyError) as exc:
+            logger.warning("Retention audit failed for clip %d: %s", clip.index, exc)
 
         try:
             log_project_history(result, run_output_dir)

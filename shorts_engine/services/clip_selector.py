@@ -78,6 +78,11 @@ or analysis. Zero rambling or fluff.
 - 35–50s PUNCHLINE / RESOLUTION: End cleanly on a conclusive takeaway, punchline, \
 or clear resolution. Never cut mid-sentence or mid-thought.
 - LOGICAL COHERENCE GUARDRAIL (CRITICAL): The chosen clip MUST make 100% logical sense as a standalone story. It must not contain disjointed, confusing, or skipping thoughts. Do not select clips where the speaker's sentences trail off into gibberish or nonsense. The narrative must flow perfectly from start to finish.
+- WAYIN MULTI-SIGNAL VIRALITY EVALUATION (1–10 scale per axis):
+  * "emotional_intensity": (1-10) Degree of high-arousal emotion (righteous anger, astonishment, passionate conviction, humor, or sharp contrast).
+  * "standalone_narrative": (1-10) Self-contained completeness. The viewer must fully grasp the story without having seen any preceding or following minutes. NEVER choose clips with standalone_narrative < 6!
+  * "hook_potency": (1-10) Hook magnetism in the first 0–3 seconds (curiosity gap, provocative question, or counter-intuitive premise).
+  * "speech_velocity": (1-10) Delivery tempo and rhythmic energy (fluid, punchy cadence vs sluggish, low-energy monologue).
 - NICHE TEMPLATE CONTEXT: {niche_context}
 
 CONSTRAINTS:
@@ -110,6 +115,10 @@ is an array. Each array element must have exactly these keys:
       "end_time":   <float total seconds or "MM:SS" string>,
       "hook_summary": "<1–2 sentence English explanation of why this clip's hook \
 and structure will maximize retention and CTR on YouTube Shorts>",
+      "emotional_intensity": <integer 1 to 10>,
+      "standalone_narrative": <integer 1 to 10>,
+      "hook_potency": <integer 1 to 10>,
+      "speech_velocity": <integer 1 to 10>,
       "seo": {{
         "title": "<Greek title, max 60 chars. MUST BE AN ORIGINAL PHRASE that summarizes the core topic. DO NOT USE DIRECT QUOTES. 1-2 strategic emojis allowed>",
         "curiosity_title": "<Greek title focusing purely on the curiosity gap/mystery>",
@@ -162,6 +171,25 @@ class ClipCandidate:
     hook_summary: str      # why this clip will perform well (English)
     seo: SeoMetadata       # per-clip Greek SEO metadata
     broll_query: str       # English Pexels query for this clip
+    emotional_intensity: int = 7    # 1 to 10: emotional spike / passion / humor
+    standalone_narrative: int = 8   # 1 to 10: self-contained narrative completeness
+    hook_potency: int = 8           # 1 to 10: opening curiosity / hook magnetism
+    speech_velocity: int = 7        # 1 to 10: speech tempo and cadence dynamism
+
+    @property
+    def virality_score(self) -> float:
+        """
+        Wayin Multi-Signal 4-Axis Virality Score (1.0 to 10.0).
+        Calculates weighted composite of emotional spike (30%),
+        standalone narrative (30%), hook potency (25%), and speech velocity (15%).
+        """
+        return round(
+            (self.emotional_intensity * 0.30
+             + self.standalone_narrative * 0.30
+             + self.hook_potency * 0.25
+             + self.speech_velocity * 0.15),
+            1,
+        )
 
     @property
     def duration(self) -> float:
@@ -335,6 +363,25 @@ def _parse_single_clip(
     hook_summary: str = str(raw.get("hook_summary") or "").strip() or "No hook summary provided."
     broll_query: str = str(raw.get("broll_query") or "").strip() or "people talking"
 
+    def _parse_axis_score(val: object, default: int = 7) -> int:
+        try:
+            return max(1, min(10, round(float(str(val)))))
+        except (ValueError, TypeError):
+            return default
+
+    emotional_intensity = _parse_axis_score(raw.get("emotional_intensity"), default=7)
+    standalone_narrative = _parse_axis_score(raw.get("standalone_narrative"), default=8)
+    hook_potency = _parse_axis_score(raw.get("hook_potency"), default=8)
+    speech_velocity = _parse_axis_score(raw.get("speech_velocity"), default=7)
+
+    # Discard candidate if narrative cannot stand on its own as a coherent story
+    if standalone_narrative < 5:
+        logger.warning(
+            "Clip #%d: standalone_narrative %d/10 < 5 (lacks self-contained context) — skipping.",
+            index, standalone_narrative,
+        )
+        return None
+
     # Parse the nested SEO object
     raw_seo = raw.get("seo") or {}
     if not isinstance(raw_seo, dict):
@@ -353,6 +400,10 @@ def _parse_single_clip(
         hook_summary=hook_summary,
         seo=seo,
         broll_query=broll_query,
+        emotional_intensity=emotional_intensity,
+        standalone_narrative=standalone_narrative,
+        hook_potency=hook_potency,
+        speech_velocity=speech_velocity,
     )
 
 
@@ -465,6 +516,10 @@ def _supplement_clips(
             hook_summary=c.hook_summary,
             seo=c.seo,
             broll_query=c.broll_query,
+            emotional_intensity=c.emotional_intensity,
+            standalone_narrative=c.standalone_narrative,
+            hook_potency=c.hook_potency,
+            speech_velocity=c.speech_velocity,
         )
         for i, c in enumerate(result)
     ]
@@ -744,6 +799,10 @@ def select_clips(
                     hook_summary=fb.hook_summary,
                     seo=fb.seo,
                     broll_query=fb.broll_query,
+                    emotional_intensity=fb.emotional_intensity,
+                    standalone_narrative=fb.standalone_narrative,
+                    hook_potency=fb.hook_potency,
+                    speech_velocity=fb.speech_velocity,
                 )
             )
 
@@ -764,9 +823,29 @@ def select_clips(
                 hook_summary=c.hook_summary,
                 seo=c.seo,
                 broll_query=c.broll_query,
+                emotional_intensity=c.emotional_intensity,
+                standalone_narrative=c.standalone_narrative,
+                hook_potency=c.hook_potency,
+                speech_velocity=c.speech_velocity,
             )
         )
-    deduplicated = coherent_clips
+    # Wayin Ranking: Sort clips by multi-signal virality score descending
+    coherent_clips.sort(key=lambda c: c.virality_score, reverse=True)
+    deduplicated = [
+        ClipCandidate(
+            index=i + 1,
+            start_time=c.start_time,
+            end_time=c.end_time,
+            hook_summary=c.hook_summary,
+            seo=c.seo,
+            broll_query=c.broll_query,
+            emotional_intensity=c.emotional_intensity,
+            standalone_narrative=c.standalone_narrative,
+            hook_potency=c.hook_potency,
+            speech_velocity=c.speech_velocity,
+        )
+        for i, c in enumerate(coherent_clips)
+    ]
 
     logger.info(
         "Clip selection complete: %d clips selected (satisfies min_clips=%d).",
