@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 from shorts_engine.services.logic_guardrail import (
     enforce_clip_coherence,
     evaluate_logical_coherence,
+    sanitize_voiceover_script,
     validate_text_boundaries,
 )
 from shorts_engine.services.transcriber import (
@@ -155,3 +156,19 @@ def test_segments_to_ass_dynamic_karaoke_no_collision_or_negative_duration() -> 
         t_end = parts[2]
         assert t_start != t_end
         assert t_end > t_start
+
+
+def test_sanitize_voiceover_script_strips_first_person_plural() -> None:
+    raw_script = "Όπως ανέφερε ο καλεσμένος μας, τα πράγματα είναι δύσκολα. Γράψτε μας τη γνώμη σας στα σχόλια!"
+    cleaned = sanitize_voiceover_script(raw_script)
+    assert "ο καλεσμένος μας" not in cleaned
+    assert "ο ομιλητής" in cleaned
+    assert "γράψτε μας" not in cleaned
+    assert "γράψε τη γνώμη σου στα σχόλια" in cleaned
+
+    another = "Πάμε να δούμε τι μας είπε για την υπόθεση."
+    cleaned2 = sanitize_voiceover_script(another)
+    assert "πάμε να δούμε" not in cleaned2
+    assert "δες" in cleaned2
+    assert "μας είπε" not in cleaned2
+

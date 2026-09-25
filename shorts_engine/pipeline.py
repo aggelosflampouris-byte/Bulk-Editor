@@ -219,7 +219,7 @@ def build_short_from_clip(
             ass_path,
             primary_keyword=seo.primary_keyword if seo else None,
             subtitle_position=getattr(settings, "subtitle_position", "lower_third"),
-            subtitle_mode=getattr(settings, "subtitle_mode", "word"),
+            subtitle_mode=getattr(settings, "subtitle_mode", "dynamic"),
         )
     else:
         warnings.append("No transcript segments provided — subtitles skipped.")

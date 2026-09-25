@@ -101,7 +101,8 @@ _DOMAIN_PROMPTS: dict[str, str] = {
 
 _DEFAULT_WHISPER_PROMPT: str = (
     "Ελληνικά, ορθογραφία με τόνους, σωστή στίξη (κόμματα, τελείες, ερωτηματικά), "
-    "κεφαλαία, ακρωνύμια, καθαρή αποτύπωση ομιλίας χωρίς παραλείψεις."
+    "κεφαλαία, ακρωνύμια και δημόσιοι οργανισμοί (ΜΜΕ, ΑΑΔΕ, ΔΕΗ, ΔΕΔΔΗΕ, ΕΦΚΑ, ΕΕ, ΟΑΣΑ, ΓΕΕΘΑ, ΑΣΕΠ, ΟΠΕΚΑ, ΦΠΑ, ΕΛΣΤΑΤ), "
+    "καθαρή αποτύπωση ομιλίας χωρίς παραλείψεις."
 )
 
 
@@ -485,19 +486,22 @@ def segments_to_ass(
             text_field = _escape_ass_text(seg.text)
             dialogue_lines.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text_field}")
     elif subtitle_mode == "dynamic":
-        # Group words into 2-3 word natural phrases with real-time active-word karaoke highlighting
+        # Group words into 3-5 word natural fluid phrases with real-time active-word karaoke highlighting
         idx = 0
         while idx < len(all_words):
             chunk = [all_words[idx]]
             idx += 1
-            while idx < len(all_words) and len(chunk) < 3:
+            while idx < len(all_words) and len(chunk) < 5:
                 curr_w = all_words[idx]
                 prev_w = chunk[-1]
-                # Break on long pauses between words
-                if curr_w[0] - prev_w[1] > 0.40:
+                # Break on long pauses between words (> 0.38s)
+                if curr_w[0] - prev_w[1] > 0.38:
+                    break
+                # Break on clause or sentence punctuation at the end of the previous word
+                if prev_w[2].endswith((".", "!", "?", ";", ":", "…", ",")):
                     break
                 combined_len = sum(len(w[2]) for w in chunk) + len(curr_w[2]) + len(chunk)
-                if combined_len > 22:
+                if combined_len > 34:
                     break
                 chunk.append(curr_w)
                 idx += 1

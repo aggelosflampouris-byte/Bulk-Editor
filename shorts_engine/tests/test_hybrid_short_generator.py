@@ -162,6 +162,7 @@ def test_build_hybrid_short_orchestration(tmp_path: Path) -> None:
         patch("shorts_engine.services.hybrid_short_generator.write_ass_file"),
         patch("shorts_engine.services.hybrid_short_generator.burn_subtitles"),
         patch("shorts_engine.services.hybrid_short_generator.generate_hybrid_script", return_value=mock_pkg),
+        patch("shorts_engine.services.hybrid_short_generator.correct_transcript_greek", side_effect=lambda segs, key: segs),
         patch("shorts_engine.services.hybrid_short_generator.synthesize_voiceover_with_segments") as mock_synth,
         patch("shorts_engine.services.hybrid_short_generator._assemble_scene_video") as mock_assemble,
         patch("subprocess.run") as mock_subproc,

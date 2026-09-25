@@ -75,10 +75,14 @@ Title: {topic_title}
 Context / Background: {topic_context}
 
 REQUIREMENTS (3-ACT VIRAL EXPLAINER SCRIPT BLUEPRINT):
+CRITICAL PERSPECTIVE & VOICE RULE:
+- NEVER use first-person plural ("εμείς", "μας", "μας είπαν", "βλέπουμε", "έχουμε", "είδαμε", "πάμε να δούμε", "γράψτε μας", "ο καλεσμένος μας").
+- Use objective investigative third-person or direct second-person singular ("δες", "πρόσεξε", "γράψε στα σχόλια").
+
 1. "narration_script": A captivating, authoritative, natural spoken Greek script (50–75 words total, ~30–38 seconds) strictly structured as:
-   - ACT 1 (0–5s) PROVOCATIVE PREMISE: Hard-hitting viral hook exposing an economic scandal, counter-intuitive fact, or breaking dispute (e.g., "Μας είπαν ότι ο πληθωρισμός πέφτει, αλλά τα στοιχεία στα ράφια των σούπερ μάρκετ σοκάρουν...").
+   - ACT 1 (0–5s) PROVOCATIVE PREMISE: Hard-hitting viral hook exposing an economic scandal, counter-intuitive fact, or breaking dispute (e.g., "Οι επίσημες δηλώσεις υποστηρίζουν ότι ο πληθωρισμός πέφτει, αλλά τα στοιχεία στα ράφια των σούπερ μάρκετ σοκάρουν...").
    - ACT 2 (5–28s) VERIFIED DATA REALITY: Rapid-fire breakdown citing concrete numbers, percentages, budget figures, or official records (e.g., "Σύμφωνα με τα επίσημα στοιχεία της ΕΛΣΤΑΤ, οι τιμές στα βασικά τρόφιμα αυξήθηκαν κατά 18%...").
-   - ACT 3 (28–35s) COMMENT-DRIVING POLARIZING QUESTION: Polarizing community debate trigger compelling viewers to comment immediately (e.g., "Εσείς βλέπετε μειώσεις στο καλάθι σας ή μόνο στα λόγια των υπουργών; Γράψτε μας τη γνώμη σας στα σχόλια!").
+   - ACT 3 (28–35s) COMMENT-DRIVING POLARIZING QUESTION: Polarizing community debate trigger compelling viewers to comment immediately (e.g., "Υπάρχουν πραγματικές μειώσεις στις τιμές ή μόνο υποσχέσεις υπουργών; Γράψε τη γνώμη σου στα σχόλια!").
 2. "scenes": An array of 3 to 4 sequential visual scenes. For each scene:
    - "scene_index": integer (1, 2, 3...)
    - "narration_chunk": The exact sentence or portion of the script spoken during this scene.
@@ -169,9 +173,17 @@ def generate_script_and_scenes(
 
     # Apply Logic & "Make Sense" Guardrail
     try:
-        from services.logic_guardrail import evaluate_logical_coherence
+        from services.logic_guardrail import (
+            evaluate_logical_coherence,
+            sanitize_voiceover_script,
+        )
     except ImportError:
-        from shorts_engine.services.logic_guardrail import evaluate_logical_coherence
+        from shorts_engine.services.logic_guardrail import (
+            evaluate_logical_coherence,
+            sanitize_voiceover_script,
+        )
+
+    narration = sanitize_voiceover_script(narration)
 
     coherence = evaluate_logical_coherence(
         topic_title=topic_title,
@@ -181,7 +193,7 @@ def generate_script_and_scenes(
     )
     if coherence.repaired_script:
         logger.info("[AI Short] Coherence guardrail refined narration script: %s", coherence.repaired_script)
-        narration = coherence.repaired_script
+        narration = sanitize_voiceover_script(coherence.repaired_script)
 
     raw_scenes = data.get("scenes") or []
     if not isinstance(raw_scenes, list) or not raw_scenes:
@@ -193,6 +205,10 @@ def generate_script_and_scenes(
                 "pexels_query": "news broadcasting studio",
             }
         ]
+    else:
+        for sc in raw_scenes:
+            if isinstance(sc, dict) and "narration_chunk" in sc:
+                sc["narration_chunk"] = sanitize_voiceover_script(str(sc["narration_chunk"]))
 
     raw_seo = data.get("seo") or {}
     try:

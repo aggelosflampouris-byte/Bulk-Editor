@@ -327,3 +327,33 @@ def test_correct_transcript_greek_batching_and_fallback(monkeypatch: pytest.Monk
     assert "διορθωμένη" in corrected[65].text
 
 
+def test_correct_transcript_greek_acronym_sense_checking(monkeypatch: pytest.MonkeyPatch) -> None:
+    from shorts_engine.services.seo_generator import correct_transcript_greek
+    from shorts_engine.services.transcriber import TranscriptionSegment
+
+    segments = [
+        TranscriptionSegment(start=0.0, end=2.0, text="τα με με αποκρύπτουν την αλήθεια"),
+        TranscriptionSegment(start=2.0, end=4.0, text="έλεγχος προστίμων από την α δε"),
+        TranscriptionSegment(start=4.0, end=6.0, text="αυξήσεις στους λογαριασμούς της δε η"),
+    ]
+
+    def fake_call_gemini(*args, **kwargs) -> str:
+        # Simulate Gemini accurately sense-checking and correcting the acronyms
+        return (
+            "[0] Τα ΜΜΕ αποκρύπτουν την αλήθεια\n"
+            "[1] Έλεγχος προστίμων από την ΑΑΔΕ\n"
+            "[2] Αυξήσεις στους λογαριασμούς της ΔΕΗ"
+        )
+
+    monkeypatch.setattr(
+        "shorts_engine.services.seo_generator._call_gemini_with_fallback",
+        fake_call_gemini,
+    )
+
+    corrected = correct_transcript_greek(segments, api_key="fake-key")
+    assert "ΜΜΕ" in corrected[0].text
+    assert "ΑΑΔΕ" in corrected[1].text
+    assert "ΔΕΗ" in corrected[2].text
+
+
+

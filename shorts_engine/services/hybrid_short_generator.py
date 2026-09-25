@@ -34,7 +34,10 @@ try:
         synthesize_voiceover_with_segments,
     )
     from services.face_tracker import track_active_speaker
-    from services.logic_guardrail import evaluate_logical_coherence
+    from services.logic_guardrail import (
+        evaluate_logical_coherence,
+        sanitize_voiceover_script,
+    )
     from services.research_engine import (
         ResearchDossier,
         conduct_wide_and_deep_research,
@@ -43,6 +46,7 @@ try:
         SeoMetadata,
         _call_gemini_with_fallback,
         _validate_seo_dict,
+        correct_transcript_greek,
     )
     from services.subtitle_masker import mask_burned_in_subtitles
     from services.timeline_utils import slice_segments
@@ -67,7 +71,10 @@ except ImportError:
         synthesize_voiceover_with_segments,
     )
     from shorts_engine.services.face_tracker import track_active_speaker
-    from shorts_engine.services.logic_guardrail import evaluate_logical_coherence
+    from shorts_engine.services.logic_guardrail import (
+        evaluate_logical_coherence,
+        sanitize_voiceover_script,
+    )
     from shorts_engine.services.research_engine import (
         ResearchDossier,
         conduct_wide_and_deep_research,
@@ -76,6 +83,7 @@ except ImportError:
         SeoMetadata,
         _call_gemini_with_fallback,
         _validate_seo_dict,
+        correct_transcript_greek,
     )
     from shorts_engine.services.subtitle_masker import mask_burned_in_subtitles
     from shorts_engine.services.timeline_utils import slice_segments
@@ -110,6 +118,11 @@ FACT-CHECKING & DEEP RESEARCH DOSSIER:
 YOUR TASK:
 Create a dynamic, journalistic BACK-AND-FORTH dialogue between the AI Journalist Voice and the Speaker Clip in natural, punchy Greek, strictly adhering to the 3-ACT VIRAL EXPLAINER SCRIPT BLUEPRINT:
 
+CRITICAL VOICE & PERSPECTIVE RULE:
+- The AI voiceover must NEVER use first-person plural ("εμείς", "μας", "μας είπαν", "βλέπουμε", "έχουμε", "είδαμε", "πάμε να δούμε", "γράψτε μας", "ο καλεσμένος μας", "ο καλεσμένος").
+- NEVER refer to the on-camera speaker as "ο καλεσμένος μας" or "ο καλεσμένος". Refer to the speaker by their name/title, or neutrally as "ο ομιλητής", "στη δήλωσή του", "η τοποθέτηση", or direct investigative commentary.
+- In the outro, use second-person singular engagement ("Ποια είναι η άποψή σου; Γράψε στα σχόλια και κάνε εγγραφή!" or "Εσύ τι πιστεύεις; Γράψε στα σχόλια!"), NEVER "γράψτε μας".
+
 ACT 1: PROVOCATIVE PREMISE (Opening Hook, 3–5s, 10–18 words in spoken Greek):
 - A razor-sharp teaser framing the controversy or scandal, challenging the premise, and hyping the speaker's statement (e.g. "Αυτή η δήλωση στη Βουλή για τα οικονομικά άναψε φωτιές. Δείτε τι υποστήριξε ο...").
 
@@ -117,7 +130,7 @@ ACT 2: VERIFIED DATA REALITY & CONTRASTING FACTS (Commentary Breakdown, 8–14s,
 - An investigative fact-checking breakdown that steps in directly after the speaker, citing concrete numbers, percentages, budget sums, or official records from the research dossier (e.g. "Όμως τα επίσημα στοιχεία δείχνουν κάτι εντελώς διαφορετικό: [συγκεκριμένοι αριθμοί/στοιχεία]...").
 
 ACT 3: COMMENT-DRIVING POLARIZING QUESTION (Closing Outro, 4–6s, 10–18 words in spoken Greek):
-- A polarizing closing verdict and community debate trigger designed to maximize comment volume (e.g. "Εσείς πιστεύετε τα λόγια ή τα επίσημα νούμερα; Γράψτε μας στα σχόλια και κάντε εγγραφή στο @DianismaNews!").
+- A polarizing closing verdict and community debate trigger designed to maximize comment volume (e.g. "Εσύ πιστεύεις τα λόγια ή τα επίσημα νούμερα; Γράψε στα σχόλια και κάνε εγγραφή στο @DianismaNews!").
 
 4. "scenes": 3 sequential 9:16 visual scenes with English Pexels video search queries matching each AI beat.
 5. "seo": High-CTR metadata.
@@ -230,16 +243,19 @@ def generate_hybrid_script(
     title = str(data.get("title") or topic_title or "Επικαιρότητα").strip()
     hook = str(data.get("hook") or title).strip()
 
-    # Extract distinct back-and-forth beats
-    opening_hook = str(data.get("opening_hook") or hook).strip()
-    commentary = str(
+    # Extract distinct back-and-forth beats, sanitizing any first-person plural
+    opening_hook = sanitize_voiceover_script(str(data.get("opening_hook") or hook).strip())
+    commentary = sanitize_voiceover_script(str(
         data.get("commentary_script")
         or data.get("narration_script")
         or "Αυτά τα νούμερα δείχνουν την πραγματική πίεση στην αγορά."
-    ).strip()
-    outro = str(data.get("outro_script") or "Εσείς τι πιστεύετε; Γράψτε μας τη γνώμη σας στα σχόλια!").strip()
+    ).strip())
+    outro = sanitize_voiceover_script(str(
+        data.get("outro_script")
+        or "Ποια είναι η άποψή σου; Γράψε τη γνώμη σου στα σχόλια και κάνε εγγραφή!"
+    ).strip())
 
-    full_narration = str(data.get("narration_script") or f"{commentary} {outro}").strip()
+    full_narration = sanitize_voiceover_script(str(data.get("narration_script") or f"{commentary} {outro}").strip())
 
     # Apply Logic & "Make Sense" Guardrail
     coherence = evaluate_logical_coherence(
@@ -432,6 +448,14 @@ def build_hybrid_short(
         masked_speaker = mask_burned_in_subtitles(cropped_speaker, masked_dest)
 
     total_spk_dur = probe_duration(masked_speaker)
+    # Gemini Logic & Sense Checking on Speaker Footage (fixing acronyms like ΜΜΕ, ΑΑΔΕ)
+    if getattr(settings, "gemini_api_key", None) and speaker_segments:
+        try:
+            _rpt("Running Gemini sense & logic checking on speaker transcript (fixing acronyms like ΜΜΕ, ΑΑΔΕ)...")
+            speaker_segments = correct_transcript_greek(speaker_segments, settings.gemini_api_key)
+        except (RuntimeError, ValueError, OSError) as exc:
+            logger.warning("[Hybrid Engine] Speaker transcript correction skipped on error: %s", exc)
+
     rebased_segs = slice_segments(speaker_segments, 0.0, total_spk_dur) if speaker_segments else []
     speaker_text = " ".join(s.text for s in rebased_segs) if rebased_segs else topic_title
 

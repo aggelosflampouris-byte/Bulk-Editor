@@ -21,6 +21,7 @@ import unicodedata
 from dataclasses import dataclass
 
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai import types as genai_types
 from google.genai.errors import APIError
 
@@ -478,7 +479,7 @@ def generate_seo(
                 response_mime_type="application/json",
             ),
         )
-    except Exception as exc:
+    except (APIError, genai_errors.APIError, RuntimeError, ValueError, OSError) as exc:
         logger.error("Gemini API call failed: %s — using fallback SEO.", exc)
         return SeoMetadata.fallback(transcript_text)
 
@@ -521,7 +522,7 @@ def generate_seo(
             seo = _validate_seo_dict(regen_data)
         else:
             logger.info("Critic approved SEO (Score: %d/10).", score)
-    except Exception as exc:
+    except (APIError, genai_errors.APIError, RuntimeError, ValueError, KeyError, OSError) as exc:
         logger.warning("Critic loop failed or skipped: %s", exc)
 
     logger.info("SEO metadata generated: title='%s', %d tags.", seo.title, len(seo.tags))
@@ -626,7 +627,7 @@ def generate_broll_query(transcript_text: str, api_key: str) -> str | None:
                 temperature=0.2,         # Low variance for consistency
             ),
         ).strip()
-    except Exception as exc:
+    except (APIError, genai_errors.APIError, RuntimeError, ValueError, OSError) as exc:
         logger.warning("Gemini broll query call failed: %s — using fallback.", exc)
         return None
 
@@ -668,9 +669,22 @@ Common Whisper Greek errors to ALWAYS correct:
 - "ό,τι" vs "ότι", "πως" vs "πώς", "που" vs "πού"
 - Missing accent marks (τόνοι) and spelling errors
 - Fix Capitalization at the start of sentences and proper nouns.
-- Contextual Acronyms & Institutions: Fix phonetic errors for public organizations or common acronyms (e.g., "ΔΔΕ" -> "ΔΕΔΔΗΕ", "ΕΦΚΑ", "ΑΑΔΕ"). Use context clues from the sentence to identify the correct institution.
-
-CRITICAL: The 'small' Whisper model often hallucinates complete gibberish or redundant phrases (e.g., "Καλημέρες ημέρες σε όλους"). If a phrase is clearly a hallucination, DO NOT try to literally preserve the hallucinated words. Aggressively rewrite it into the simplest, most natural Greek equivalent (e.g., "Καλημέρα σε όλους").
+- Contextual Acronyms, Public Organizations & Sense Checking (CRITICAL):
+  Whisper frequently misinterprets Greek public institutions, news agencies, and economic acronyms phonetically or breaks them into separate gibberish words. You must detect the intended meaning from the context of the sentence:
+  * "με με", "μμε", "μεμε", "μ μ ε", "τα με με" -> "ΜΜΕ"
+  * "α δε", "ααδε", "α αδέ", "αάδε", "α δε ε", "α δ ε" -> "ΑΑΔΕ"
+  * "δε η", "δεη", "δ ε η" -> "ΔΕΗ"
+  * "δεδδηε", "δδε", "δ ε δ δ η ε" -> "ΔΕΔΔΗΕ"
+  * "εφκα", "ε φ κ α" -> "ΕΦΚΑ"
+  * "οασα", "ο α σ α" -> "ΟΑΣΑ"
+  * "γεεθα", "γ ε ε θ α" -> "ΓΕΕΘΑ"
+  * "ασεπ", "α σ ε π" -> "ΑΣΕΠ"
+  * "οπεκα", "ο π ε κ α" -> "ΟΠΕΚΑ"
+  * "φπα", "φ π α" -> "ΦΠΑ"
+  * "ελστατ", "ελ στατ" -> "ΕΛΣΤΑΤ"
+  * "εε", "ε ε" (when referring to European Union institutions or rules) -> "ΕΕ"
+  * Always format Greek institutional and organizational acronyms in ALL-CAPS (e.g., "ΜΜΕ", "ΑΑΔΕ", "ΔΕΗ", "ΕΦΚΑ", "ΔΕΔΔΗΕ").
+  * LOGIC CHECK: If a sentence discusses tax audits, revenue, news media, energy bills, or pensions, ensure the institutional acronym is logically applied (e.g., "έλεγχος από την ΑΑΔΕ", "ρεπορτάζ στα ΜΜΕ", "τιμολόγια της ΔΕΗ").
 
 Correct EACH line so it reads as accurate, natural, grammatically correct Greek. Follow these rules:
 1. Output the EXACT SAME number of lines as input — one corrected line per input line.
@@ -809,7 +823,7 @@ def correct_transcript_greek(
 
     try:
         client = genai.Client(api_key=api_key)
-    except Exception as exc:
+    except (genai_errors.APIError, RuntimeError, ValueError, OSError) as exc:
         logger.warning("Failed to initialize Gemini client for transcript correction: %s", exc)
         return segments
 
@@ -830,7 +844,7 @@ def correct_transcript_greek(
                     temperature=0.1,  # Very low — stay close to original
                 ),
             ).strip()
-        except Exception as exc:
+        except (genai_errors.APIError, RuntimeError, ValueError, OSError) as exc:
             logger.warning("Gemini transcript correction failed on batch %d: %s — using original.", b_idx + 1, exc)
             corrected_segments.extend(batch)
             continue

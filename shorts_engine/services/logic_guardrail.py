@@ -54,6 +54,47 @@ DANGLING_START_WORDS: set[str] = {
     "και", "κι", "λοιπόν", "εεε", "ααα", "μμμ", "ναι", "όπως", "δηλαδή",
 }
 
+# Patterns to strip first-person plural and conversational hosting clichés from AI voiceover
+_FIRST_PERSON_PLURAL_REPLACEMENTS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"\bο καλεσμένος μας\b", re.IGNORECASE), "ο ομιλητής"),
+    (re.compile(r"\bτον καλεσμένο μας\b", re.IGNORECASE), "τον ομιλητή"),
+    (re.compile(r"\bτου καλεσμένου μας\b", re.IGNORECASE), "του ομιλητή"),
+    (re.compile(r"\bοι καλεσμένοι μας\b", re.IGNORECASE), "οι ομιλητές"),
+    (re.compile(r"\bτων καλεσμένων μας\b", re.IGNORECASE), "των ομιλητών"),
+    (re.compile(r"\bτους καλεσμένους μας\b", re.IGNORECASE), "τους ομιλητές"),
+    (re.compile(r"\bο καλεσμένος\b", re.IGNORECASE), "ο ομιλητής"),
+    (re.compile(r"\bτου καλεσμένου\b", re.IGNORECASE), "του ομιλητή"),
+    (re.compile(r"\bτον καλεσμένο\b", re.IGNORECASE), "τον ομιλητή"),
+    (re.compile(r"\bγράψτε μας τη γνώμη σας στα σχόλια\b", re.IGNORECASE), "γράψε τη γνώμη σου στα σχόλια"),
+    (re.compile(r"\bγράψτε μας στα σχόλια\b", re.IGNORECASE), "γράψε στα σχόλια"),
+    (re.compile(r"\bγράψτε μας\b", re.IGNORECASE), "γράψε στα σχόλια"),
+    (re.compile(r"\bγράψτε μου στα σχόλια\b", re.IGNORECASE), "γράψε στα σχόλια"),
+    (re.compile(r"\bγράψτε μου\b", re.IGNORECASE), "γράψε στα σχόλια"),
+    (re.compile(r"\bπείτε μας στα σχόλια\b", re.IGNORECASE), "πες στα σχόλια"),
+    (re.compile(r"\bπείτε μας\b", re.IGNORECASE), "πες στα σχόλια"),
+    (re.compile(r"\bπάμε να δούμε\b", re.IGNORECASE), "δες"),
+    (re.compile(r"\bας δούμε\b", re.IGNORECASE), "δες"),
+    (re.compile(r"\bνα δούμε\b", re.IGNORECASE), "δες"),
+    (re.compile(r"\bμας είπε\b", re.IGNORECASE), "ανέφερε"),
+    (re.compile(r"\bμας λέει\b", re.IGNORECASE), "υποστηρίζει"),
+    (re.compile(r"\bμας δείχνει\b", re.IGNORECASE), "δείχνει"),
+    (re.compile(r"\bμας αποκαλύπτει\b", re.IGNORECASE), "αποκαλύπτει"),
+    (re.compile(r"\bβλέπουμε ότι\b", re.IGNORECASE), "αποδεικνύεται ότι"),
+]
+
+
+def sanitize_voiceover_script(text: str) -> str:
+    """
+    Ensure the AI voiceover uses authoritative, direct journalistic language
+    and strictly avoids first-person plural (e.g. 'ο καλεσμένος μας', 'γράψτε μας', 'βλέπουμε').
+    """
+    if not text:
+        return ""
+    result = text
+    for pattern, replacement in _FIRST_PERSON_PLURAL_REPLACEMENTS:
+        result = pattern.sub(replacement, result)
+    return result
+
 
 @dataclass
 class CoherenceAssessment:
@@ -239,6 +280,7 @@ A Short "makes sense" if:
 2. The speaker's statement and/or AI narration flow logically from premise -> fact/context -> punchline/conclusion.
 3. It does NOT cut off mid-thought, contradict itself, or contain nonsense, disjointed jumps, or gibberish.
 4. Part 2 (if present) directly addresses and complements Part 1, providing closure.
+5. PERSPECTIVE & VOICE: The voiceover must NEVER use first-person plural ("εμείς", "μας", "ο καλεσμένος μας", "γράψτε μας", "βλέπουμε"). Use authoritative third-person or direct second-person singular ("δες", "πρόσεξε", "γράψε στα σχόλια").
 
 CONTENT TO EVALUATE:
 Topic / Source Title: {topic_title}
@@ -249,7 +291,7 @@ EVALUATION CRITERIA:
 - makes_sense: boolean (true if the Short tells a clear, self-contained, sensible story; false if broken, confusing, or illogical)
 - score: integer from 1 to 10 (10 = perfect logical clarity, < 7 = confusing or incomplete)
 - reason: brief 1-sentence explanation of your evaluation
-- repaired_script: if score < 8, provide a perfectly coherent, natural Greek narration script (30-45 words) that makes 100% sense with Part 1 and provides a punchy conclusion. Otherwise, return null.
+- repaired_script: if score < 8, provide a perfectly coherent, natural Greek narration script (30-45 words) that makes 100% sense with Part 1 and provides a punchy conclusion without any first-person plural ("μας", "εμείς", "ο καλεσμένος μας"). Otherwise, return null.
 
 Return ONLY a valid JSON object matching this schema:
 {{
@@ -308,7 +350,7 @@ def evaluate_logical_coherence(
         reason = str(data.get("reason", "Assessment completed."))
         repaired = data.get("repaired_script")
         if repaired and isinstance(repaired, str) and repaired.strip():
-            repaired_script = repaired.strip()
+            repaired_script = sanitize_voiceover_script(repaired.strip())
         else:
             repaired_script = None
 
