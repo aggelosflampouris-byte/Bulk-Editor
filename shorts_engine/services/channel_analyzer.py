@@ -44,12 +44,13 @@ class VideoMeta:
     Typed container for a single YouTube video's metadata as returned by yt-dlp.
     All numeric fields default to 0 / empty so parsing never raises KeyError.
     """
+
     video_id: str
     title: str
     url: str
     view_count: int
     duration_seconds: int
-    upload_date: str       # YYYYMMDD string from yt-dlp
+    upload_date: str  # YYYYMMDD string from yt-dlp
     like_count: int
     comment_count: int
     description: str
@@ -67,7 +68,11 @@ class VideoMeta:
     def upload_date_display(self) -> str:
         """Human-readable upload date e.g. '2024-03-15'."""
         try:
-            return datetime.strptime(self.upload_date, "%Y%m%d").replace(tzinfo=timezone.utc).strftime("%Y-%m-%d")
+            return (
+                datetime.strptime(self.upload_date, "%Y%m%d")
+                .replace(tzinfo=timezone.utc)
+                .strftime("%Y-%m-%d")
+            )
         except ValueError:
             return self.upload_date
 
@@ -91,6 +96,7 @@ class NicheInsights:
     """
     Structured analysis of a YouTube niche or channel's content performance.
     """
+
     query: str
     total_videos_analysed: int
 
@@ -147,11 +153,12 @@ class ViralRecentVideo:
 
     Labels: Hot 🔥 (rank 1) | Rising 📈 (2–3) | Trending ⚡ (4–7) | Evergreen 🌿 (8+)
     """
+
     video: VideoMeta
     days_old: int
     virality_score: float
     virality_label: str  # 'Hot 🔥', 'Rising 📈', 'Trending ⚡', or 'Evergreen 🌿'
-    rvr: float = 1.0     # Relative View Ratio vs channel median
+    rvr: float = 1.0  # Relative View Ratio vs channel median
 
     @property
     def score_display(self) -> str:
@@ -185,14 +192,21 @@ def normalize_youtube_channel_url(query: str) -> str:
     # Add protocol if starting with handle or common domain prefixes
     if target.startswith("@"):
         target = f"https://www.youtube.com/{target}"
-    elif target.startswith(("www.youtube.com", "youtube.com", "m.youtube.com", "youtu.be", "www.")):
+    elif target.startswith(
+        ("www.youtube.com", "youtube.com", "m.youtube.com", "youtu.be", "www.")
+    ):
         target = f"https://{target}"
 
     # If it's a channel URL (handle, /channel/, /c/, /user/), point to /videos
     # to avoid yt-dlp extracting /shorts or featured sections
     is_channel = any(
         pat in target
-        for pat in ("youtube.com/@", "youtube.com/channel/", "youtube.com/c/", "youtube.com/user/")
+        for pat in (
+            "youtube.com/@",
+            "youtube.com/channel/",
+            "youtube.com/c/",
+            "youtube.com/user/",
+        )
     )
     if is_channel:
         target = target.rstrip("/")
@@ -216,22 +230,29 @@ def _run_ytdlp_metadata(query: str, max_videos: int) -> list[dict[str, Any]]:
     is_url_or_channel = target.startswith(("http://", "https://", "@"))
     if not is_url_or_channel:
         import urllib.parse
+
         encoded = urllib.parse.quote_plus(target)
-        # sp=EgIIBA%253D%253D → YouTube "Upload Date: This Month" filter
-        target = f"https://www.youtube.com/results?search_query={encoded}&sp=EgIIBA%253D%253D"
+        # sp=EgIIBA%253D%253D → YouTube "Upload Date: This Month" filter; &gl=GR&hl=el anchors Greek regional search
+        target = f"https://www.youtube.com/results?search_query={encoded}&sp=EgIIBA%253D%253D&gl=GR&hl=el"
 
     cmd = [
-        sys.executable, "-m", "yt_dlp",
+        sys.executable,
+        "-m",
+        "yt_dlp",
         "--flat-playlist",
         "--dump-json",
         "--no-warnings",
         "--ignore-errors",
-        "--playlist-items", f"1-{max_videos}",
-        "--extractor-args", "youtubetab:approximate_date",
+        "--playlist-items",
+        f"1-{max_videos}",
+        "--extractor-args",
+        "youtubetab:approximate_date",
         target,
     ]
 
-    logger.info("Running yt-dlp metadata fetch for: %s (max %d videos)", target, max_videos)
+    logger.info(
+        "Running yt-dlp metadata fetch for: %s (max %d videos)", target, max_videos
+    )
     try:
         result = subprocess.run(
             cmd,
@@ -253,7 +274,9 @@ def _run_ytdlp_metadata(query: str, max_videos: int) -> list[dict[str, Any]]:
         ) from exc
 
     if result.returncode not in (0, 1):
-        logger.warning("yt-dlp exited with code %d: %s", result.returncode, result.stderr[:200])
+        logger.warning(
+            "yt-dlp exited with code %d: %s", result.returncode, result.stderr[:200]
+        )
 
     raw_entries: list[dict[str, Any]] = []
     for line in result.stdout.splitlines():
@@ -269,7 +292,9 @@ def _run_ytdlp_metadata(query: str, max_videos: int) -> list[dict[str, Any]]:
     # Fallback 1: If /videos tab returned 0 entries for a channel, fall back to base URL
     if not raw_entries and target.endswith("/videos"):
         base_url = target[:-7]
-        logger.info("No entries on /videos tab, falling back to base channel: %s", base_url)
+        logger.info(
+            "No entries on /videos tab, falling back to base channel: %s", base_url
+        )
         cmd[-1] = base_url
         try:
             fb_res = subprocess.run(
@@ -296,9 +321,13 @@ def _run_ytdlp_metadata(query: str, max_videos: int) -> list[dict[str, Any]]:
     # Fallback 2: If a search query returned 0 results with month filter, search without date filter
     if not raw_entries and not is_url_or_channel:
         import urllib.parse
+
         encoded = urllib.parse.quote_plus(query.strip())
-        logger.info("No entries found with month filter for '%s', searching without date filter.", query)
-        cmd[-1] = f"https://www.youtube.com/results?search_query={encoded}"
+        logger.info(
+            "No entries found with month filter for '%s', searching without date filter.",
+            query,
+        )
+        cmd[-1] = f"https://www.youtube.com/results?search_query={encoded}&gl=GR&hl=el"
         try:
             fb_res = subprocess.run(
                 cmd,
@@ -338,7 +367,11 @@ def _parse_video_meta(entry: dict[str, Any]) -> VideoMeta | None:
     if not video_id or not title:
         return None
 
-    url = entry.get("url") or entry.get("webpage_url") or f"https://www.youtube.com/watch?v={video_id}"
+    url = (
+        entry.get("url")
+        or entry.get("webpage_url")
+        or f"https://www.youtube.com/watch?v={video_id}"
+    )
     if not url.startswith("http"):
         url = f"https://www.youtube.com/watch?v={video_id}"
 
@@ -355,19 +388,24 @@ def _parse_video_meta(entry: dict[str, Any]) -> VideoMeta | None:
     )
 
 
-def _build_analysis_prompt(videos: list[VideoMeta], query: str, analytics_data: dict[str, Any] | None = None, target_niche: str | None = None) -> str:
+def _build_analysis_prompt(
+    videos: list[VideoMeta],
+    query: str,
+    analytics_data: dict[str, Any] | None = None,
+    target_niche: str | None = None,
+) -> str:
     """Build a structured Gemini prompt from the video metadata list."""
     video_lines: list[str] = []
     for i, v in enumerate(videos, 1):
         line = (
-            f"{i}. [{v.upload_date_display}] \"{v.title}\" | "
+            f'{i}. [{v.upload_date_display}] "{v.title}" | '
             f"Views: {v.view_count:,} | Duration: {v.duration_display} | "
             f"Likes: {v.like_count:,}"
         )
         video_lines.append(line)
 
     videos_block = "\n".join(video_lines)
-    
+
     analytics_context = ""
     if analytics_data:
         analytics_context = (
@@ -450,7 +488,13 @@ def _compute_virality_score(
     engmt_ratio: float = (v.like_count + v.comment_count * 2) / max(v.view_count, 1)
     vel_boost: float = math.log10(max(velocity, 1)) / 4.0
     rvr_boost: float = max(0.0, math.log2(max(rvr, 0.5) + 0.5))
-    return base * (1.0 + rvr_boost * 1.2) * (1.0 + recency * 1.2) * (1.0 + engmt_ratio * 6.0) * (1.0 + vel_boost)
+    return (
+        base
+        * (1.0 + rvr_boost * 1.2)
+        * (1.0 + recency * 1.2)
+        * (1.0 + engmt_ratio * 6.0)
+        * (1.0 + vel_boost)
+    )
 
 
 def _assign_virality_label(rank: int, rvr: float = 1.0) -> str:
@@ -489,8 +533,11 @@ def find_viral_recent_videos(
         List of ViralRecentVideo ordered by virality_score descending.
     """
     import statistics
+
     valid_views = [v.view_count for v in videos if v.view_count > 0]
-    median_views = channel_avg_views or (statistics.median(valid_views) if valid_views else 1.0)
+    median_views = channel_avg_views or (
+        statistics.median(valid_views) if valid_views else 1.0
+    )
 
     now = datetime.now(tz=timezone.utc)
     candidates: list[ViralRecentVideo] = []
@@ -499,7 +546,9 @@ def find_viral_recent_videos(
         if not v.upload_date or len(v.upload_date) < 8:
             continue
         try:
-            upload_dt = datetime.strptime(v.upload_date, "%Y%m%d").replace(tzinfo=timezone.utc)
+            upload_dt = datetime.strptime(v.upload_date, "%Y%m%d").replace(
+                tzinfo=timezone.utc
+            )
         except ValueError:
             continue
 
@@ -595,7 +644,9 @@ def fetch_view_velocity_top(
         if not v.is_short_candidate or not v.upload_date:
             continue
         try:
-            upload_dt = datetime.strptime(v.upload_date, "%Y%m%d").replace(tzinfo=timezone.utc)
+            upload_dt = datetime.strptime(v.upload_date, "%Y%m%d").replace(
+                tzinfo=timezone.utc
+            )
         except ValueError:
             continue
         days_old = max((now - upload_dt).days, 1)
@@ -642,7 +693,9 @@ def fetch_youtube_videos(
     return videos
 
 
-def fetch_channel_rss_videos(channel_id_or_url: str, max_videos: int = 15) -> list[VideoMeta]:
+def fetch_channel_rss_videos(
+    channel_id_or_url: str, max_videos: int = 15
+) -> list[VideoMeta]:
     """
     Fetch the latest videos from a YouTube channel via its public XML RSS feed.
     Zero-quota, zero-auth, and fast (<100ms).
@@ -654,12 +707,16 @@ def fetch_channel_rss_videos(channel_id_or_url: str, max_videos: int = 15) -> li
 
     target_id = channel_id_or_url.strip()
     if "youtube.com/channel/" in target_id:
-        target_id = target_id.split("youtube.com/channel/")[-1].split("/")[0].split("?")[0]
+        target_id = (
+            target_id.split("youtube.com/channel/")[-1].split("/")[0].split("?")[0]
+        )
 
     if target_id.startswith("UC"):
         feed_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={target_id}"
     elif target_id.startswith("@"):
-        feed_url = f"https://www.youtube.com/feeds/videos.xml?user={target_id.lstrip('@')}"
+        feed_url = (
+            f"https://www.youtube.com/feeds/videos.xml?user={target_id.lstrip('@')}"
+        )
     else:
         feed_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={target_id}"
 
@@ -685,7 +742,11 @@ def fetch_channel_rss_videos(channel_id_or_url: str, max_videos: int = 15) -> li
         if vid_id_elem is None or not vid_id_elem.text:
             continue
         vid_id = vid_id_elem.text.strip()
-        title = title_elem.text.strip() if title_elem is not None and title_elem.text else f"Video {vid_id}"
+        title = (
+            title_elem.text.strip()
+            if title_elem is not None and title_elem.text
+            else f"Video {vid_id}"
+        )
 
         upload_date = ""
         if published_elem is not None and published_elem.text:
@@ -729,14 +790,18 @@ def fetch_video_heatmap(video_url: str) -> list[dict[str, float]]:
     via yt-dlp metadata. Returns list of dicts with keys: start_time, end_time, value.
     """
     cmd = [
-        sys.executable, "-m", "yt_dlp",
+        sys.executable,
+        "-m",
+        "yt_dlp",
         "--dump-single-json",
         "--skip-download",
         "--no-warnings",
         video_url,
     ]
     try:
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)
+        res = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=30, check=False
+        )
         if res.returncode == 0 and res.stdout.strip():
             data = json.loads(res.stdout)
             heatmap = data.get("heatmap")
@@ -750,7 +815,12 @@ def fetch_video_heatmap(video_url: str) -> list[dict[str, float]]:
                     for item in heatmap
                     if "start_time" in item and "value" in item
                 ]
-    except (subprocess.SubprocessError, json.JSONDecodeError, OSError, ValueError) as exc:
+    except (
+        subprocess.SubprocessError,
+        json.JSONDecodeError,
+        OSError,
+        ValueError,
+    ) as exc:
         logger.debug("Heatmap extraction skipped for %s: %s", video_url, exc)
     return []
 
@@ -831,24 +901,37 @@ def analyze_niche(
                 raw_text = response.text or ""
                 if not raw_text.strip():
                     continue
-                    
+
                 import re
-                
+
                 # Strip markdown code fences if present
-                fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw_text, re.DOTALL)
+                fenced = re.search(
+                    r"```(?:json)?\s*(\{.*?\})\s*```", raw_text, re.DOTALL
+                )
                 if fenced:
                     raw_text = fenced.group(1)
-                    
+
                 # Extract the first JSON object block to ignore conversational padding
                 obj_match = re.search(r"\{.*\}", raw_text, re.DOTALL)
                 if obj_match:
                     raw_text = obj_match.group(0)
-                    
+
                 # strict=False allows unescaped control chars (like \n) inside strings
                 parsed = json.loads(raw_text, strict=False)
                 break
-            except (json.JSONDecodeError, ValueError, RuntimeError, TypeError, KeyError, AttributeError) as model_exc:
-                logger.warning("Channel analyzer: model '%s' failed or returned invalid JSON: %s", model_name, model_exc)
+            except (
+                json.JSONDecodeError,
+                ValueError,
+                RuntimeError,
+                TypeError,
+                KeyError,
+                AttributeError,
+            ) as model_exc:
+                logger.warning(
+                    "Channel analyzer: model '%s' failed or returned invalid JSON: %s",
+                    model_name,
+                    model_exc,
+                )
                 continue
 
         if parsed:
@@ -870,14 +953,21 @@ def analyze_niche(
                 if ai_candidates:
                     insights.short_candidates = ai_candidates
 
-            insights.suggested_search_query = parsed.get("suggested_search_query", "").strip()
+            insights.suggested_search_query = parsed.get(
+                "suggested_search_query", ""
+            ).strip()
 
             # Competitor Discovery
             is_channel_scan = query.startswith(("http", "@"))
             if is_channel_scan and insights.suggested_search_query:
                 try:
-                    logger.info("Executing competitor discovery for niche: %s", insights.suggested_search_query)
-                    competitor_videos = fetch_youtube_videos(insights.suggested_search_query, max_videos=30)
+                    logger.info(
+                        "Executing competitor discovery for niche: %s",
+                        insights.suggested_search_query,
+                    )
+                    competitor_videos = fetch_youtube_videos(
+                        insights.suggested_search_query, max_videos=30
+                    )
                     if competitor_videos:
                         insights.competitor_viral_recent = find_viral_recent_videos(
                             competitor_videos,
@@ -888,7 +978,14 @@ def analyze_niche(
         else:
             insights.analysis_error = "AI models failed to generate valid JSON insights after multiple attempts."
 
-    except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError) as exc:
+    except (
+        RuntimeError,
+        ValueError,
+        TypeError,
+        KeyError,
+        AttributeError,
+        OSError,
+    ) as exc:
         error_msg = f"Gemini analysis failed: {exc}"
         logger.error(error_msg)
         insights.analysis_error = error_msg

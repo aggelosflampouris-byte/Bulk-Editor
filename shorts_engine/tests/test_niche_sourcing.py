@@ -23,6 +23,7 @@ from shorts_engine.services.niche_sourcing import (
     fetch_niche_videos_via_api,
     fetch_niche_videos_via_ytdlp,
     find_niche_trend_videos,
+    is_greek_content_relevant,
 )
 
 
@@ -58,9 +59,21 @@ def test_fetch_niche_videos_via_api_filtering() -> None:
     mock_search = MagicMock()
     mock_search.list.return_value.execute.return_value = {
         "items": [
-            {"id": {"videoId": "vid_fresh"}, "snippet": {"channelId": "ext_ch1", "channelTitle": "Greek News"}},
-            {"id": {"videoId": "vid_dianisma"}, "snippet": {"channelId": "UCZmznsMXZaE4m_hZH6g1JKg", "channelTitle": "Dianisma"}},
-            {"id": {"videoId": "vid_stale"}, "snippet": {"channelId": "ext_ch2", "channelTitle": "Politics GR"}},
+            {
+                "id": {"videoId": "vid_fresh"},
+                "snippet": {"channelId": "ext_ch1", "channelTitle": "Greek News"},
+            },
+            {
+                "id": {"videoId": "vid_dianisma"},
+                "snippet": {
+                    "channelId": "UCZmznsMXZaE4m_hZH6g1JKg",
+                    "channelTitle": "Dianisma",
+                },
+            },
+            {
+                "id": {"videoId": "vid_stale"},
+                "snippet": {"channelId": "ext_ch2", "channelTitle": "Politics GR"},
+            },
         ]
     }
     mock_client.search.return_value = mock_search
@@ -78,7 +91,11 @@ def test_fetch_niche_videos_via_api_filtering() -> None:
                     "publishedAt": fresh_date,
                     "description": "Ανάλυση",
                 },
-                "statistics": {"viewCount": "54000", "likeCount": "2100", "commentCount": "320"},
+                "statistics": {
+                    "viewCount": "54000",
+                    "likeCount": "2100",
+                    "commentCount": "320",
+                },
                 "contentDetails": {"duration": "PT12M00S"},
             },
             {
@@ -90,7 +107,11 @@ def test_fetch_niche_videos_via_api_filtering() -> None:
                     "publishedAt": stale_date,
                     "description": "Παλιό",
                 },
-                "statistics": {"viewCount": "100000", "likeCount": "1000", "commentCount": "50"},
+                "statistics": {
+                    "viewCount": "100000",
+                    "likeCount": "1000",
+                    "commentCount": "50",
+                },
                 "contentDetails": {"duration": "PT10M00S"},
             },
         ]
@@ -152,7 +173,10 @@ def test_fetch_niche_videos_via_ytdlp_filtering() -> None:
         ),
     ]
 
-    with patch("shorts_engine.services.niche_sourcing.fetch_youtube_videos", return_value=raw_candidates):
+    with patch(
+        "shorts_engine.services.niche_sourcing.fetch_youtube_videos",
+        return_value=raw_candidates,
+    ):
         results = fetch_niche_videos_via_ytdlp("ελληνική πολιτική", max_age_days=21)
         assert len(results) == 1
         assert results[0].video_id == "ext_fresh"
@@ -184,8 +208,13 @@ def test_find_niche_trend_videos_orchestration() -> None:
         description="low",
     )
 
-    with patch("shorts_engine.services.niche_sourcing.fetch_niche_videos_via_ytdlp", return_value=[v2, v1]):
-        top = find_niche_trend_videos(query="ελληνική πολιτική", max_videos=1, max_age_days=21)
+    with patch(
+        "shorts_engine.services.niche_sourcing.fetch_niche_videos_via_ytdlp",
+        return_value=[v2, v1],
+    ):
+        top = find_niche_trend_videos(
+            query="ελληνική πολιτική", max_videos=1, max_age_days=21
+        )
         assert len(top) == 1
         assert top[0].video_id == "v_high_views"
 
@@ -218,15 +247,26 @@ def test_autopilot_pipeline_enables_bg_music_and_niche_sourcing(tmp_path: Path) 
     )
 
     with (
-        patch("shorts_engine.services.autopilot.find_niche_trend_videos", return_value=[mock_niche_video]),
+        patch(
+            "shorts_engine.services.autopilot.find_niche_trend_videos",
+            return_value=[mock_niche_video],
+        ),
         patch("shorts_engine.services.autopilot.download_video_section") as mock_dl_sec,
-        patch("shorts_engine.services.autopilot.fetch_youtube_transcript", return_value=None),
-        patch("shorts_engine.services.autopilot.download_video", return_value=tmp_path / "vid.mp4"),
+        patch(
+            "shorts_engine.services.autopilot.fetch_youtube_transcript",
+            return_value=None,
+        ),
+        patch(
+            "shorts_engine.services.autopilot.download_video",
+            return_value=tmp_path / "vid.mp4",
+        ),
         patch("shorts_engine.services.autopilot.transcribe", return_value=[]),
         patch("shorts_engine.services.autopilot.select_clips", return_value=[]),
     ):
         mock_dl_sec.side_effect = RuntimeError("fallback")
-        gen = run_autopilot_pipeline(settings=settings, num_videos=1, production_strategy="hybrid")
+        gen = run_autopilot_pipeline(
+            settings=settings, num_videos=1, production_strategy="hybrid"
+        )
 
         messages = []
         try:
@@ -236,11 +276,16 @@ def test_autopilot_pipeline_enables_bg_music_and_niche_sourcing(tmp_path: Path) 
             pass  # Stopped after clip selection yielded 0, which is expected with mocked empty transcript
 
         # Confirm niche sourcing message was emitted
-        assert any("Searching YouTube for fresh viral videos in our niche" in m for m in messages)
+        assert any(
+            "Searching YouTube for fresh viral videos in our niche" in m
+            for m in messages
+        )
         assert any("Selected 1 highly viral videos" in m for m in messages)
 
 
-def test_autopilot_pipeline_dianisma_channel_url_routes_to_niche_discovery(tmp_path: Path) -> None:
+def test_autopilot_pipeline_dianisma_channel_url_routes_to_niche_discovery(
+    tmp_path: Path,
+) -> None:
     from shorts_engine.services.autopilot import (
         DIANISMA_CHANNEL_URL,
         run_autopilot_pipeline,
@@ -260,15 +305,31 @@ def test_autopilot_pipeline_dianisma_channel_url_routes_to_niche_discovery(tmp_p
     )
 
     with (
-        patch("shorts_engine.services.autopilot.find_niche_trend_videos", return_value=[mock_niche_video]) as mock_niche,
-        patch("shorts_engine.services.autopilot.fetch_my_recent_videos") as mock_my_videos,
-        patch("shorts_engine.services.autopilot.download_video_section", side_effect=RuntimeError("stop")),
-        patch("shorts_engine.services.autopilot.fetch_youtube_transcript", return_value=None),
-        patch("shorts_engine.services.autopilot.download_video", return_value=tmp_path / "vid.mp4"),
+        patch(
+            "shorts_engine.services.autopilot.find_niche_trend_videos",
+            return_value=[mock_niche_video],
+        ) as mock_niche,
+        patch(
+            "shorts_engine.services.autopilot.fetch_my_recent_videos"
+        ) as mock_my_videos,
+        patch(
+            "shorts_engine.services.autopilot.download_video_section",
+            side_effect=RuntimeError("stop"),
+        ),
+        patch(
+            "shorts_engine.services.autopilot.fetch_youtube_transcript",
+            return_value=None,
+        ),
+        patch(
+            "shorts_engine.services.autopilot.download_video",
+            return_value=tmp_path / "vid.mp4",
+        ),
         patch("shorts_engine.services.autopilot.transcribe", return_value=[]),
         patch("shorts_engine.services.autopilot.select_clips", return_value=[]),
     ):
-        gen = run_autopilot_pipeline(target_url=DIANISMA_CHANNEL_URL, settings=settings, num_videos=1)
+        gen = run_autopilot_pipeline(
+            target_url=DIANISMA_CHANNEL_URL, settings=settings, num_videos=1
+        )
         messages = []
         try:
             for msg, _pct, _data in gen:
@@ -279,4 +340,188 @@ def test_autopilot_pipeline_dianisma_channel_url_routes_to_niche_discovery(tmp_p
         # Must route to niche discovery, NEVER to our own channel library
         mock_my_videos.assert_not_called()
         mock_niche.assert_called_once()
-        assert any("Searching YouTube for fresh viral videos in our niche" in m for m in messages)
+        assert any(
+            "Searching YouTube for fresh viral videos in our niche" in m
+            for m in messages
+        )
+
+
+def test_is_greek_content_relevant() -> None:
+    # Greek query with Greek title
+    assert (
+        is_greek_content_relevant("Τιμή βενζίνης: Νέες αυξήσεις", "Τιμή Βενζίνης")
+        is True
+    )
+    # Greek query with German or English title (should be rejected)
+    assert (
+        is_greek_content_relevant(
+            "Bundesregierung einigt sich auf Tankrabatt", "Τιμή Βενζίνης"
+        )
+        is False
+    )
+    assert (
+        is_greek_content_relevant("Gas prices soar across Europe", "Τιμή Βενζίνης")
+        is False
+    )
+    # Empty query (default niche) requires Greek characters
+    assert is_greek_content_relevant("Δηλώσεις πρωθυπουργού", "") is True
+    assert (
+        is_greek_content_relevant("Bundesregierung einigt sich auf Tankrabatt", "")
+        is False
+    )
+    # Custom non-Greek query
+    assert (
+        is_greek_content_relevant("AI developments in 2026", "AI developments") is True
+    )
+
+
+def test_fetch_niche_videos_via_ytdlp_filters_foreign_videos() -> None:
+    now = datetime.now(timezone.utc)
+    fresh_compact = (now - timedelta(days=2)).strftime("%Y%m%d")
+
+    raw_candidates = [
+        VideoMeta(
+            video_id="german_vid",
+            title="Bundesregierung einigt sich auf Tankrabatt",
+            url="https://youtube.com/watch?v=german_vid",
+            view_count=500000,
+            duration_seconds=300,
+            upload_date=fresh_compact,
+            like_count=1000,
+            comment_count=200,
+            description="Tankrabatt beschlossen",
+        ),
+        VideoMeta(
+            video_id="greek_vid",
+            title="Αυξήσεις στην τιμή της βενζίνης στην Ελλάδα",
+            url="https://youtube.com/watch?v=greek_vid",
+            view_count=60000,
+            duration_seconds=300,
+            upload_date=fresh_compact,
+            like_count=200,
+            comment_count=50,
+            description="Ακρίβεια στα καύσιμα",
+        ),
+    ]
+
+    with patch(
+        "shorts_engine.services.niche_sourcing.fetch_youtube_videos",
+        return_value=raw_candidates,
+    ):
+        results = fetch_niche_videos_via_ytdlp(query="Τιμή Βενζίνης", max_results=5)
+        assert len(results) == 1
+        assert results[0].video_id == "greek_vid"
+
+
+def test_autopilot_handles_youtube_transcript_unavailable_error(tmp_path: Path) -> None:
+    from shorts_engine.services.autopilot import run_autopilot_pipeline
+    from shorts_engine.services.youtube_transcript_fetcher import (
+        YouTubeTranscriptUnavailableError,
+    )
+
+    settings = Settings(gemini_api_key="test_api_key", output_dir=tmp_path)
+    mock_niche_video = VideoMeta(
+        video_id="_J_y_hfOuCw",
+        title="Τιμή Βενζίνης στην Ελλάδα",
+        url="https://www.youtube.com/watch?v=_J_y_hfOuCw",
+        view_count=100000,
+        duration_seconds=120,
+        upload_date="20260920",
+        like_count=500,
+        comment_count=100,
+        description="Καύσιμα",
+    )
+
+    dummy_video_file = tmp_path / "test.mp4"
+    dummy_video_file.write_bytes(b"fake_video")
+
+    with (
+        patch(
+            "shorts_engine.services.autopilot.find_niche_trend_videos",
+            return_value=[mock_niche_video],
+        ),
+        patch(
+            "shorts_engine.services.autopilot.fetch_youtube_transcript",
+            side_effect=YouTubeTranscriptUnavailableError(
+                "Captions are disabled or not found for video '_J_y_hfOuCw'."
+            ),
+        ),
+        patch(
+            "shorts_engine.services.autopilot.download_video",
+            return_value=dummy_video_file,
+        ) as mock_dl,
+        patch("shorts_engine.services.autopilot.transcribe", return_value=[]),
+        patch("shorts_engine.services.autopilot.select_clips", return_value=[]),
+    ):
+        gen = run_autopilot_pipeline(target_url=None, settings=settings, num_videos=1)
+        messages = []
+        try:
+            for msg, _pct, _data in gen:
+                messages.append(msg)
+        except RuntimeError:
+            pass
+
+        # Pipeline did not crash during transcript triage; gracefully proceeded to Whisper download
+        mock_dl.assert_called_once()
+        assert any("Downloading video for Whisper analysis" in m for m in messages)
+
+
+def test_autopilot_handles_download_failure_with_ai_fallback(tmp_path: Path) -> None:
+    from shorts_engine.services.autopilot import run_autopilot_pipeline
+    from shorts_engine.services.seo_generator import SeoMetadata
+    from shorts_engine.services.youtube_transcript_fetcher import (
+        YouTubeTranscriptUnavailableError,
+    )
+
+    settings = Settings(gemini_api_key="test_api_key", output_dir=tmp_path)
+    mock_niche_video = VideoMeta(
+        video_id="_J_y_hfOuCw",
+        title="Τιμή Βενζίνης στην Ελλάδα",
+        url="https://www.youtube.com/watch?v=_J_y_hfOuCw",
+        view_count=100000,
+        duration_seconds=120,
+        upload_date="20260920",
+        like_count=500,
+        comment_count=100,
+        description="Ανάλυση καυσίμων",
+    )
+
+    mock_seo = SeoMetadata(
+        title="Τιμή Βενζίνης: Τι Αλλάζει",
+        description="Ανάλυση",
+        tags=("βενζίνη", "οικονομία"),
+        primary_keyword="βενζίνη",
+        pinned_comment="Ποια είναι η άποψή σας;",
+        curiosity_title="Τι συμβαίνει με τη βενζίνη;",
+        authority_title="Η αλήθεια για τα καύσιμα",
+        contrarian_title="Γιατί η βενζίνη δεν θα πέσει",
+    )
+
+    with (
+        patch(
+            "shorts_engine.services.autopilot.find_niche_trend_videos",
+            return_value=[mock_niche_video],
+        ),
+        patch(
+            "shorts_engine.services.autopilot.fetch_youtube_transcript",
+            side_effect=YouTubeTranscriptUnavailableError("Captions disabled"),
+        ),
+        patch(
+            "shorts_engine.services.autopilot.download_video",
+            side_effect=RuntimeError("yt-dlp failed: This video is unavailable"),
+        ),
+        patch(
+            "shorts_engine.services.autopilot.build_full_ai_short",
+            return_value=(tmp_path / "ai_output.mp4", mock_seo),
+        ) as mock_ai_build,
+        patch("shorts_engine.services.autopilot.record_processed_video"),
+    ):
+        gen = run_autopilot_pipeline(target_url=None, settings=settings, num_videos=1)
+        messages = [msg for msg, _pct, _data in gen]
+
+        # Download failure fell back to Full AI Short generation cleanly
+        mock_ai_build.assert_called_once()
+        assert any(
+            "Video download unavailable -> Switching to Full AI Short Generation" in m
+            for m in messages
+        )

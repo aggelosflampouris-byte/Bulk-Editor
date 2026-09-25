@@ -80,6 +80,27 @@ def _is_channel_excluded(channel_id: str, channel_title: str) -> bool:
     return False
 
 
+def is_greek_content_relevant(title: str, query: str = "") -> bool:
+    """
+    Check if a candidate video title is relevant to Greek news/politics (@DianismaNews).
+    If query contains Greek characters or is empty (default niche), title must contain Greek characters.
+    Rejects foreign (e.g. German, French, Russian) search results that match broad tags.
+    """
+    cleaned_title = (title or "").strip()
+    if not cleaned_title:
+        return False
+
+    is_greek_query = bool(re.search(r"[\u0370-\u03ff\u1f00-\u1fff]", query or ""))
+    has_greek_letters = bool(re.search(r"[\u0370-\u03ff\u1f00-\u1fff]", cleaned_title))
+
+    # If query is written in Greek (e.g. 'Τιμή Βενζίνης'), candidate MUST contain Greek characters
+    if is_greek_query and not has_greek_letters:
+        return False
+
+    # If query is empty or generic, our channel niche is Greek: require Greek characters
+    return bool(query or has_greek_letters)
+
+
 def _parse_iso_duration(dur: str) -> int:
     """Parse ISO 8601 duration (e.g., PT14M32S) to integer seconds."""
     match = re.match(r"^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$", dur)
@@ -98,6 +119,7 @@ def fetch_niche_videos_via_api(
 ) -> list[VideoMeta]:
     """
     Search YouTube Data API v3 for recent niche videos with strict 3-week cutoff.
+    Enforces Greek regionality and language matching.
     """
     now = datetime.now(timezone.utc)
     cutoff_dt = now - timedelta(days=max_age_days)
@@ -110,14 +132,20 @@ def fetch_niche_videos_via_api(
     )
 
     try:
-        search_res = youtube_client.search().list(
-            q=query,
-            part="snippet",
-            type="video",
-            order="viewCount",
-            publishedAfter=published_after,
-            maxResults=min(50, max_results * 2),
-        ).execute()
+        search_res = (
+            youtube_client.search()
+            .list(
+                q=query,
+                part="snippet",
+                type="video",
+                order="viewCount",
+                relevanceLanguage="el",
+                regionCode="GR",
+                publishedAfter=published_after,
+                maxResults=min(50, max_results * 2),
+            )
+            .execute()
+        )
     except (RuntimeError, OSError, ValueError, KeyError, AttributeError) as exc:
         logger.warning("YouTube Data API niche search failed: %s", exc)
         return []
@@ -132,8 +160,16 @@ def fetch_niche_videos_via_api(
         snip = item.get("snippet", {})
         ch_id = snip.get("channelId", "")
         ch_title = snip.get("channelTitle", "")
+        item_title = snip.get("title", "")
         if _is_channel_excluded(ch_id, ch_title):
             logger.debug("Skipping our own channel video from search: %s", vid_id)
+            continue
+        if item_title and not is_greek_content_relevant(item_title, query):
+            logger.debug(
+                "Skipping non-Greek video from search snippet: %s ('%s')",
+                vid_id,
+                item_title,
+            )
             continue
         candidate_video_ids.append(vid_id)
 
@@ -141,10 +177,14 @@ def fetch_niche_videos_via_api(
         return []
 
     try:
-        details_res = youtube_client.videos().list(
-            id=",".join(candidate_video_ids[:50]),
-            part="snippet,statistics,contentDetails",
-        ).execute()
+        details_res = (
+            youtube_client.videos()
+            .list(
+                id=",".join(candidate_video_ids[:50]),
+                part="snippet,statistics,contentDetails",
+            )
+            .execute()
+        )
     except (RuntimeError, OSError, ValueError, KeyError, AttributeError) as exc:
         logger.warning("YouTube Data API video details fetch failed: %s", exc)
         return []
@@ -159,6 +199,15 @@ def fetch_niche_videos_via_api(
         ch_id = snip.get("channelId", "")
         ch_title = snip.get("channelTitle", "")
         if _is_channel_excluded(ch_id, ch_title):
+            continue
+
+        item_title = snip.get("title", "")
+        if not is_greek_content_relevant(item_title, query):
+            logger.debug(
+                "Skipping non-Greek video from video details: %s ('%s')",
+                vid_id,
+                item_title,
+            )
             continue
 
         pub_str = snip.get("publishedAt", "")
@@ -178,8 +227,12 @@ def fetch_niche_videos_via_api(
             continue
 
         video_url = f"https://www.youtube.com/watch?v={vid_id}"
-        if is_video_already_processed(vid_id, output_dir) or is_video_already_processed(video_url, output_dir):
-            logger.debug("Skipping already processed video from API results: %s", vid_id)
+        if is_video_already_processed(vid_id, output_dir) or is_video_already_processed(
+            video_url, output_dir
+        ):
+            logger.debug(
+                "Skipping already processed video from API results: %s", vid_id
+            )
             continue
 
         views = int(stats.get("viewCount", 0))
@@ -228,14 +281,27 @@ def fetch_niche_videos_via_ytdlp(
             or "dianisma" in (v.description or "").lower()
         ):
             continue
-        if is_video_already_processed(v.video_id, output_dir) or is_video_already_processed(v.url, output_dir):
-            logger.debug("Skipping already processed video from yt-dlp results: %s", v.video_id)
+        if not is_greek_content_relevant(v.title, query):
+            logger.debug(
+                "Skipping non-Greek video from yt-dlp results: %s ('%s')",
+                v.video_id,
+                v.title,
+            )
+            continue
+        if is_video_already_processed(
+            v.video_id, output_dir
+        ) or is_video_already_processed(v.url, output_dir):
+            logger.debug(
+                "Skipping already processed video from yt-dlp results: %s", v.video_id
+            )
             continue
 
         if not v.upload_date:
             continue
         try:
-            upload_dt = datetime.strptime(v.upload_date, "%Y%m%d").replace(tzinfo=timezone.utc)
+            upload_dt = datetime.strptime(v.upload_date, "%Y%m%d").replace(
+                tzinfo=timezone.utc
+            )
         except ValueError:
             continue
 
@@ -320,11 +386,16 @@ def find_niche_trend_videos(
 
     candidate_list = list(all_candidates.values())
     if not candidate_list:
-        logger.warning("No fresh unprocessed niche videos found within the %d-day window.", max_age_days)
+        logger.warning(
+            "No fresh unprocessed niche videos found within the %d-day window.",
+            max_age_days,
+        )
         return []
 
     # Rank by virality score and view velocity
-    viral_recent = find_viral_recent_videos(candidate_list, max_results=len(candidate_list))
+    viral_recent = find_viral_recent_videos(
+        candidate_list, max_results=len(candidate_list)
+    )
     if viral_recent:
         ranked = [vr.video for vr in viral_recent]
     else:
@@ -332,7 +403,9 @@ def find_niche_trend_videos(
 
         def _velocity_key(v: VideoMeta) -> float:
             try:
-                upload_dt = datetime.strptime(v.upload_date, "%Y%m%d").replace(tzinfo=timezone.utc)
+                upload_dt = datetime.strptime(v.upload_date, "%Y%m%d").replace(
+                    tzinfo=timezone.utc
+                )
                 days = max(1, (now - upload_dt).days)
             except ValueError:
                 days = 1
