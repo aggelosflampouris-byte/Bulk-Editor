@@ -157,7 +157,7 @@ def test_build_hybrid_short_orchestration(tmp_path: Path) -> None:
 
     with (
         patch("shorts_engine.services.hybrid_short_generator.probe_resolution", return_value=(1080, 1920)),
-        patch("shorts_engine.services.hybrid_short_generator.probe_duration", side_effect=[9.0, 5.0]),
+        patch("shorts_engine.services.hybrid_short_generator.probe_duration", side_effect=lambda p: 9.0 if "spk" in str(p) or "speaker" in str(p) else 4.0),
         patch("shorts_engine.services.hybrid_short_generator.mask_burned_in_subtitles", side_effect=lambda src, dst: src),
         patch("shorts_engine.services.hybrid_short_generator.write_ass_file"),
         patch("shorts_engine.services.hybrid_short_generator.burn_subtitles"),

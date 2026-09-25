@@ -278,12 +278,12 @@ class Settings:
     # ── Background Music ──────────────────────────────────────
     # Enable subtle background audio bed
     enable_bg_music: bool = True
-    # Track preset: "ambient_calm" | "dramatic_pulse" | "upbeat_groove" | "custom" | "none"
+    # Track preset: "ambient_calm" | "dramatic_pulse" | "upbeat_groove" | "cinematic_suspense" | "custom" | "none"
     bg_music_track: str = "ambient_calm"
     # Optional path to custom uploaded audio file (used when bg_music_track == "custom")
     bg_music_path: Path | None = None
-    # Music volume level (0.01 to 0.50, default 0.20 = 20% volume)
-    bg_music_volume: float = 0.20
+    # Music volume level (0.01 to 0.50, default 0.22 = 22% volume)
+    bg_music_volume: float = 0.22
     # Dynamic speech ducking (sidechain compression to dip music during speech)
     bg_music_ducking: bool = True
 
@@ -360,11 +360,11 @@ class Settings:
 
         if self.enable_bg_music:
             if self.bg_music_track not in {
-                "ambient_calm", "dramatic_pulse", "upbeat_groove", "custom", "none"
+                "ambient_calm", "dramatic_pulse", "upbeat_groove", "cinematic_suspense", "custom", "none"
             }:
                 errors.append(
                     f"Invalid bg_music_track '{self.bg_music_track}'. "
-                    "Choose from: ambient_calm, dramatic_pulse, upbeat_groove, custom, none."
+                    "Choose from: ambient_calm, dramatic_pulse, upbeat_groove, cinematic_suspense, custom, none."
                 )
 
             if not (0.01 <= self.bg_music_volume <= 0.50):

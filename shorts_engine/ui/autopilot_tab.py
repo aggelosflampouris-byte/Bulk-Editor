@@ -142,6 +142,7 @@ def render_autopilot_tab(settings: Any) -> None:
                 "🎵 Ambient Calm (Instrumental • Royalty-Free)",
                 "🔥 Dramatic Pulse (Instrumental • Royalty-Free)",
                 "⚡ Upbeat Groove (Instrumental • Royalty-Free)",
+                "🎬 Cinematic Suspense (Instrumental • Royalty-Free)",
                 "🚫 None (Voice Only)",
             ],
             index=0,
@@ -151,6 +152,7 @@ def render_autopilot_tab(settings: Any) -> None:
             "🎵 Ambient Calm (Instrumental • Royalty-Free)": "ambient_calm",
             "🔥 Dramatic Pulse (Instrumental • Royalty-Free)": "dramatic_pulse",
             "⚡ Upbeat Groove (Instrumental • Royalty-Free)": "upbeat_groove",
+            "🎬 Cinematic Suspense (Instrumental • Royalty-Free)": "cinematic_suspense",
             "🚫 None (Voice Only)": "none",
         }
         selected_track = music_map.get(bg_choice, "ambient_calm")

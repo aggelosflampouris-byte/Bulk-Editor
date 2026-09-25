@@ -25,8 +25,10 @@ from google.genai import errors as genai_errors
 from google.genai import types as genai_types
 
 try:
+    from services.seo_generator import _call_gemini_with_fallback
     from services.transcriber import TranscriptionSegment
 except ImportError:
+    from shorts_engine.services.seo_generator import _call_gemini_with_fallback
     from shorts_engine.services.transcriber import TranscriptionSegment
 
 
@@ -157,16 +159,13 @@ def evaluate_logical_coherence(
             part2_text=part2_text.strip() or "(Κανένα κείμενο Part 2)",
         )
 
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-            config=genai_types.GenerateContentConfig(
-                temperature=0.2,
-                response_mime_type="application/json",
-            ),
+        config = genai_types.GenerateContentConfig(
+            temperature=0.2,
+            response_mime_type="application/json",
         )
+        raw_text = _call_gemini_with_fallback(client=client, contents=prompt, config=config)
 
-        raw_json = clean_json_markdown(response.text or "{}")
+        raw_json = clean_json_markdown(raw_text or "{}")
         data = json.loads(raw_json)
 
         makes_sense = bool(data.get("makes_sense", True))

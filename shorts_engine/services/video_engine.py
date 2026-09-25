@@ -80,8 +80,8 @@ def run_ffmpeg(args: list[str]) -> None:
     logger.debug("FFmpeg command: %s", " ".join(exec_args))
     result = subprocess.run(
         exec_args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
+        check=False,
         text=True,
         encoding="utf-8",
         errors="replace",
@@ -143,8 +143,8 @@ def probe_duration(video_path: Path) -> float:
     ]
     result = subprocess.run(
         args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
+        check=False,
         text=True,
         encoding="utf-8",
         errors="replace",
@@ -185,8 +185,8 @@ def probe_resolution(video_path: Path) -> tuple[int, int]:
     ]
     result = subprocess.run(
         args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
+        check=False,
         text=True,
         encoding="utf-8",
         errors="replace",
@@ -225,8 +225,8 @@ def probe_has_audio(video_path: Path) -> bool:
     ]
     result = subprocess.run(
         args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
+        check=False,
         text=True,
         encoding="utf-8",
         errors="replace",
@@ -840,28 +840,30 @@ def mix_background_music(
     if has_audio:
         bgm_filter = (
             f"[1:a]{norm_af},volume={clamped_vol:.3f},"
+            f"equalizer=f=1000:t=q:w=1.2:g=-3.5,"
             f"afade=t=in:st=0:d={fade_in:.2f},"
             f"afade=t=out:st={fade_out_start:.2f}:d={fade_out:.2f}[bgm]"
         )
         if ducking:
             fc = (
                 f"{bgm_filter};"
-                f"[0:a]{norm_af},asplit=2[speech_raw][speech_sc];"
-                f"[speech_raw]acompressor=threshold=0.1:ratio=3:makeup=1.5[speech_enhanced];"
-                f"[bgm][speech_sc]sidechaincompress=threshold=0.08:ratio=5.0:attack=15:release=200:level_sc=1.0[ducked_bgm];"
+                f"[0:a]{norm_af},highpass=f=80,asplit=2[speech_raw][speech_sc];"
+                f"[speech_raw]acompressor=threshold=0.12:ratio=2.5:attack=20:release=150:makeup=1.2[speech_enhanced];"
+                f"[bgm][speech_sc]sidechaincompress=threshold=0.12:ratio=2.2:attack=40:release=350:level_sc=1.0[ducked_bgm];"
                 f"[speech_enhanced][ducked_bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,atrim=0:{vid_dur:.3f}[a_out]"
             )
         else:
             fc = (
                 f"{bgm_filter};"
-                f"[0:a]{norm_af}[speech_raw];"
-                f"[speech_raw]acompressor=threshold=0.1:ratio=3:makeup=1.5[speech_enhanced];"
+                f"[0:a]{norm_af},highpass=f=80[speech_raw];"
+                f"[speech_raw]acompressor=threshold=0.12:ratio=2.5:attack=20:release=150:makeup=1.2[speech_enhanced];"
                 f"[speech_enhanced][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,atrim=0:{vid_dur:.3f}[a_out]"
             )
     else:
-        # Video has no audio track: music plays as sole audio track
+        # Video has no audio track: music plays with rich presence as primary audio
+        standalone_vol = max(0.60, min(1.0, clamped_vol * 3.5))
         fc = (
-            f"[1:a]{norm_af},volume={clamped_vol:.3f},"
+            f"[1:a]{norm_af},volume={standalone_vol:.3f},"
             f"afade=t=in:st=0:d={fade_in:.2f},"
             f"afade=t=out:st={fade_out_start:.2f}:d={fade_out:.2f},"
             f"atrim=0:{vid_dur:.3f}[a_out]"
@@ -876,7 +878,7 @@ def mix_background_music(
         "-map", "[a_out]",
         "-c:v", "copy",
         "-c:a", "aac",
-        "-b:a", "128k",
+        "-b:a", "192k",
         "-shortest",
         "-movflags", "+faststart",
         str(output_path),

@@ -188,7 +188,7 @@ def run_autopilot_pipeline(
         mask_old_subtitles=True,
         enable_bg_music=True,
         bg_music_track=active_bg_track,
-        bg_music_volume=getattr(settings, "bg_music_volume", 0.15) if getattr(settings, "bg_music_volume", 0) > 0 else 0.15,
+        bg_music_volume=getattr(settings, "bg_music_volume", 0.22) if getattr(settings, "bg_music_volume", 0) > 0 else 0.22,
         bg_music_ducking=True,
     )
 
@@ -453,10 +453,22 @@ def run_autopilot_pipeline(
         # Check if production strategy is hybrid
         if production_strategy == "hybrid":
             yield (
-                f"[Video {idx+1}/{num_videos}] Strategy: Hybrid Short (Authentic Speaker Clip + AI Breakdown)...",
-                _p(0.7),
+                f"[Video {idx+1}/{num_videos}] Strategy: Back-and-Forth Hybrid Short (Speaker Clip + Deep Research AI Breakdown)...",
+                _p(0.68),
                 None,
             )
+            # Conduct wide & deep research across news and data
+            dossier = None
+            try:
+                from services.research_engine import conduct_wide_and_deep_research
+                dossier = conduct_wide_and_deep_research(
+                    topic_title=best_video.title,
+                    topic_context=f"Video Title: {best_video.title}\nDescription: {best_video.description}",
+                    gemini_api_key=settings.gemini_api_key,
+                )
+            except (OSError, RuntimeError, ValueError, KeyError) as r_exc:
+                logger.warning("Autopilot research step skipped: %s", r_exc)
+
             try:
                 from services.hybrid_short_generator import build_hybrid_short
                 from services.timeline_utils import slice_segments
@@ -469,7 +481,7 @@ def run_autopilot_pipeline(
                 from shorts_engine.services.video_engine import slice_video
 
             clip_dur = max(6.0, best_clip.end_time - best_clip.start_time)
-            part1_dur = min(13.0, clip_dur)
+            part1_dur = min(20.0, clip_dur)
             s_start = source_offset if source_is_section else best_clip.start_time
             s_end = s_start + part1_dur
 
@@ -493,6 +505,7 @@ def run_autopilot_pipeline(
                     tmp_dir=download_dir,
                     output_dir=ap_settings.output_dir,
                     report_cb=lambda msg: None,
+                    research_dossier=dossier,
                 )
                 results.append({
                     "seo": seo,
