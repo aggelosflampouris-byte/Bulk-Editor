@@ -88,9 +88,11 @@ def run_autopilot_pipeline(
     selected_video: VideoMeta | None = None,
     production_strategy: str = "auto",
     niche_query: str = "",
+    local_video_paths: list[Path] | None = None,
 ) -> Generator[tuple[str, int, Any], None, None]:
     """
     Runs the entire pipeline end-to-end for the top `num_videos` videos.
+    If local_video_paths is provided, processes those local video files directly.
     If selected_video is provided, processes that exact video from the library.
     By default (empty target_url), searches YouTube for fresh viral videos in our niche (≤ 3 weeks old)
     and strictly excludes @DianismaNews to avoid re-using our own channel's older content.
@@ -103,7 +105,24 @@ def run_autopilot_pipeline(
 
     Yields (status_message, progress_percentage, result_data).
     """
-    if selected_video is not None:
+    if local_video_paths:
+        best_videos = []
+        for p in local_video_paths[:num_videos]:
+            p = Path(p)
+            best_videos.append(
+                VideoMeta(
+                    video_id=f"local_{p.stem}_{abs(hash(str(p)))}",
+                    title=p.stem.replace("_", " ").title(),
+                    url=str(p.resolve()),
+                    duration_seconds=0,
+                    view_count=0,
+                    upload_date=datetime.now(timezone.utc).strftime("%Y%m%d"),
+                    channel_title="Local Video",
+                    description=f"Local video: {p.name}",
+                )
+            )
+        yield (f"Loaded {len(best_videos)} local video file(s) for intelligent autopilot processing.", 8, None)
+    elif selected_video is not None:
         best_videos = [selected_video]
         yield (f"Selected video from Dianisma library: {selected_video.title}", 8, None)
     elif target_url and any(
@@ -355,26 +374,27 @@ def run_autopilot_pipeline(
 
         # 1. Attempt pre-download transcript triage
         transcript = None
-        try:
-            transcript = fetch_youtube_transcript(best_video.url)
-            if transcript:
-                logger.info(
-                    "Retrieved %d transcript segments via YouTube API for %s — skipping full video download.",
-                    len(transcript),
-                    best_video.url,
+        if not Path(best_video.url).is_file():
+            try:
+                transcript = fetch_youtube_transcript(best_video.url)
+                if transcript:
+                    logger.info(
+                        "Retrieved %d transcript segments via YouTube API for %s — skipping full video download.",
+                        len(transcript),
+                        best_video.url,
+                    )
+            except (
+                YouTubeTranscriptError,
+                RuntimeError,
+                OSError,
+                ValueError,
+                KeyError,
+                AttributeError,
+            ) as exc:
+                logger.debug(
+                    "YouTube transcript fetch failed for %s: %s", best_video.url, exc
                 )
-        except (
-            YouTubeTranscriptError,
-            RuntimeError,
-            OSError,
-            ValueError,
-            KeyError,
-            AttributeError,
-        ) as exc:
-            logger.debug(
-                "YouTube transcript fetch failed for %s: %s", best_video.url, exc
-            )
-            transcript = None
+                transcript = None
 
         source_is_section = False
         source_offset = 0.0
@@ -442,84 +462,89 @@ def run_autopilot_pipeline(
                 None,
             )
             pad = 2.0
-            try:
-                video_path = download_video_section(
-                    best_video.url,
-                    download_dir,
-                    start_time=best_clip.start_time,
-                    end_time=best_clip.end_time,
-                    padding=pad,
-                )
-                source_is_section = True
-                source_offset = min(best_clip.start_time, pad)
-            except (RuntimeError, OSError, ValueError) as exc:
-                logger.warning(
-                    "Section download failed (%s), falling back to full download.", exc
-                )
+            if Path(best_video.url).is_file():
+                video_path = Path(best_video.url)
+                source_is_section = False
+                source_offset = 0.0
+            else:
                 try:
-                    video_path = download_video(
+                    video_path = download_video_section(
                         best_video.url,
                         download_dir,
-                        settings.max_source_duration_seconds,
+                        start_time=best_clip.start_time,
+                        end_time=best_clip.end_time,
+                        padding=pad,
                     )
-                    source_is_section = False
-                    source_offset = 0.0
-                except (RuntimeError, OSError, ValueError) as dl_exc:
+                    source_is_section = True
+                    source_offset = min(best_clip.start_time, pad)
+                except (RuntimeError, OSError, ValueError) as exc:
                     logger.warning(
-                        "Full download also failed for %s: %s. Attempting Full AI Short fallback.",
-                        best_video.url,
-                        dl_exc,
-                    )
-                    yield (
-                        f"[Video {idx + 1}/{num_videos}] Video download unavailable -> Switching to Full AI Short Generation...",
-                        _p(0.6),
-                        None,
+                        "Section download failed (%s), falling back to full download.", exc
                     )
                     try:
-                        final_output, seo = build_full_ai_short(
-                            topic_title=best_video.title,
-                            topic_context=f"Video Title: {best_video.title}\nDescription: {best_video.description}",
-                            settings=ap_settings,
-                            tmp_dir=download_dir,
-                            output_dir=ap_settings.output_dir,
-                            report_cb=lambda msg: None,
+                        video_path = download_video(
+                            best_video.url,
+                            download_dir,
+                            settings.max_source_duration_seconds,
                         )
-                        record_processed_video(
-                            video_id=best_video.video_id,
-                            url=best_video.url,
-                            title=best_video.title,
-                            output_dir=ap_settings.output_dir,
-                            mode="ai_gen",
-                            seo=seo,
-                            output_file=final_output,
-                        )
-                        results.append(
-                            {
-                                "seo": seo,
-                                "path": final_output,
-                                "publish_at": get_optimal_schedule_time()
-                                + timedelta(days=idx),
-                            }
-                        )
-                        continue
-                    except (
-                        RuntimeError,
-                        OSError,
-                        ValueError,
-                        KeyError,
-                        APIError,
-                    ) as ai_exc:
-                        logger.error(
-                            "Full AI fallback failed for %s: %s",
-                            best_video.title,
-                            ai_exc,
+                        source_is_section = False
+                        source_offset = 0.0
+                    except (RuntimeError, OSError, ValueError) as dl_exc:
+                        logger.warning(
+                            "Full download also failed for %s: %s. Attempting Full AI Short fallback.",
+                            best_video.url,
+                            dl_exc,
                         )
                         yield (
-                            f"[Video {idx + 1}/{num_videos}] Video unavailable; skipping '{best_video.title[:35]}'.",
-                            _p(0.65),
+                            f"[Video {idx + 1}/{num_videos}] Video download unavailable -> Switching to Full AI Short Generation...",
+                            _p(0.6),
                             None,
                         )
-                        continue
+                        try:
+                            final_output, seo = build_full_ai_short(
+                                topic_title=best_video.title,
+                                topic_context=f"Video Title: {best_video.title}\nDescription: {best_video.description}",
+                                settings=ap_settings,
+                                tmp_dir=download_dir,
+                                output_dir=ap_settings.output_dir,
+                                report_cb=lambda msg: None,
+                            )
+                            record_processed_video(
+                                video_id=best_video.video_id,
+                                url=best_video.url,
+                                title=best_video.title,
+                                output_dir=ap_settings.output_dir,
+                                mode="ai_gen",
+                                seo=seo,
+                                output_file=final_output,
+                            )
+                            results.append(
+                                {
+                                    "seo": seo,
+                                    "path": final_output,
+                                    "publish_at": get_optimal_schedule_time()
+                                    + timedelta(days=idx),
+                                }
+                            )
+                            continue
+                        except (
+                            RuntimeError,
+                            OSError,
+                            ValueError,
+                            KeyError,
+                            APIError,
+                        ) as ai_exc:
+                            logger.error(
+                                "Full AI fallback failed for %s: %s",
+                                best_video.title,
+                                ai_exc,
+                            )
+                            yield (
+                                f"[Video {idx + 1}/{num_videos}] Video unavailable; skipping '{best_video.title[:35]}'.",
+                                _p(0.65),
+                                None,
+                            )
+                            continue
 
             # Content Classifier: if auto mode, inspect video for on-camera speaker
             if production_strategy == "auto":
@@ -578,66 +603,69 @@ def run_autopilot_pipeline(
                 _p(0.15),
                 None,
             )
-            try:
-                video_path = download_video(
-                    best_video.url, download_dir, settings.max_source_duration_seconds
-                )
-            except (RuntimeError, OSError, ValueError) as dl_exc:
-                logger.warning(
-                    "Video download failed for %s (%s). Attempting Full AI Short fallback.",
-                    best_video.url,
-                    dl_exc,
-                )
-                yield (
-                    f"[Video {idx + 1}/{num_videos}] Video download unavailable -> Switching to Full AI Short Generation...",
-                    _p(0.2),
-                    None,
-                )
+            if Path(best_video.url).is_file():
+                video_path = Path(best_video.url)
+            else:
                 try:
-                    final_output, seo = build_full_ai_short(
-                        topic_title=best_video.title,
-                        topic_context=f"Video Title: {best_video.title}\nDescription: {best_video.description}",
-                        settings=ap_settings,
-                        tmp_dir=download_dir,
-                        output_dir=ap_settings.output_dir,
-                        report_cb=lambda msg: None,
+                    video_path = download_video(
+                        best_video.url, download_dir, settings.max_source_duration_seconds
                     )
-                    record_processed_video(
-                        video_id=best_video.video_id,
-                        url=best_video.url,
-                        title=best_video.title,
-                        output_dir=ap_settings.output_dir,
-                        mode="ai_gen",
-                        seo=seo,
-                        output_file=final_output,
-                    )
-                    results.append(
-                        {
-                            "seo": seo,
-                            "path": final_output,
-                            "publish_at": get_optimal_schedule_time()
-                            + timedelta(days=idx),
-                        }
-                    )
-                    continue
-                except (
-                    RuntimeError,
-                    OSError,
-                    ValueError,
-                    KeyError,
-                    APIError,
-                ) as ai_exc:
-                    logger.error(
-                        "Full AI fallback after download failure failed for %s: %s",
-                        best_video.title,
-                        ai_exc,
+                except (RuntimeError, OSError, ValueError) as dl_exc:
+                    logger.warning(
+                        "Video download failed for %s (%s). Attempting Full AI Short fallback.",
+                        best_video.url,
+                        dl_exc,
                     )
                     yield (
-                        f"[Video {idx + 1}/{num_videos}] Video unavailable; skipping '{best_video.title[:35]}'.",
-                        _p(0.25),
+                        f"[Video {idx + 1}/{num_videos}] Video download unavailable -> Switching to Full AI Short Generation...",
+                        _p(0.2),
                         None,
                     )
-                    continue
+                    try:
+                        final_output, seo = build_full_ai_short(
+                            topic_title=best_video.title,
+                            topic_context=f"Video Title: {best_video.title}\nDescription: {best_video.description}",
+                            settings=ap_settings,
+                            tmp_dir=download_dir,
+                            output_dir=ap_settings.output_dir,
+                            report_cb=lambda msg: None,
+                        )
+                        record_processed_video(
+                            video_id=best_video.video_id,
+                            url=best_video.url,
+                            title=best_video.title,
+                            output_dir=ap_settings.output_dir,
+                            mode="ai_gen",
+                            seo=seo,
+                            output_file=final_output,
+                        )
+                        results.append(
+                            {
+                                "seo": seo,
+                                "path": final_output,
+                                "publish_at": get_optimal_schedule_time()
+                                + timedelta(days=idx),
+                            }
+                        )
+                        continue
+                    except (
+                        RuntimeError,
+                        OSError,
+                        ValueError,
+                        KeyError,
+                        APIError,
+                    ) as ai_exc:
+                        logger.error(
+                            "Full AI fallback after download failure failed for %s: %s",
+                            best_video.title,
+                            ai_exc,
+                        )
+                        yield (
+                            f"[Video {idx + 1}/{num_videos}] Video unavailable; skipping '{best_video.title[:35]}'.",
+                            _p(0.25),
+                            None,
+                        )
+                        continue
 
             # Content Classifier: if auto mode, inspect video for on-camera speaker
             if production_strategy == "auto":

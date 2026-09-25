@@ -26,7 +26,6 @@ if str(_APP_DIR.parent) not in sys.path:
     sys.path.insert(0, str(_APP_DIR.parent))
 
 import streamlit as st
-
 from config import (
     DEFAULT_OUTPUT_DIR,
     Settings,
@@ -770,36 +769,13 @@ def main() -> None:
         st.error(f"**System requirement not met:**\n\n{exc}")
         st.stop()
 
-    # ── Navigation Tabs ────────────────────────────────────────────────────────
-    if "active_tab" not in st.session_state:
-        st.session_state["active_tab"] = "File Upload"
-
-    active_tab = st.segmented_control(
-        "Navigation",
-        ["File Upload", "Video URL", "🤖 Autopilot", "📊 Niche Explorer", "📤 Upload to YouTube"],
-        key="active_tab",
-        label_visibility="collapsed",
-    )
-
-    if active_tab == "File Upload":
-        from ui.file_upload_tab import render_file_upload_tab
-        render_file_upload_tab(settings)
-
-    elif active_tab == "Video URL":
-        from ui.url_tab import render_video_url_tab
-        render_video_url_tab(settings)
-
-    elif active_tab == "🤖 Autopilot":
+    # ── Autopilot Studio ───────────────────────────────────────────────────────
+    try:
         from ui.autopilot_tab import render_autopilot_tab
-        render_autopilot_tab(settings)
+    except ImportError:
+        from shorts_engine.ui.autopilot_tab import render_autopilot_tab
 
-    elif active_tab == "📊 Niche Explorer":
-        from ui.niche_explorer_tab import render_niche_explorer_tab
-        render_niche_explorer_tab(settings)
-
-    elif active_tab == "📤 Upload to YouTube":
-        from ui.youtube_upload_tab import render_youtube_upload_tab
-        render_youtube_upload_tab(settings)
+    render_autopilot_tab(settings)
 
 
 if __name__ == "__main__":

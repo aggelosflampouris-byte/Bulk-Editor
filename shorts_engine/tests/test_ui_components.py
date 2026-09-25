@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 from shorts_engine.config import Settings
 from shorts_engine.pipeline import ProcessingResult
 from shorts_engine.services.seo_generator import SeoMetadata
+from shorts_engine.ui.autopilot_tab import render_autopilot_tab
 from shorts_engine.ui.components.result_card import (
     get_result_download_filename,
     render_result_card,
@@ -114,3 +115,19 @@ def test_render_video_url_tab_smoke():
          patch("streamlit.session_state", {}), \
          patch("streamlit.button", return_value=False):
         render_video_url_tab(settings)
+
+
+def test_render_autopilot_tab_smoke():
+    settings = Settings()
+    with patch("streamlit.columns", side_effect=_mock_columns), \
+         patch("streamlit.markdown"), \
+         patch("streamlit.radio", return_value="🌐 Niche Trend Discovery (Smart Outlier & Velocity Scanner — Recommended)"), \
+         patch("streamlit.text_input", return_value=""), \
+         patch("streamlit.selectbox", return_value="🔥 Hybrid: Speaker Clip + AI Breakdown (Recommended)"), \
+         patch("streamlit.slider", return_value=0.15), \
+         patch("streamlit.number_input", return_value=1), \
+         patch("streamlit.expander"), \
+         patch("streamlit.session_state", {}), \
+         patch("streamlit.button", return_value=False):
+        render_autopilot_tab(settings)
+
