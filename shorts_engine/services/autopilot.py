@@ -13,7 +13,17 @@ from typing import Any
 from config import Settings
 from google.genai.errors import APIError
 from pipeline import process_url_clip
-from services.cache_manager import is_video_already_processed
+
+try:
+    from services.cache_manager import (
+        is_video_already_processed,
+        record_processed_video,
+    )
+except ImportError:
+    from shorts_engine.services.cache_manager import (
+        is_video_already_processed,
+        record_processed_video,
+    )
 from services.channel_analyzer import (
     DIANISMA_CHANNEL_URL,
     VideoMeta,
@@ -108,7 +118,11 @@ def run_autopilot_pipeline(
 
         viral_picks = find_viral_recent_videos(videos, max_results=max(10, num_videos * 2))
         candidates = [vp.video for vp in viral_picks] if viral_picks else list(videos)
-        unprocessed = [v for v in candidates if not is_video_already_processed(v.url, settings.output_dir if settings else None)]
+        unprocessed = [
+            v for v in candidates
+            if not is_video_already_processed(v.video_id, settings.output_dir if settings else None)
+            and not is_video_already_processed(v.url, settings.output_dir if settings else None)
+        ]
         best_videos = (unprocessed if unprocessed else candidates)[:num_videos]
     else:
         # Default Autopilot Mode (also active when DIANISMA_CHANNEL_URL or empty URL is passed):
@@ -133,7 +147,13 @@ def run_autopilot_pipeline(
             output_dir=settings.output_dir if settings else None,
         )
 
-        if not candidates:
+        unprocessed = [
+            v for v in candidates
+            if not is_video_already_processed(v.video_id, settings.output_dir if settings else None)
+            and not is_video_already_processed(v.url, settings.output_dir if settings else None)
+        ]
+
+        if len(unprocessed) < num_videos:
             # Resilient fallback: search broader niche topics across YouTube (never our own channel)
             yield ("Searching broader niche topics across YouTube (≤ 3 weeks old)...", 7, None)
             try:
@@ -147,22 +167,38 @@ def run_autopilot_pipeline(
                     fetch_niche_videos_via_ytdlp,
                 )
 
-            for fallback_query in DEFAULT_NICHE_QUERIES:
+            import random
+            shuffled_fallback = list(DEFAULT_NICHE_QUERIES)
+            random.shuffle(shuffled_fallback)
+
+            existing_ids = {v.video_id for v in unprocessed}
+            for fallback_query in shuffled_fallback:
                 fallback_videos = fetch_niche_videos_via_ytdlp(
                     query=fallback_query,
                     max_results=max(10, num_videos * 3),
                     max_age_days=21,
                     output_dir=settings.output_dir if settings else None,
                 )
-                if fallback_videos:
-                    candidates = fallback_videos
+                for fv in fallback_videos:
+                    if (
+                        fv.video_id not in existing_ids
+                        and not is_video_already_processed(fv.video_id, settings.output_dir if settings else None)
+                        and not is_video_already_processed(fv.url, settings.output_dir if settings else None)
+                    ):
+                        existing_ids.add(fv.video_id)
+                        unprocessed.append(fv)
+                        if len(unprocessed) >= num_videos:
+                            break
+                if len(unprocessed) >= num_videos:
                     break
 
-        unprocessed = [v for v in candidates if not is_video_already_processed(v.url, settings.output_dir if settings else None)]
-        best_videos = (unprocessed if unprocessed else candidates)[:num_videos]
+        best_videos = unprocessed[:num_videos]
 
     if not best_videos:
-        raise ValueError("Could not find any suitable videos in the niche for Autopilot processing.")
+        raise ValueError(
+            "Could not find any new unprocessed videos in the niche (≤ 3 weeks old). "
+            "All top candidates have already been processed. Please provide a custom topic or keyword focus."
+        )
 
     yield (f"Selected {len(best_videos)} highly viral videos for processing.", 10, None)
 
@@ -223,6 +259,15 @@ def run_autopilot_pipeline(
                     tmp_dir=download_dir,
                     output_dir=ap_settings.output_dir,
                     report_cb=lambda msg: None,
+                )
+                record_processed_video(
+                    video_id=best_video.video_id,
+                    url=best_video.url,
+                    title=best_video.title,
+                    output_dir=ap_settings.output_dir,
+                    mode="ai_gen",
+                    seo=seo,
+                    output_file=final_output,
                 )
                 results.append({
                     "seo": seo,
@@ -344,6 +389,15 @@ def run_autopilot_pipeline(
                             output_dir=ap_settings.output_dir,
                             report_cb=lambda msg: None,
                         )
+                        record_processed_video(
+                            video_id=best_video.video_id,
+                            url=best_video.url,
+                            title=best_video.title,
+                            output_dir=ap_settings.output_dir,
+                            mode="ai_gen",
+                            seo=seo,
+                            output_file=final_output,
+                        )
                         results.append({
                             "seo": seo,
                             "path": final_output,
@@ -376,6 +430,15 @@ def run_autopilot_pipeline(
                             tmp_dir=download_dir,
                             output_dir=ap_settings.output_dir,
                             report_cb=lambda msg: None,
+                        )
+                        record_processed_video(
+                            video_id=best_video.video_id,
+                            url=best_video.url,
+                            title=best_video.title,
+                            output_dir=ap_settings.output_dir,
+                            mode="ai_gen",
+                            seo=seo,
+                            output_file=final_output,
                         )
                         results.append({
                             "seo": seo,
@@ -507,6 +570,15 @@ def run_autopilot_pipeline(
                     report_cb=lambda msg: None,
                     research_dossier=dossier,
                 )
+                record_processed_video(
+                    video_id=best_video.video_id,
+                    url=best_video.url,
+                    title=best_video.title,
+                    output_dir=ap_settings.output_dir,
+                    mode="hybrid",
+                    seo=seo,
+                    output_file=final_output,
+                )
                 results.append({
                     "seo": seo,
                     "path": final_output,
@@ -557,6 +629,15 @@ def run_autopilot_pipeline(
             api_key=settings.gemini_api_key
         )
         
+        record_processed_video(
+            video_id=best_video.video_id,
+            url=best_video.url,
+            title=best_video.title,
+            output_dir=ap_settings.output_dir,
+            mode="clip",
+            seo=seo,
+            output_file=result.output_file,
+        )
         results.append({
             "seo": seo,
             "path": result.output_file,

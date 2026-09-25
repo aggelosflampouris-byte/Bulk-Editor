@@ -17,7 +17,10 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from services.cache_manager import is_video_already_processed
+    from services.cache_manager import (
+        get_processed_video_ids,
+        is_video_already_processed,
+    )
     from services.channel_analyzer import (
         DIANISMA_CHANNEL_ID,
         VideoMeta,
@@ -25,7 +28,10 @@ try:
         find_viral_recent_videos,
     )
 except ImportError:
-    from shorts_engine.services.cache_manager import is_video_already_processed
+    from shorts_engine.services.cache_manager import (
+        get_processed_video_ids,
+        is_video_already_processed,
+    )
     from shorts_engine.services.channel_analyzer import (
         DIANISMA_CHANNEL_ID,
         VideoMeta,
@@ -51,7 +57,16 @@ EXCLUDED_CHANNEL_IDENTIFIERS: set[str] = {
 DEFAULT_NICHE_QUERIES: tuple[str, ...] = (
     "ελληνική πολιτική ειδήσεις συνεντεύξεις",
     "εξελίξεις ελλάδα οικονομία επικαιρότητα",
-    "δηλώσεις πολιτική βουλή νέα",
+    "δηλώσεις πολιτική βουλή νέα αντιπαράθεση",
+    "ελληνικά νέα επικαιρότητα οικονομικά μέτρα ακρίβεια",
+    "γεωπολιτική ελλάδα τουρκία διεθνείς σχέσεις",
+    "συνεντεύξεις αρχηγών κομμάτων πολιτικές αναλύσεις",
+    "ελληνική οικονομία τράπεζες συντάξεις μισθοί",
+    "κοινωνικά θέματα ελλάδα συζητήσεις τηλεόραση εκπομπές",
+    "ελληνικό κοινοβούλιο ένταση τοποθετήσεις debate",
+    "πρωτοσέλιδα ειδήσεων αποκαλύψεις πολιτικό ρεπορτάζ",
+    "ελληνική επικαιρότητα έρευνες οικονομία φορολογία",
+    "πολιτική επικαιρότητα εκλογές δημοσκοπήσεις",
 )
 
 
@@ -163,7 +178,8 @@ def fetch_niche_videos_via_api(
             continue
 
         video_url = f"https://www.youtube.com/watch?v={vid_id}"
-        if output_dir and is_video_already_processed(video_url, output_dir):
+        if is_video_already_processed(vid_id, output_dir) or is_video_already_processed(video_url, output_dir):
+            logger.debug("Skipping already processed video from API results: %s", vid_id)
             continue
 
         views = int(stats.get("viewCount", 0))
@@ -212,7 +228,8 @@ def fetch_niche_videos_via_ytdlp(
             or "dianisma" in (v.description or "").lower()
         ):
             continue
-        if output_dir and is_video_already_processed(v.url, output_dir):
+        if is_video_already_processed(v.video_id, output_dir) or is_video_already_processed(v.url, output_dir):
+            logger.debug("Skipping already processed video from yt-dlp results: %s", v.video_id)
             continue
 
         if not v.upload_date:
@@ -240,15 +257,31 @@ def find_niche_trend_videos(
     max_age_days: int = MAX_RECENCY_DAYS,
     youtube_client: Any | None = None,
     output_dir: Path | None = None,
+    exclude_video_ids: set[str] | None = None,
+    shuffle_queries: bool = True,
 ) -> list[VideoMeta]:
     """
     Find top trending, viral videos in our niche uploaded within the last 3 weeks.
     Strictly excludes @DianismaNews to avoid re-using our own content.
+    Excludes previously processed videos to prevent re-sourcing the same content.
 
     Returns:
         List of fresh VideoMeta sorted by viral breakout potential.
     """
-    search_queries = [query.strip()] if (query and query.strip()) else list(DEFAULT_NICHE_QUERIES)
+    import random
+
+    is_custom_query = bool(query and query.strip())
+    if is_custom_query:
+        search_queries = [query.strip()]  # type: ignore[union-attr]
+    else:
+        all_q = list(DEFAULT_NICHE_QUERIES)
+        if shuffle_queries:
+            random.shuffle(all_q)
+        search_queries = all_q
+
+    processed_ids = get_processed_video_ids(output_dir)
+    if exclude_video_ids:
+        processed_ids |= set(exclude_video_ids)
 
     all_candidates: dict[str, VideoMeta] = {}
 
@@ -273,27 +306,47 @@ def find_niche_trend_videos(
             )
 
         for v in videos:
-            if v.video_id not in all_candidates:
+            if (
+                v.video_id not in all_candidates
+                and v.video_id not in processed_ids
+                and not is_video_already_processed(v.video_id, output_dir)
+                and not is_video_already_processed(v.url, output_dir)
+            ):
                 all_candidates[v.video_id] = v
+
+        # If we have collected plenty of fresh candidates, stop querying
+        if len(all_candidates) >= max(10, max_videos * 3):
+            break
 
     candidate_list = list(all_candidates.values())
     if not candidate_list:
-        logger.warning("No fresh niche videos found within the %d-day window.", max_age_days)
+        logger.warning("No fresh unprocessed niche videos found within the %d-day window.", max_age_days)
         return []
 
     # Rank by virality score and view velocity
-    viral_recent = find_viral_recent_videos(candidate_list, max_results=max_videos)
+    viral_recent = find_viral_recent_videos(candidate_list, max_results=len(candidate_list))
     if viral_recent:
-        return [vr.video for vr in viral_recent[:max_videos]]
+        ranked = [vr.video for vr in viral_recent]
+    else:
+        now = datetime.now(timezone.utc)
 
-    now = datetime.now(timezone.utc)
-    def _velocity_key(v: VideoMeta) -> float:
-        try:
-            upload_dt = datetime.strptime(v.upload_date, "%Y%m%d").replace(tzinfo=timezone.utc)
-            days = max(1, (now - upload_dt).days)
-        except ValueError:
-            days = 1
-        return v.view_count / days
+        def _velocity_key(v: VideoMeta) -> float:
+            try:
+                upload_dt = datetime.strptime(v.upload_date, "%Y%m%d").replace(tzinfo=timezone.utc)
+                days = max(1, (now - upload_dt).days)
+            except ValueError:
+                days = 1
+            return v.view_count / days
 
-    candidate_list.sort(key=_velocity_key, reverse=True)
-    return candidate_list[:max_videos]
+        candidate_list.sort(key=_velocity_key, reverse=True)
+        ranked = candidate_list
+
+    # When query is generic/auto and multiple candidates exist, diversify top-tier candidates
+    # to avoid picking the exact same video on consecutive runs.
+    if not is_custom_query and shuffle_queries and len(ranked) > max_videos:
+        tier_size = min(len(ranked), max_videos * 2)
+        top_tier = list(ranked[:tier_size])
+        random.shuffle(top_tier)
+        return top_tier[:max_videos]
+
+    return ranked[:max_videos]
