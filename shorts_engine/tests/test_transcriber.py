@@ -92,8 +92,8 @@ def test_segments_to_ass_keyword_highlight() -> None:
         )
     ]
     ass = segments_to_ass(segments, primary_keyword="Ελλάδα", subtitle_mode="word")
-    # Verify yellow color override for "Ελλάδα"
-    assert r"{\c&H00FFFF&}Ελλάδα" in ass
+    # Verify HighlightBox border box for spoken word
+    assert r"{\rHighlightBox}Ελλάδα{\rDefault}" in ass
 
 
 def test_segments_to_ass_dynamic_mode_highlight() -> None:
@@ -110,7 +110,7 @@ def test_segments_to_ass_dynamic_mode_highlight() -> None:
         )
     ]
     ass = segments_to_ass(segments, subtitle_mode="dynamic")
-    assert r"{\c&H00FFFF&\fscx106\fscy106}Ελλάδα{\r}" in ass
+    assert r"{\rHighlightBox}Ελλάδα{\rDefault}" in ass
 
 
 def test_segments_to_ass_phrase_mode() -> None:
@@ -219,7 +219,7 @@ def test_segments_to_ass_zero_dialogue_overlap_dynamic_mode() -> None:
     ass = segments_to_ass(segments, subtitle_mode="dynamic")
     dialogues = [line for line in ass.splitlines() if line.startswith("Dialogue:")]
     assert len(dialogues) >= 6
-    assert any("&H00FFFF&" in line for line in dialogues)
+    assert any(r"{\rHighlightBox}" in line for line in dialogues)
 
     for i in range(1, len(dialogues)):
         prev_end = _ass_time_to_seconds(dialogues[i - 1].split(",")[2])

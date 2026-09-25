@@ -1,3 +1,4 @@
+import itertools
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -5,9 +6,9 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # Default smoothing factor for Exponential Moving Average (0 < alpha <= 1)
-_DEFAULT_EMA_ALPHA = 0.10
-# Sample one frame every N seconds — increased to 0.5s (2 fps) for shorter thermal load.
-# For short clips (<60s) we use 0.25s to maintain accuracy on rapid speaker movement.
+_DEFAULT_EMA_ALPHA = 0.20
+# Sample one frame every N seconds — 0.5s (2 fps) for balanced tracking and thermal load.
+# For short clips (<60s) we use 0.25s (4 fps) to follow fast speaker movement.
 _DEFAULT_SAMPLE_INTERVAL_SECONDS = 0.5
 _SHORT_CLIP_SAMPLE_INTERVAL_SECONDS = 0.25
 _SHORT_CLIP_THRESHOLD_SECONDS = 60.0
@@ -19,7 +20,7 @@ def _best_torch_device() -> str:
     Return the best available torch compute device string.
 
     Priority: CUDA (NVIDIA/AMD ROCm) → MPS (Apple Silicon) → CPU.
-    Failures are silently caught so that YOLO still runs on CPU if torch
+    Failures are safely logged so that YOLO still runs on CPU if torch
     is unavailable or no GPU is present.
     """
     try:
@@ -29,8 +30,8 @@ def _best_torch_device() -> str:
         # MPS = Apple Metal Performance Shaders (Apple Silicon)
         if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
             return "mps"
-    except Exception:
-        pass
+    except (ImportError, AttributeError, RuntimeError) as exc:
+        logger.debug("Torch device probe failed (%s) — falling back to CPU", exc)
     return "cpu"
 
 
@@ -63,15 +64,15 @@ def track_active_speaker(
 ) -> SpeakerTrackingResult:
     """
     Track the active speaker across the entire video timeline and construct dynamic
-    crop bounds to keep the speaker centered in the 9:16 frame at all times.
+    crop bounds to identify and follow the speaker's face in the 9:16 frame while they speak.
     """
     scale_factor = max(target_width / source_width, target_height / source_height)
     scaled_width = int(source_width * scale_factor)
     scaled_height = int(source_height * scale_factor)
-    
+
     max_crop_x = max(0, scaled_width - target_width)
     max_crop_y = max(0, scaled_height - target_height)
-    
+
     default_center_x = max_crop_x // 2
     default_center_y = max_crop_y // 2
 
@@ -119,20 +120,28 @@ def track_active_speaker(
     if infer_device == "cpu":
         try:
             import os
+
             import torch
             cores = os.cpu_count() or 4
             # Cap PyTorch intra-op threads to prevent thermal saturation on ThinkPad/laptop CPUs
             optimal_torch_threads = max(1, min(4, cores // 2))
             torch.set_num_threads(optimal_torch_threads)
             logger.debug("Configured PyTorch CPU inference threads=%d for face tracking", optimal_torch_threads)
-        except Exception:
-            pass
+        except (ImportError, RuntimeError, AttributeError) as exc:
+            logger.debug("Failed configuring torch CPU threads (%s)", exc)
 
-    try:
-        model = YOLO("yolov8n-pose.pt")
-        model.to(infer_device)
-    except Exception as exc:
-        logger.warning("Failed to initialize YOLO model: %s — using center-crop fallback.", exc)
+    model = None
+    for model_name in ("yolov8n-pose.pt", "yolov8n.pt"):
+        try:
+            m = YOLO(model_name)
+            m.to(infer_device)
+            model = m
+            break
+        except (RuntimeError, ValueError, OSError, ImportError) as exc:
+            logger.debug("YOLO model '%s' failed to load: %s", model_name, exc)
+
+    if model is None:
+        logger.warning("Failed to initialize YOLO model — using center-crop fallback.")
         return SpeakerTrackingResult(
             has_speaker=False,
             speaker_presence_ratio=0.0,
@@ -196,11 +205,12 @@ def track_active_speaker(
             if frame_idx % frame_step == 0:
                 total_sampled += 1
                 t_sec = frame_idx / fps
+                # Use conf=0.25 to reliably detect speakers even in dim / studio LED lighting
                 if has_torch:
                     with torch.inference_mode():
-                        results = model(frame, classes=[0], conf=0.6, verbose=False, device=infer_device)
+                        results = model(frame, classes=[0], conf=0.25, verbose=False, device=infer_device)
                 else:
-                    results = model(frame, classes=[0], conf=0.6, verbose=False, device=infer_device)
+                    results = model(frame, classes=[0], conf=0.25, verbose=False, device=infer_device)
 
                 boxes = results[0].boxes if results else None
                 if boxes and len(boxes) > 0:
@@ -211,30 +221,31 @@ def track_active_speaker(
                     best_box = boxes[best_idx]
                     x1, y1, x2, y2 = best_box.xyxy[0].tolist()
                     centroid_x = (x1 + x2) / 2.0
-                    centroid_y = (y1 + y2) / 2.0
-                    
+                    # Face is positioned in the upper ~18% of the human bounding box
+                    centroid_y = y1 + (y2 - y1) * 0.18
+
                     # Try to refine centroid using facial keypoints (Nose, L/R Eye, L/R Ear)
-                    keypoints = results[0].keypoints
+                    keypoints = getattr(results[0], "keypoints", None)
                     if keypoints is not None and len(keypoints) > best_idx:
                         kp = keypoints[best_idx]
                         if kp.xy is not None and len(kp.xy) > 0:
                             face_kps = kp.xy[0][:5]
                             confs = kp.conf[0][:5] if kp.conf is not None else None
-                            
+
                             valid_x, valid_y = [], []
                             for k_idx, pt in enumerate(face_kps):
-                                conf = float(confs[k_idx]) if confs is not None else 1.0
-                                if conf > 0.5 and pt[0] > 0 and pt[1] > 0:
+                                k_conf = float(confs[k_idx]) if confs is not None else 1.0
+                                if k_conf > 0.25 and pt[0] > 0 and pt[1] > 0:
                                     valid_x.append(float(pt[0]))
                                     valid_y.append(float(pt[1]))
-                            
+
                             if valid_x and valid_y:
                                 centroid_x = sum(valid_x) / len(valid_x)
                                 centroid_y = sum(valid_y) / len(valid_y)
-                                
+
                     samples.append((t_sec, centroid_x, centroid_y))
             frame_idx += 1
-    except Exception as exc:
+    except (RuntimeError, ValueError, OSError, cv2.error) as exc:
         logger.warning("Speaker tracking loop encountered an error: %s", exc)
     finally:
         cap.release()
@@ -243,14 +254,14 @@ def track_active_speaker(
 
     presence_ratio = (len(samples) / total_sampled) if total_sampled > 0 else 0.0
 
-    if not samples or presence_ratio < _MIN_SPEAKER_PRESENCE_RATIO:
+    if not samples:
         logger.info(
-            "No active speaker recognized in '%s' (presence=%.1f%%) — using center-crop.",
-            video_path.name, presence_ratio * 100.0,
+            "No active speaker recognized in '%s' — using center-crop.",
+            video_path.name,
         )
         return SpeakerTrackingResult(
             has_speaker=False,
-            speaker_presence_ratio=presence_ratio,
+            speaker_presence_ratio=0.0,
             static_crop_x=default_center_x,
             static_crop_y=default_center_y,
             crop_expression=str(default_center_x),
@@ -258,15 +269,49 @@ def track_active_speaker(
             shot_crop_offsets=[(0.0, 99999.0, default_center_x, default_center_y)],
         )
 
-    raw_shots: list[list[tuple[float, float, float]]] = []
-    current_shot: list[tuple[float, float, float]] = [samples[0]]
+    # Compute detected median crop coordinates from samples to prevent empty background crop
+    sorted_s_x = sorted(s[1] for s in samples)
+    sorted_s_y = sorted(s[2] for s in samples)
+    median_cx = sorted_s_x[len(sorted_s_x) // 2]
+    median_cy = sorted_s_y[len(sorted_s_y) // 2]
+    detected_crop_x = int(_clamp((median_cx * scale_factor) - (target_width / 2.0), 0, max_crop_x))
+    detected_crop_y = int(_clamp((median_cy * scale_factor) - (target_height * 0.38), 0, max_crop_y))
 
-    for prev_s, curr_s in zip(samples[:-1], samples[1:]):
+    if presence_ratio < _MIN_SPEAKER_PRESENCE_RATIO:
+        logger.info(
+            "Low speaker presence in '%s' (%.1f%%) — using detected median crop X=%d, Y=%d.",
+            video_path.name, presence_ratio * 100.0, detected_crop_x, detected_crop_y,
+        )
+        return SpeakerTrackingResult(
+            has_speaker=False,
+            speaker_presence_ratio=presence_ratio,
+            static_crop_x=detected_crop_x,
+            static_crop_y=detected_crop_y,
+            crop_expression=str(detected_crop_x),
+            crop_y_expression=str(detected_crop_y),
+            shot_crop_offsets=[(0.0, 99999.0, detected_crop_x, detected_crop_y)],
+        )
+
+    # Convert samples to desired crop bounds per frame:
+    # Rule of thirds: Eye-line at 38% from top of 9:16 portrait viewport
+    target_crops: list[tuple[float, float, float]] = []
+    for t_sec, cx, cy in samples:
+        sc_x = cx * scale_factor
+        sc_y = cy * scale_factor
+        des_x = _clamp(sc_x - (target_width / 2.0), 0, max_crop_x)
+        des_y = _clamp(sc_y - (target_height * 0.38), 0, max_crop_y)
+        target_crops.append((t_sec, des_x, des_y))
+
+    # Segment into distinct camera shots (cuts or large scene jumps)
+    raw_shots: list[list[tuple[float, float, float]]] = []
+    current_shot: list[tuple[float, float, float]] = [target_crops[0]]
+
+    for prev_s, curr_s in itertools.pairwise(target_crops):
         time_gap = curr_s[0] - prev_s[0]
         pos_jump_x = abs(curr_s[1] - prev_s[1])
         pos_jump_y = abs(curr_s[2] - prev_s[2])
 
-        if max(pos_jump_x, pos_jump_y) > 120.0 or time_gap > 2.0:
+        if max(pos_jump_x, pos_jump_y) > 180.0 or time_gap > 2.0:
             raw_shots.append(current_shot)
             current_shot = [curr_s]
         else:
@@ -278,54 +323,104 @@ def track_active_speaker(
     shot_segments: list[tuple[float, float, int, int]] = []
     all_shot_offsets_x: list[int] = []
     all_shot_offsets_y: list[int] = []
+    shot_expressions_x: list[tuple[float, str]] = []
+    shot_expressions_y: list[tuple[float, str]] = []
 
     for i, shot in enumerate(raw_shots):
-        t_start = 0.0 if i == 0 else shot[0][0]
-        t_end = shot[-1][0] if i < len(raw_shots) - 1 else 99999.0
+        t_shot_start = 0.0 if i == 0 else shot[0][0]
+        t_shot_end = shot[-1][0] if i < len(raw_shots) - 1 else 99999.0
 
+        # Exponential moving average filter within the shot
         smoothed_cx = shot[0][1]
         smoothed_cy = shot[0][2]
-        for _, cx, cy in shot[1:]:
-            smoothed_cx = (ema_alpha * cx) + ((1.0 - ema_alpha) * smoothed_cx)
-            smoothed_cy = (ema_alpha * cy) + ((1.0 - ema_alpha) * smoothed_cy)
+        smoothed_pts: list[tuple[float, int, int]] = [
+            (shot[0][0], int(_clamp(smoothed_cx, 0, max_crop_x)), int(_clamp(smoothed_cy, 0, max_crop_y)))
+        ]
 
-        scaled_cx = smoothed_cx * scale_factor
-        scaled_cy = smoothed_cy * scale_factor
-        
-        desired_crop_x = scaled_cx - (target_width / 2.0)
-        desired_crop_y = scaled_cy - (target_height / 2.0)
-        
-        shot_crop_x = int(_clamp(desired_crop_x, 0, max_crop_x))
-        shot_crop_y = int(_clamp(desired_crop_y, 0, max_crop_y))
+        for pt_t, raw_cx, raw_cy in shot[1:]:
+            smoothed_cx = (ema_alpha * raw_cx) + ((1.0 - ema_alpha) * smoothed_cx)
+            smoothed_cy = (ema_alpha * raw_cy) + ((1.0 - ema_alpha) * smoothed_cy)
+            smoothed_pts.append((
+                pt_t,
+                int(_clamp(smoothed_cx, 0, max_crop_x)),
+                int(_clamp(smoothed_cy, 0, max_crop_y)),
+            ))
 
-        shot_segments.append((t_start, t_end, shot_crop_x, shot_crop_y))
-        all_shot_offsets_x.append(shot_crop_x)
-        all_shot_offsets_y.append(shot_crop_y)
+        # Build dynamic follow keyframes with 15px deadzone to eliminate micro-jitter
+        kps_x: list[tuple[float, int]] = [(smoothed_pts[0][0], smoothed_pts[0][1])]
+        kps_y: list[tuple[float, int]] = [(smoothed_pts[0][0], smoothed_pts[0][2])]
 
-    merged_shots: list[tuple[float, float, int, int]] = [shot_segments[0]]
-    for s in shot_segments[1:]:
-        prev_start, prev_end, prev_x, prev_y = merged_shots[-1]
-        if abs(s[2] - prev_x) < 35 and abs(s[3] - prev_y) < 35:
-            merged_shots[-1] = (prev_start, s[1], prev_x, prev_y)
-        else:
-            merged_shots[-1] = (prev_start, s[0], prev_x, prev_y)
-            merged_shots.append(s)
+        for pt_t, cur_x, cur_y in smoothed_pts[1:]:
+            if abs(cur_x - kps_x[-1][1]) >= 15:
+                kps_x.append((pt_t, cur_x))
+            if abs(cur_y - kps_y[-1][1]) >= 15:
+                kps_y.append((pt_t, cur_y))
 
-    if merged_shots:
-        last_s = merged_shots[-1]
-        merged_shots[-1] = (last_s[0], 99999.0, last_s[2], last_s[3])
+        # Ensure shot boundary end keyframe is present
+        last_pt = smoothed_pts[-1]
+        if kps_x[-1][0] < last_pt[0]:
+            kps_x.append((last_pt[0], last_pt[1]))
+        if kps_y[-1][0] < last_pt[0]:
+            kps_y.append((last_pt[0], last_pt[2]))
 
-    def _build_expr(idx: int) -> str:
-        if len(merged_shots) == 1:
-            return str(merged_shots[0][idx])
-        expr = str(merged_shots[-1][idx])
-        for s in reversed(merged_shots[:-1]):
-            t_boundary = round(s[1], 2)
-            expr = f"if(lt(t,{t_boundary}),{s[idx]},{expr})"
-        return expr
+        # Decimate if excessive nodes (cap to max 8 nodes per shot)
+        if len(kps_x) > 8:
+            step = max(1, len(kps_x) // 8)
+            kps_x = [kps_x[idx] for idx in range(0, len(kps_x), step)]
+            if kps_x[-1] != (last_pt[0], last_pt[1]):
+                kps_x.append((last_pt[0], last_pt[1]))
 
-    crop_expression = _build_expr(2)
-    crop_y_expression = _build_expr(3)
+        if len(kps_y) > 8:
+            step = max(1, len(kps_y) // 8)
+            kps_y = [kps_y[idx] for idx in range(0, len(kps_y), step)]
+            if kps_y[-1] != (last_pt[0], last_pt[2]):
+                kps_y.append((last_pt[0], last_pt[2]))
+
+        # Construct piecewise follow expression for this shot
+        def _build_piecewise(kps: list[tuple[float, int]]) -> str:
+            if not kps:
+                return "0"
+            if len(kps) == 1:
+                return str(kps[0][1])
+            pieces: list[tuple[float, str]] = []
+            for (t_a, pos_a), (t_b, pos_b) in itertools.pairwise(kps):
+                dur = round(t_b - t_a, 2)
+                if dur <= 0.05 or pos_a == pos_b:
+                    piece_expr = f"{pos_a}"
+                else:
+                    diff = pos_b - pos_a
+                    piece_expr = f"{pos_a}+({diff})*((t-{round(t_a, 2)})/{dur})"
+                pieces.append((t_b, piece_expr))
+            sub_expr = str(kps[-1][1])
+            for t_end, p_expr in reversed(pieces):
+                sub_expr = f"if(lt(t,{round(t_end, 2)}),{p_expr},{sub_expr})"
+            return sub_expr
+
+        shot_expr_x = _build_piecewise(kps_x)
+        shot_expr_y = _build_piecewise(kps_y)
+
+        shot_expressions_x.append((t_shot_end, shot_expr_x))
+        shot_expressions_y.append((t_shot_end, shot_expr_y))
+
+        # Shot-level static representative offsets
+        median_shot_x = sorted([p[1] for p in smoothed_pts])[len(smoothed_pts) // 2]
+        median_shot_y = sorted([p[2] for p in smoothed_pts])[len(smoothed_pts) // 2]
+        shot_segments.append((t_shot_start, t_shot_end, median_shot_x, median_shot_y))
+        all_shot_offsets_x.append(median_shot_x)
+        all_shot_offsets_y.append(median_shot_y)
+
+    def _combine_shot_exprs(shot_exprs: list[tuple[float, str]]) -> str:
+        if not shot_exprs:
+            return "0"
+        if len(shot_exprs) == 1:
+            return shot_exprs[0][1]
+        overall = shot_exprs[-1][1]
+        for t_end, s_expr in reversed(shot_exprs[:-1]):
+            overall = f"if(lt(t,{round(t_end, 2)}),{s_expr},{overall})"
+        return overall
+
+    crop_expression = _combine_shot_exprs(shot_expressions_x)
+    crop_y_expression = _combine_shot_exprs(shot_expressions_y)
 
     sorted_x = sorted(all_shot_offsets_x)
     sorted_y = sorted(all_shot_offsets_y)
@@ -333,8 +428,8 @@ def track_active_speaker(
     static_crop_y = sorted_y[len(sorted_y) // 2] if sorted_y else default_center_y
 
     logger.info(
-        "Active speaker recognized (presence=%.1f%% across %d shots). Dynamic crop: X=%s, Y=%s",
-        presence_ratio * 100.0, len(merged_shots), crop_expression[:50], crop_y_expression[:50]
+        "Active speaker recognized (presence=%.1f%% across %d shots). Dynamic follow: X=%s, Y=%s",
+        presence_ratio * 100.0, len(shot_segments), crop_expression[:60], crop_y_expression[:60]
     )
 
     result = SpeakerTrackingResult(
@@ -344,7 +439,7 @@ def track_active_speaker(
         static_crop_y=static_crop_y,
         crop_expression=crop_expression,
         crop_y_expression=crop_y_expression,
-        shot_crop_offsets=merged_shots,
+        shot_crop_offsets=shot_segments,
     )
     save_cache_pickle("face_tracking", cache_key, result)
     return result

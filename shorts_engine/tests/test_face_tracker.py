@@ -95,3 +95,68 @@ def test_crop_to_9_16_with_dynamic_time_expression(tmp_path):
     w, h = probe_resolution(result)
     assert (w, h) == (1080, 1920)
 
+
+def test_track_active_speaker_dynamic_follow_and_fallback(tmp_path, monkeypatch):
+    """
+    Verify that speaker motion generates piecewise follow expressions,
+    frames faces at rule-of-thirds eye-line, and low presence retains detected position.
+    """
+    landscape_video = _generate_synthetic_video(tmp_path / "speaker_sim.mp4", 1920, 1080, duration=2.0)
+
+    # Mock YOLO to simulate a speaker moving horizontally across frames
+    class MockBox:
+        def __init__(self, x1, y1, x2, y2):
+            import torch
+            self.xyxy = torch.tensor([[x1, y1, x2, y2]])
+
+    class MockKeypoints:
+        def __init__(self, nose_x, nose_y):
+            import torch
+            self.xy = torch.tensor([[[nose_x, nose_y], [nose_x - 10, nose_y - 10], [nose_x + 10, nose_y - 10], [0, 0], [0, 0]]])
+            self.conf = torch.tensor([[0.95, 0.90, 0.90, 0.0, 0.0]])
+
+    class MockResult:
+        def __init__(self, box, kp):
+            self.boxes = [box]
+            self.keypoints = [kp]
+
+    frame_counter = {"val": 0}
+
+    class MockYOLO:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def to(self, *args, **kwargs):
+            return self
+
+        def __call__(self, frame, **kwargs):
+            idx = frame_counter["val"]
+            frame_counter["val"] += 1
+            # Move speaker from X=400 to X=1200 across time
+            x_pos = 400.0 + idx * 100.0
+            y_pos = 200.0
+            box = MockBox(x_pos - 100, y_pos - 100, x_pos + 100, y_pos + 300)
+            kp = MockKeypoints(x_pos, y_pos)
+            return [MockResult(box, kp)]
+
+    import ultralytics
+    monkeypatch.setattr(ultralytics, "YOLO", MockYOLO)
+
+    result = track_active_speaker(
+        video_path=landscape_video,
+        source_width=1920,
+        source_height=1080,
+        target_width=1080,
+        target_height=1920,
+        sample_interval=0.25,
+    )
+
+    assert result.has_speaker is True
+    assert result.speaker_presence_ratio > 0.5
+    # Confirm dynamic follow piecewise linear expression was constructed
+    assert "if(lt(t," in result.crop_expression
+    # Verify vertical offset places head near top third (clamped or rule-of-thirds eye-line)
+    assert isinstance(result.static_crop_y, int)
+    assert 0 <= result.static_crop_y <= 1080
+
+

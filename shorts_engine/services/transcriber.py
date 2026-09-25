@@ -374,15 +374,18 @@ _SUBTITLE_MARGIN_V: dict[str, int] = {
 
 def _build_style_line(base: str, margin_v: int) -> str:
     """
-    Clone a standard ASS style line with a custom MarginV.
-
-    The MarginV field is the 22nd comma-separated token (0-indexed: 21).
+    Format the ASS style line by replacing the vertical margin token.
+    Supports multi-line style declarations (e.g. Default + HighlightBox styles).
     """
-    parts = base.split(",")
-    # Field index 21 = MarginV in the Format order defined in ASS_HEADER_TEMPLATE
-    if len(parts) > 21:
-        parts[21] = str(margin_v)
-    return ",".join(parts)
+    lines = base.strip().split("\n")
+    updated_lines: list[str] = []
+    for line in lines:
+        parts = line.split(",")
+        # Field index 21 = MarginV in the Format order defined in ASS_HEADER_TEMPLATE
+        if len(parts) > 21:
+            parts[21] = str(margin_v)
+        updated_lines.append(",".join(parts))
+    return "\n".join(updated_lines)
 
 
 def segments_to_ass(
@@ -538,10 +541,10 @@ def segments_to_ass(
                 for j, w in enumerate(chunk):
                     w_safe = _escape_ass_text(w[2])
                     if j == w_i:
-                        # Active spoken word in bright yellow with subtle dynamic scale pop
-                        words_formatted.append(rf"{{\c&H00FFFF&\fscx106\fscy106}}{w_safe}{{\r}}")
+                        # Active spoken word inside high-contrast highlight border box
+                        words_formatted.append(rf"{{\rHighlightBox}}{w_safe}{{\rDefault}}")
                     else:
-                        words_formatted.append(rf"{{\c&H00FFFFFF&}}{w_safe}{{\r}}")
+                        words_formatted.append(w_safe)
 
                 phrase_text = " ".join(words_formatted)
                 dialogue_lines.append(f"Dialogue: 0,{t_start},{t_end},Default,,0,0,0,,{phrase_text}")
@@ -589,7 +592,7 @@ def segments_to_ass(
                 w_safe = _escape_ass_text(w[2])
                 clean_w = w[2].translate(str.maketrans('', '', string.punctuation)).lower().strip()
                 if clean_keyword and clean_w and (clean_w == clean_keyword or clean_w in clean_keyword.split()):
-                    words_formatted.append(rf"{{\c&H00FFFF&}}{w_safe}{{\c&H00FFFFFF&}}")
+                    words_formatted.append(rf"{{\rHighlightBox}}{w_safe}{{\rDefault}}")
                 else:
                     words_formatted.append(w_safe)
 
@@ -624,15 +627,7 @@ def segments_to_ass(
             
             # Animation: Pop in from 80% to 115%, then settle at 100%
             pop = r"{\fscx80\fscy80\t(0,40,\fscx115\fscy115)\t(40,120,\fscx100\fscy100)}"
-            
-            # Color: Highlight the primary keyword in Yellow, otherwise stay White
-            color = ""
-            if clean_keyword:
-                clean_word = w_text.translate(str.maketrans('', '', string.punctuation)).lower().strip()
-                if clean_word and (clean_word == clean_keyword or clean_word in clean_keyword.split()):
-                    color = r"{\c&H00FFFF&}"  # Yellow BGR
-                    
-            text_field = f"{pop}{color}{safe}"
+            text_field = f"{pop}{{\\rHighlightBox}}{safe}{{\\rDefault}}"
             dialogue_lines.append(f"Dialogue: 0,{t_start},{t_end},Default,,0,0,0,,{text_field}")
 
     return ASS_HEADER_TEMPLATE.format(

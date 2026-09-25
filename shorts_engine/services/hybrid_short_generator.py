@@ -408,7 +408,19 @@ def build_hybrid_short(
     if src_w != target_w or src_h != target_h:
         tracking = track_active_speaker(clip_video_path, src_w, src_h, target_w, target_h)
         crop_x = getattr(tracking, "static_crop_x", max(0, (src_w - target_w) // 2))
-        crop_to_9_16(clip_video_path, cropped_speaker, target_width=target_w, target_height=target_h, crop_x_offset=crop_x)
+        crop_x_expr = getattr(tracking, "crop_expression", None)
+        crop_y = getattr(tracking, "static_crop_y", None)
+        crop_y_expr = getattr(tracking, "crop_y_expression", None)
+        crop_to_9_16(
+            clip_video_path,
+            cropped_speaker,
+            target_width=target_w,
+            target_height=target_h,
+            crop_x_offset=crop_x,
+            crop_x_expr=crop_x_expr,
+            crop_y_offset=crop_y,
+            crop_y_expr=crop_y_expr,
+        )
     else:
         shutil.copy2(str(clip_video_path), str(cropped_speaker))
 
