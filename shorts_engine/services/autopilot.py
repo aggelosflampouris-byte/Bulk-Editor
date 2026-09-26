@@ -3,7 +3,9 @@ services/autopilot.py — End-to-End Autopilot Orchestration
 """
 
 import logging
+import math
 import tempfile
+import uuid
 from collections.abc import Generator
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -301,74 +303,82 @@ def run_autopilot_pipeline(
     )
 
     results = []
+    total_target_shorts = max(1, num_videos)
 
     for idx, best_video in enumerate(best_videos):
-        base_pct = 10 + (90 * idx // num_videos)
-        step_pct = 90 // num_videos
+        if len(results) >= total_target_shorts:
+            break
 
-        def _p(offset: float, b: int = base_pct, s: int = step_pct) -> int:
-            return int(b + (s * offset))
+        remaining_shorts = total_target_shorts - len(results)
+        remaining_videos = len(best_videos) - idx
+        clips_needed = max(1, int(math.ceil(remaining_shorts / remaining_videos)))
+        clips_needed = min(clips_needed, remaining_shorts)
+
+        base_pct = 10 + int(85 * (len(results) / total_target_shorts))
+        step_pct = max(1, int(85 / total_target_shorts))
+
+        def _p(offset: float) -> int:
+            return min(98, int(base_pct + (step_pct * offset)))
 
         yield (
-            f"[Video {idx + 1}/{num_videos}] Sourced viral video: {best_video.title}",
+            f"Processing video {idx + 1}/{len(best_videos)}: '{best_video.title}' (Extracting up to {clips_needed} short(s))...",
             _p(0.05),
             None,
         )
-
-        import uuid
 
         download_dir = Path(tempfile.gettempdir()) / f"autopilot_{uuid.uuid4().hex}"
         download_dir.mkdir(parents=True, exist_ok=True)
 
         # Mode 2: If user explicitly forced Full AI Generation from topic
         if production_strategy == "ai_gen":
-            yield (
-                f"[Video {idx + 1}/{num_videos}] Strategy: Full AI Short Generation (AI Script + Greek Voiceover + 9:16 Media)...",
-                _p(0.2),
-                None,
-            )
-            try:
-                final_output, seo = build_full_ai_short(
-                    topic_title=best_video.title,
-                    topic_context=f"Video Title: {best_video.title}\nDescription: {best_video.description}",
-                    settings=ap_settings,
-                    tmp_dir=download_dir,
-                    output_dir=ap_settings.output_dir,
-                    report_cb=lambda msg: None,
-                )
-                record_processed_video(
-                    video_id=best_video.video_id,
-                    url=best_video.url,
-                    title=best_video.title,
-                    output_dir=ap_settings.output_dir,
-                    mode="ai_gen",
-                    seo=seo,
-                    output_file=final_output,
-                )
-                slot = get_optimal_schedule_slot(slot_index=idx)
-                results.append(
-                    {
-                        "seo": seo,
-                        "path": final_output,
-                        "publish_at": slot.utc_datetime,
-                        "schedule_display": slot.display_str,
-                        "local_publish_time": slot.local_datetime,
-                    }
-                )
-                continue
-            except (RuntimeError, OSError, ValueError, KeyError, APIError) as exc:
-                logger.error(
-                    "Full AI Short generation failed for %s: %s", best_video.title, exc
-                )
+            for ai_i in range(clips_needed):
+                if len(results) >= total_target_shorts:
+                    break
+                short_num = len(results) + 1
                 yield (
-                    f"[Video {idx + 1}/{num_videos}] Generation failed for '{best_video.title[:35]}': {exc}",
-                    _p(0.9),
+                    f"[{short_num}/{total_target_shorts}] Strategy: Full AI Short Generation ({best_video.title[:30]} - Angle {ai_i + 1})...",
+                    _p(0.2),
                     None,
                 )
-                continue
+                try:
+                    final_output, seo = build_full_ai_short(
+                        topic_title=f"{best_video.title} (Part {ai_i + 1})" if clips_needed > 1 else best_video.title,
+                        topic_context=f"Video Title: {best_video.title}\nDescription: {best_video.description}\nClip {ai_i + 1} of {clips_needed}",
+                        settings=ap_settings,
+                        tmp_dir=download_dir,
+                        output_dir=ap_settings.output_dir,
+                        report_cb=lambda msg: None,
+                    )
+                    record_processed_video(
+                        video_id=f"{best_video.video_id}_ai_{ai_i + 1}",
+                        url=best_video.url,
+                        title=best_video.title,
+                        output_dir=ap_settings.output_dir,
+                        mode="ai_gen",
+                        seo=seo,
+                        output_file=final_output,
+                    )
+                    slot = get_optimal_schedule_slot(slot_index=len(results))
+                    results.append(
+                        {
+                            "seo": seo,
+                            "path": final_output,
+                            "publish_at": slot.utc_datetime,
+                            "schedule_display": slot.display_str,
+                            "local_publish_time": slot.local_datetime,
+                        }
+                    )
+                except (RuntimeError, OSError, ValueError, KeyError, APIError) as exc:
+                    logger.error("Full AI Short generation failed for %s: %s", best_video.title, exc)
+                    yield (
+                        f"[{short_num}/{total_target_shorts}] Generation failed for '{best_video.title[:35]}': {exc}",
+                        _p(0.9),
+                        None,
+                    )
+            continue
 
         yield (
-            f"[Video {idx + 1}/{num_videos}] Pre-download triage: fetching YouTube transcript...",
+            f"[Video {idx + 1}/{len(best_videos)}] Pre-download triage: fetching YouTube transcript...",
             _p(0.1),
             None,
         )
@@ -397,9 +407,6 @@ def run_autopilot_pipeline(
                 )
                 transcript = None
 
-        source_is_section = False
-        source_offset = 0.0
-
         # Auto-detect content niche if template is custom or unconfigured
         if getattr(ap_settings, "niche_template", "custom") in ("custom", "", "auto"):
             try:
@@ -413,17 +420,19 @@ def run_autopilot_pipeline(
                     det_tpl = get_template(det_niche)
                     ap_settings = det_tpl.apply_to(ap_settings)
                     yield (
-                        f"[Video {idx + 1}/{num_videos}] Auto-detected Niche: {det_tpl.sidebar_label}",
+                        f"[Video {idx + 1}/{len(best_videos)}] Auto-detected Niche: {det_tpl.sidebar_label}",
                         _p(0.18),
                         None,
                     )
             except (ImportError, RuntimeError, ValueError) as n_err:
                 logger.debug("Auto-detect niche skipped: %s", n_err)
 
+        candidate_clips: list[ClipCandidate] = []
+        cached_full_video: Path | None = None
+
         if transcript:
-            # AI selects viral clips directly from pre-fetched transcript
             yield (
-                f"[Video {idx + 1}/{num_videos}] AI analyzing transcript for viral clips...",
+                f"[Video {idx + 1}/{len(best_videos)}] AI analyzing transcript to select top {clips_needed} viral moments from '{best_video.title[:30]}'...",
                 _p(0.25),
                 None,
             )
@@ -435,196 +444,42 @@ def run_autopilot_pipeline(
                 if total_dur > 0
                 else ap_settings.clip_min_duration
             )
-            clips = select_clips(
+            raw_clips = select_clips(
                 segments=transcript,
                 gemini_api_key=settings.gemini_api_key,
-                max_clips=3,
-                min_clips=1,
+                max_clips=clips_needed,
+                min_clips=min(1, clips_needed),
                 min_dur=eff_min,
                 max_dur=ap_settings.clip_max_duration,
+                source_title=best_video.title,
+                channel_niche=getattr(ap_settings, "niche_template", ""),
             )
-            if not clips:
-                logger.warning(
-                    "AI could not find viral moments in transcript for %s. Skipping.",
-                    best_video.title,
-                )
-                continue
-
-            best_clip = clips[0]
-            try:
-                snapped_s, snapped_e = snap_to_silence(
-                    start_time=best_clip.start_time,
-                    end_time=best_clip.end_time,
-                    segments=transcript,
-                    min_dur=ap_settings.clip_min_duration,
-                    max_dur=ap_settings.clip_max_duration,
-                )
-                best_clip = ClipCandidate(
-                    index=best_clip.index,
-                    start_time=snapped_s,
-                    end_time=snapped_e,
-                    hook_summary=best_clip.hook_summary,
-                    seo=best_clip.seo,
-                    broll_query=best_clip.broll_query,
-                )
-            except (RuntimeError, ValueError, KeyError) as snap_exc:
-                logger.debug("Boundary snapping skipped in autopilot: %s", snap_exc)
-
-            yield (
-                f"[Video {idx + 1}/{num_videos}] Selected clip: {best_clip.seo.title if best_clip.seo else 'Viral Hook'} (Rank: {best_clip.index})",
-                _p(0.4),
-                None,
-            )
-
-            # Fast section download: only download the chosen clip segment (with 2s padding)
-            yield (
-                f"[Video {idx + 1}/{num_videos}] Sourcing video section [{best_clip.start_display} → {best_clip.end_display}]...",
-                _p(0.55),
-                None,
-            )
-            pad = 2.0
-            if Path(best_video.url).is_file():
-                video_path = Path(best_video.url)
-                source_is_section = False
-                source_offset = 0.0
-            else:
+            for c_raw in raw_clips[:clips_needed]:
                 try:
-                    video_path = download_video_section(
-                        best_video.url,
-                        download_dir,
-                        start_time=best_clip.start_time,
-                        end_time=best_clip.end_time,
-                        padding=pad,
+                    snapped_s, snapped_e = snap_to_silence(
+                        start_time=c_raw.start_time,
+                        end_time=c_raw.end_time,
+                        segments=transcript,
+                        min_dur=ap_settings.clip_min_duration,
+                        max_dur=ap_settings.clip_max_duration,
                     )
-                    source_is_section = True
-                    source_offset = min(best_clip.start_time, pad)
-                except (RuntimeError, OSError, ValueError) as exc:
-                    logger.warning(
-                        "Section download failed (%s), falling back to full download.", exc
+                    candidate_clips.append(
+                        ClipCandidate(
+                            index=c_raw.index,
+                            start_time=snapped_s,
+                            end_time=snapped_e,
+                            hook_summary=c_raw.hook_summary,
+                            seo=c_raw.seo,
+                            broll_query=c_raw.broll_query,
+                        )
                     )
-                    try:
-                        video_path = download_video(
-                            best_video.url,
-                            download_dir,
-                            settings.max_source_duration_seconds,
-                        )
-                        source_is_section = False
-                        source_offset = 0.0
-                    except (RuntimeError, OSError, ValueError) as dl_exc:
-                        logger.warning(
-                            "Full download also failed for %s: %s. Attempting Full AI Short fallback.",
-                            best_video.url,
-                            dl_exc,
-                        )
-                        yield (
-                            f"[Video {idx + 1}/{num_videos}] Video download unavailable -> Switching to Full AI Short Generation...",
-                            _p(0.6),
-                            None,
-                        )
-                        try:
-                            final_output, seo = build_full_ai_short(
-                                topic_title=best_video.title,
-                                topic_context=f"Video Title: {best_video.title}\nDescription: {best_video.description}",
-                                settings=ap_settings,
-                                tmp_dir=download_dir,
-                                output_dir=ap_settings.output_dir,
-                                report_cb=lambda msg: None,
-                            )
-                            record_processed_video(
-                                video_id=best_video.video_id,
-                                url=best_video.url,
-                                title=best_video.title,
-                                output_dir=ap_settings.output_dir,
-                                mode="ai_gen",
-                                seo=seo,
-                                output_file=final_output,
-                            )
-                            slot = get_optimal_schedule_slot(slot_index=idx)
-                            results.append(
-                                {
-                                    "seo": seo,
-                                    "path": final_output,
-                                    "publish_at": slot.utc_datetime,
-                                    "schedule_display": slot.display_str,
-                                    "local_publish_time": slot.local_datetime,
-                                }
-                            )
-                            continue
-                        except (
-                            RuntimeError,
-                            OSError,
-                            ValueError,
-                            KeyError,
-                            APIError,
-                        ) as ai_exc:
-                            logger.error(
-                                "Full AI fallback failed for %s: %s",
-                                best_video.title,
-                                ai_exc,
-                            )
-                            yield (
-                                f"[Video {idx + 1}/{num_videos}] Video unavailable; skipping '{best_video.title[:35]}'.",
-                                _p(0.65),
-                                None,
-                            )
-                            continue
-
-            # Content Classifier: if auto mode, inspect video for on-camera speaker
-            if production_strategy == "auto":
-                from services.content_decision_engine import classify_production_mode
-
-                detected_mode = classify_production_mode(
-                    video_path, user_preference="auto"
-                )
-                if detected_mode == "ai_gen":
-                    yield (
-                        f"[Video {idx + 1}/{num_videos}] No clear on-camera speaker -> Switching to Full AI Short Generation...",
-                        _p(0.6),
-                        None,
-                    )
-                    try:
-                        final_output, seo = build_full_ai_short(
-                            topic_title=best_video.title,
-                            topic_context=f"Video Title: {best_video.title}\nDescription: {best_video.description}",
-                            settings=ap_settings,
-                            tmp_dir=download_dir,
-                            output_dir=ap_settings.output_dir,
-                            report_cb=lambda msg: None,
-                        )
-                        record_processed_video(
-                            video_id=best_video.video_id,
-                            url=best_video.url,
-                            title=best_video.title,
-                            output_dir=ap_settings.output_dir,
-                            mode="ai_gen",
-                            seo=seo,
-                            output_file=final_output,
-                        )
-                        slot = get_optimal_schedule_slot(slot_index=idx)
-                        results.append(
-                            {
-                                "seo": seo,
-                                "path": final_output,
-                                "publish_at": slot.utc_datetime,
-                                "schedule_display": slot.display_str,
-                                "local_publish_time": slot.local_datetime,
-                            }
-                        )
-                        continue
-                    except (
-                        RuntimeError,
-                        OSError,
-                        ValueError,
-                        KeyError,
-                        APIError,
-                    ) as exc:
-                        logger.error(
-                            "Full AI fallback failed for %s: %s", best_video.title, exc
-                        )
+                except (RuntimeError, ValueError, KeyError) as snap_exc:
+                    logger.debug("Boundary snapping skipped in autopilot: %s", snap_exc)
+                    candidate_clips.append(c_raw)
         else:
             # Fallback path: Full download + Whisper local transcription + OCR
             yield (
-                f"[Video {idx + 1}/{num_videos}] Downloading video for Whisper analysis...",
+                f"[Video {idx + 1}/{len(best_videos)}] Downloading video for Whisper analysis...",
                 _p(0.15),
                 None,
             )
@@ -641,73 +496,21 @@ def run_autopilot_pipeline(
                         best_video.url,
                         dl_exc,
                     )
-                    yield (
-                        f"[Video {idx + 1}/{num_videos}] Video download unavailable -> Switching to Full AI Short Generation...",
-                        _p(0.2),
-                        None,
-                    )
-                    try:
-                        final_output, seo = build_full_ai_short(
-                            topic_title=best_video.title,
-                            topic_context=f"Video Title: {best_video.title}\nDescription: {best_video.description}",
-                            settings=ap_settings,
-                            tmp_dir=download_dir,
-                            output_dir=ap_settings.output_dir,
-                            report_cb=lambda msg: None,
-                        )
-                        record_processed_video(
-                            video_id=best_video.video_id,
-                            url=best_video.url,
-                            title=best_video.title,
-                            output_dir=ap_settings.output_dir,
-                            mode="ai_gen",
-                            seo=seo,
-                            output_file=final_output,
-                        )
-                        results.append(
-                            {
-                                "seo": seo,
-                                "path": final_output,
-                                "publish_at": get_optimal_schedule_time()
-                                + timedelta(days=idx),
-                            }
-                        )
-                        continue
-                    except (
-                        RuntimeError,
-                        OSError,
-                        ValueError,
-                        KeyError,
-                        APIError,
-                    ) as ai_exc:
-                        logger.error(
-                            "Full AI fallback after download failure failed for %s: %s",
-                            best_video.title,
-                            ai_exc,
-                        )
-                        yield (
-                            f"[Video {idx + 1}/{num_videos}] Video unavailable; skipping '{best_video.title[:35]}'.",
-                            _p(0.25),
-                            None,
-                        )
-                        continue
+                    video_path = None
 
-            # Content Classifier: if auto mode, inspect video for on-camera speaker
-            if production_strategy == "auto":
-                from services.content_decision_engine import classify_production_mode
-
-                detected_mode = classify_production_mode(
-                    video_path, user_preference="auto"
+            if video_path is None:
+                yield (
+                    f"[Video {idx + 1}/{len(best_videos)}] Video download unavailable -> Switching to Full AI Short Generation...",
+                    _p(0.2),
+                    None,
                 )
-                if detected_mode == "ai_gen":
-                    yield (
-                        f"[Video {idx + 1}/{num_videos}] No clear on-camera speaker -> Switching to Full AI Short Generation...",
-                        _p(0.25),
-                        None,
-                    )
+                for ai_i in range(clips_needed):
+                    if len(results) >= total_target_shorts:
+                        break
+                    short_num = len(results) + 1
                     try:
                         final_output, seo = build_full_ai_short(
-                            topic_title=best_video.title,
+                            topic_title=f"{best_video.title} (Part {ai_i + 1})" if clips_needed > 1 else best_video.title,
                             topic_context=f"Video Title: {best_video.title}\nDescription: {best_video.description}",
                             settings=ap_settings,
                             tmp_dir=download_dir,
@@ -715,7 +518,7 @@ def run_autopilot_pipeline(
                             report_cb=lambda msg: None,
                         )
                         record_processed_video(
-                            video_id=best_video.video_id,
+                            video_id=f"{best_video.video_id}_ai_{ai_i + 1}",
                             url=best_video.url,
                             title=best_video.title,
                             output_dir=ap_settings.output_dir,
@@ -723,28 +526,23 @@ def run_autopilot_pipeline(
                             seo=seo,
                             output_file=final_output,
                         )
+                        slot = get_optimal_schedule_slot(slot_index=len(results))
                         results.append(
                             {
                                 "seo": seo,
                                 "path": final_output,
-                                "publish_at": get_optimal_schedule_time()
-                                + timedelta(days=idx),
+                                "publish_at": slot.utc_datetime,
+                                "schedule_display": slot.display_str,
+                                "local_publish_time": slot.local_datetime,
                             }
                         )
-                        continue
-                    except (
-                        RuntimeError,
-                        OSError,
-                        ValueError,
-                        KeyError,
-                        APIError,
-                    ) as exc:
-                        logger.error(
-                            "Full AI fallback failed for %s: %s", best_video.title, exc
-                        )
+                    except Exception as ai_exc:
+                        logger.error("Full AI fallback failed for %s: %s", best_video.title, ai_exc)
+                continue
 
+            cached_full_video = video_path
             yield (
-                f"[Video {idx + 1}/{num_videos}] Transcribing audio with Whisper...",
+                f"[Video {idx + 1}/{len(best_videos)}] Transcribing audio with Whisper...",
                 _p(0.35),
                 None,
             )
@@ -758,11 +556,6 @@ def run_autopilot_pipeline(
             )
 
             # Extract visual context via OCR
-            yield (
-                f"[Video {idx + 1}/{num_videos}] Extracting visual context (OCR)...",
-                _p(0.45),
-                None,
-            )
             ocr_text = ""
             try:
                 from services.ocr_engine import OCREngine
@@ -775,7 +568,7 @@ def run_autopilot_pipeline(
                 logger.warning("OCR extraction failed for %s: %s", video_path, exc)
 
             yield (
-                f"[Video {idx + 1}/{num_videos}] AI analyzing transcription for viral clips...",
+                f"[Video {idx + 1}/{len(best_videos)}] AI analyzing transcription to select top {clips_needed} viral moments...",
                 _p(0.55),
                 None,
             )
@@ -787,61 +580,50 @@ def run_autopilot_pipeline(
                 if total_dur > 0
                 else ap_settings.clip_min_duration
             )
-            clips = select_clips(
+            raw_clips = select_clips(
                 segments=transcript,
                 gemini_api_key=settings.gemini_api_key,
-                max_clips=3,
-                min_clips=1,
+                max_clips=clips_needed,
+                min_clips=min(1, clips_needed),
                 min_dur=eff_min,
                 max_dur=ap_settings.clip_max_duration,
                 ocr_text=ocr_text,
+                source_title=best_video.title,
+                channel_niche=getattr(ap_settings, "niche_template", ""),
             )
-            if not clips:
-                logger.warning(
-                    "AI could not find any good clips in video %s. Skipping.",
-                    best_video.title,
-                )
-                continue
+            for c_raw in raw_clips[:clips_needed]:
+                try:
+                    snapped_s, snapped_e = snap_to_silence(
+                        start_time=c_raw.start_time,
+                        end_time=c_raw.end_time,
+                        segments=transcript,
+                        min_dur=ap_settings.clip_min_duration,
+                        max_dur=ap_settings.clip_max_duration,
+                    )
+                    candidate_clips.append(
+                        ClipCandidate(
+                            index=c_raw.index,
+                            start_time=snapped_s,
+                            end_time=snapped_e,
+                            hook_summary=c_raw.hook_summary,
+                            seo=c_raw.seo,
+                            broll_query=c_raw.broll_query,
+                        )
+                    )
+                except (RuntimeError, ValueError, KeyError) as snap_exc:
+                    logger.debug("Boundary snapping skipped in autopilot fallback: %s", snap_exc)
+                    candidate_clips.append(c_raw)
 
-            best_clip = clips[0]
-            try:
-                snapped_s, snapped_e = snap_to_silence(
-                    start_time=best_clip.start_time,
-                    end_time=best_clip.end_time,
-                    segments=transcript,
-                    min_dur=ap_settings.clip_min_duration,
-                    max_dur=ap_settings.clip_max_duration,
-                )
-                best_clip = ClipCandidate(
-                    index=best_clip.index,
-                    start_time=snapped_s,
-                    end_time=snapped_e,
-                    hook_summary=best_clip.hook_summary,
-                    seo=best_clip.seo,
-                    broll_query=best_clip.broll_query,
-                )
-            except (RuntimeError, ValueError, KeyError) as snap_exc:
-                logger.debug(
-                    "Boundary snapping skipped in autopilot fallback: %s", snap_exc
-                )
-
-            yield (
-                f"[Video {idx + 1}/{num_videos}] Selected clip: {best_clip.seo.title if best_clip.seo else 'Viral Hook'} (Rank: {best_clip.index})",
-                _p(0.65),
-                None,
+        if not candidate_clips:
+            logger.warning(
+                "AI could not find viral moments in transcript for %s. Skipping.",
+                best_video.title,
             )
-            source_is_section = False
-            source_offset = 0.0
+            continue
 
-        # Check if production strategy is hybrid
+        # If hybrid, conduct wide & deep research once per video topic
+        dossier = None
         if production_strategy == "hybrid":
-            yield (
-                f"[Video {idx + 1}/{num_videos}] Strategy: Back-and-Forth Hybrid Short (Speaker Clip + Deep Research AI Breakdown)...",
-                _p(0.68),
-                None,
-            )
-            # Conduct wide & deep research across news and data
-            dossier = None
             try:
                 from services.research_engine import conduct_wide_and_deep_research
 
@@ -853,163 +635,308 @@ def run_autopilot_pipeline(
             except (OSError, RuntimeError, ValueError, KeyError) as r_exc:
                 logger.warning("Autopilot research step skipped: %s", r_exc)
 
-            try:
-                from services.hybrid_short_generator import build_hybrid_short
-                from services.timeline_utils import slice_segments
-                from services.video_engine import slice_video
-            except ImportError:
-                from shorts_engine.services.hybrid_short_generator import (
-                    build_hybrid_short,
-                )
-                from shorts_engine.services.timeline_utils import slice_segments
-                from shorts_engine.services.video_engine import slice_video
+        # Loop through all selected viral moments for this video
+        for clip_pos, best_clip in enumerate(candidate_clips):
+            if len(results) >= total_target_shorts:
+                break
 
-            clip_dur = max(6.0, best_clip.end_time - best_clip.start_time)
-            part1_dur = min(20.0, clip_dur)
-            s_start = source_offset if source_is_section else best_clip.start_time
-            s_end = s_start + part1_dur
-
-            part1_raw = download_dir / f"hybrid_part1_raw_{best_clip.index}.mp4"
-            slice_video(
-                source_path=video_path,
-                start_time=s_start,
-                end_time=s_end,
-                output_path=part1_raw,
+            short_num = len(results) + 1
+            yield (
+                f"[{short_num}/{total_target_shorts}] Selected Moment #{best_clip.index}: {best_clip.seo.title if best_clip.seo else best_clip.hook_summary} [{best_clip.start_display} → {best_clip.end_display}]",
+                _p(0.60),
+                None,
             )
 
-            part1_segments = slice_segments(
-                transcript, best_clip.start_time, best_clip.start_time + part1_dur
-            )
+            # Sourcing video media for this clip
+            source_is_section = False
+            source_offset = 0.0
+            video_path = None
 
-            try:
-                final_output, seo = build_hybrid_short(
-                    clip_video_path=part1_raw,
-                    speaker_segments=part1_segments,
-                    topic_title=best_video.title,
-                    topic_context=f"Video Title: {best_video.title}\nDescription: {best_video.description}",
-                    settings=ap_settings,
-                    tmp_dir=download_dir,
-                    output_dir=ap_settings.output_dir,
-                    report_cb=lambda msg: None,
-                    research_dossier=dossier,
-                )
-                record_processed_video(
-                    video_id=best_video.video_id,
-                    url=best_video.url,
-                    title=best_video.title,
-                    output_dir=ap_settings.output_dir,
-                    mode="hybrid",
-                    seo=seo,
-                    output_file=final_output,
-                )
-                slot = get_optimal_schedule_slot(slot_index=idx)
-                results.append(
-                    {
-                        "seo": seo,
-                        "path": final_output,
-                        "publish_at": slot.utc_datetime,
-                        "schedule_display": slot.display_str,
-                        "local_publish_time": slot.local_datetime,
-                    }
+            if Path(best_video.url).is_file():
+                video_path = Path(best_video.url)
+                source_is_section = False
+                source_offset = 0.0
+            elif cached_full_video:
+                video_path = cached_full_video
+                source_is_section = False
+                source_offset = 0.0
+            else:
+                # Fast section download: download only this chosen clip segment (with 2s padding)
+                pad = 2.0
+                clip_dl_dir = download_dir / f"clip_{best_clip.index}"
+                clip_dl_dir.mkdir(parents=True, exist_ok=True)
+                try:
+                    video_path = download_video_section(
+                        best_video.url,
+                        clip_dl_dir,
+                        start_time=best_clip.start_time,
+                        end_time=best_clip.end_time,
+                        padding=pad,
+                    )
+                    source_is_section = True
+                    source_offset = min(best_clip.start_time, pad)
+                except Exception as exc:
+                    logger.warning(
+                        "Section download failed (%s), falling back to full download.", exc
+                    )
+                    try:
+                        cached_full_video = download_video(
+                            best_video.url,
+                            download_dir,
+                            settings.max_source_duration_seconds,
+                        )
+                        video_path = cached_full_video
+                        source_is_section = False
+                        source_offset = 0.0
+                    except Exception as dl_exc:
+                        logger.warning(
+                            "Full download also failed for %s: %s", best_video.url, dl_exc
+                        )
+                        video_path = None
+
+            if not video_path:
+                logger.error(
+                    "No valid video media available for clip %d of '%s'. Skipping.",
+                    best_clip.index,
+                    best_video.title,
                 )
                 continue
-            except (RuntimeError, OSError, ValueError, KeyError, APIError) as exc:
-                logger.error(
-                    "Hybrid generation failed for %s: %s", best_video.title, exc
-                )
+
+            active_strategy = production_strategy
+            if active_strategy == "auto":
+                try:
+                    from services.content_decision_engine import classify_production_mode
+
+                    detected_mode = classify_production_mode(
+                        video_path, user_preference="auto"
+                    )
+                    active_strategy = detected_mode
+                except Exception as c_err:
+                    logger.debug("Mode classification skipped: %s", c_err)
+                    active_strategy = "speaker"
+
+            if active_strategy == "ai_gen":
+                try:
+                    final_output, seo = build_full_ai_short(
+                        topic_title=best_clip.seo.title if (best_clip.seo and best_clip.seo.title) else best_video.title,
+                        topic_context=f"Video Title: {best_video.title}\nHook: {best_clip.hook_summary}",
+                        settings=ap_settings,
+                        tmp_dir=download_dir,
+                        output_dir=ap_settings.output_dir,
+                        report_cb=lambda msg: None,
+                    )
+                    record_processed_video(
+                        video_id=f"{best_video.video_id}_c{best_clip.index}",
+                        url=best_video.url,
+                        title=best_video.title,
+                        output_dir=ap_settings.output_dir,
+                        mode="ai_gen",
+                        seo=seo,
+                        output_file=final_output,
+                    )
+                    slot = get_optimal_schedule_slot(slot_index=len(results))
+                    results.append(
+                        {
+                            "seo": seo,
+                            "path": final_output,
+                            "publish_at": slot.utc_datetime,
+                            "schedule_display": slot.display_str,
+                            "local_publish_time": slot.local_datetime,
+                        }
+                    )
+                    continue
+                except Exception as ai_exc:
+                    logger.error("AI gen for clip failed: %s", ai_exc)
+                    continue
+
+            if active_strategy == "hybrid":
                 yield (
-                    f"[Video {idx + 1}/{num_videos}] Hybrid generation failed for '{best_video.title[:35]}': {exc}",
-                    _p(0.9),
+                    f"[{short_num}/{total_target_shorts}] Strategy: Back-and-Forth Hybrid Short (Speaker Clip + Deep Research AI Breakdown)...",
+                    _p(0.68),
                     None,
                 )
+                try:
+                    from services.hybrid_short_generator import build_hybrid_short
+                    from services.timeline_utils import slice_segments
+                    from services.video_engine import slice_video
+                except ImportError:
+                    from shorts_engine.services.hybrid_short_generator import (
+                        build_hybrid_short,
+                    )
+                    from shorts_engine.services.timeline_utils import slice_segments
+                    from shorts_engine.services.video_engine import slice_video
+
+                clip_dur = max(6.0, best_clip.end_time - best_clip.start_time)
+                part1_dur = min(20.0, clip_dur)
+                s_start = source_offset if source_is_section else best_clip.start_time
+                s_end = s_start + part1_dur
+
+                part1_raw = download_dir / f"hybrid_part1_raw_{best_clip.index}_{idx}.mp4"
+                slice_video(
+                    source_path=video_path,
+                    start_time=s_start,
+                    end_time=s_end,
+                    output_path=part1_raw,
+                )
+
+                part1_segments = slice_segments(
+                    transcript, best_clip.start_time, best_clip.start_time + part1_dur
+                )
+
+                try:
+                    final_output, seo = build_hybrid_short(
+                        clip_video_path=part1_raw,
+                        speaker_segments=part1_segments,
+                        topic_title=best_clip.seo.title if (best_clip.seo and best_clip.seo.title) else best_video.title,
+                        topic_context=f"Video Title: {best_video.title}\nHook: {best_clip.hook_summary}\nExcerpt: {best_clip.seo.title if best_clip.seo else ''}",
+                        settings=ap_settings,
+                        tmp_dir=download_dir,
+                        output_dir=ap_settings.output_dir,
+                        report_cb=lambda msg: None,
+                        research_dossier=dossier,
+                    )
+                    record_processed_video(
+                        video_id=f"{best_video.video_id}_c{best_clip.index}",
+                        url=best_video.url,
+                        title=best_video.title,
+                        output_dir=ap_settings.output_dir,
+                        mode="hybrid",
+                        seo=seo,
+                        output_file=final_output,
+                    )
+                    slot = get_optimal_schedule_slot(slot_index=len(results))
+                    results.append(
+                        {
+                            "seo": seo,
+                            "path": final_output,
+                            "publish_at": slot.utc_datetime,
+                            "schedule_display": slot.display_str,
+                            "local_publish_time": slot.local_datetime,
+                        }
+                    )
+
+                    try:
+                        from services.project_memory import ProjectRecord, save_project_record
+                        p_rec = ProjectRecord(
+                            project_id=f"proj_{best_video.video_id}_{best_clip.index}_{int(datetime.now(timezone.utc).timestamp())}",
+                            created_at=datetime.now(timezone.utc).isoformat(),
+                            source_title=best_video.title,
+                            source_url=best_video.url,
+                            duration_seconds=clip_dur,
+                            niche=ap_settings.niche_template,
+                            video_type=getattr(best_video, "channel_title", "video"),
+                            caption_style=getattr(ap_settings, "caption_style", "auto"),
+                            hook_summary=best_clip.hook_summary,
+                            hook_text=seo.title if seo else "",
+                            virality_score=best_clip.virality_score or 8.5,
+                            tags=seo.tags if seo else [],
+                            status="approved",
+                            output_path=str(final_output),
+                        )
+                        save_project_record(p_rec)
+                    except Exception as p_err:
+                        logger.debug("Project memory saving skipped: %s", p_err)
+                    continue
+                except Exception as exc:
+                    logger.error(
+                        "Hybrid generation failed for clip %d of %s: %s",
+                        best_clip.index,
+                        best_video.title,
+                        exc,
+                    )
+                    continue
+
+            # Standard / Speaker Short compose
+            yield (
+                f"[{short_num}/{total_target_shorts}] Assembling Short for Clip #{best_clip.index}...",
+                _p(0.75),
+                None,
+            )
+            stem_pfx = f"v{idx + 1}" if len(best_videos) > 1 else None
+            result = process_url_clip(
+                clip=best_clip,
+                source_path=video_path,
+                all_segments=transcript,
+                settings=ap_settings,
+                tmp_dir=download_dir,
+                run_output_dir=ap_settings.output_dir,
+                custom_broll_path=broll_path if broll_path else None,
+                source_is_section=source_is_section,
+                source_offset=source_offset,
+                source_video_id=f"{best_video.video_id}_c{best_clip.index}",
+                stem_prefix=stem_pfx,
+            )
+
+            if result.error or not result.output_file:
+                logger.error(
+                    f"Clip processing failed for video {best_video.title} clip {best_clip.index}: {result.error}"
+                )
                 continue
 
-        # Compose Clip
-        yield (f"[Video {idx + 1}/{num_videos}] Assembling Short...", _p(0.75), None)
-        result = process_url_clip(
-            clip=best_clip,
-            source_path=video_path,
-            all_segments=transcript,
-            settings=ap_settings,
-            tmp_dir=download_dir,
-            run_output_dir=ap_settings.output_dir,
-            custom_broll_path=broll_path if broll_path else None,
-            source_is_section=source_is_section,
-            source_offset=source_offset,
-            source_video_id=best_video.video_id,
-        )
-
-        if result.error:
-            logger.error(
-                f"Clip processing failed for video {best_video.title}: {result.error}"
+            # SEO
+            yield (
+                f"[{short_num}/{total_target_shorts}] Generating SEO Metadata for Clip #{best_clip.index}...",
+                _p(0.9),
+                None,
             )
-            continue
+            try:
+                from services.timeline_utils import slice_segments
+                from services.transcriber import full_transcript_text
+            except ImportError:
+                from shorts_engine.services.timeline_utils import slice_segments
+                from shorts_engine.services.transcriber import full_transcript_text
 
-        # SEO
-        yield (
-            f"[Video {idx + 1}/{num_videos}] Generating SEO Metadata...",
-            _p(0.9),
-            None,
-        )
-        # crop transcript to clip bounds
-        try:
-            from services.timeline_utils import slice_segments
-            from services.transcriber import full_transcript_text
-        except ImportError:
-            from shorts_engine.services.timeline_utils import slice_segments
-            from shorts_engine.services.transcriber import full_transcript_text
-        sub_segments = slice_segments(
-            transcript, best_clip.start_time, best_clip.end_time
-        )
-        sub_transcript_text = full_transcript_text(sub_segments)
-        seo = generate_seo(
-            transcript_text=sub_transcript_text, api_key=settings.gemini_api_key
-        )
-
-        record_processed_video(
-            video_id=best_video.video_id,
-            url=best_video.url,
-            title=best_video.title,
-            output_dir=ap_settings.output_dir,
-            mode="clip",
-            seo=seo,
-            output_file=result.output_file,
-        )
-
-        # Record into AI Project Memory Dataset for continuous learning
-        try:
-            from services.project_memory import ProjectRecord, save_project_record
-            clip_dur = (best_clip.end_time - best_clip.start_time) if 'best_clip' in locals() and best_clip else 45.0
-            p_rec = ProjectRecord(
-                project_id=f"proj_{best_video.video_id}_{idx}_{int(datetime.now(timezone.utc).timestamp())}",
-                created_at=datetime.now(timezone.utc).isoformat(),
-                source_title=best_video.title,
-                source_url=best_video.url,
-                duration_seconds=clip_dur,
-                niche=ap_settings.niche_template,
-                video_type=getattr(best_video, "channel_title", "video"),
-                caption_style=getattr(ap_settings, "caption_style", "auto"),
-                hook_summary=best_clip.hook_summary if 'best_clip' in locals() and best_clip else "",
-                hook_text=seo.title if seo else "",
-                virality_score=best_clip.virality_score if 'best_clip' in locals() and best_clip else 8.5,
-                tags=seo.tags if seo else [],
-                status="approved",
-                output_path=str(result.output_file) if hasattr(result, "output_file") else "",
+            sub_segments = slice_segments(
+                transcript, best_clip.start_time, best_clip.end_time
             )
-            save_project_record(p_rec)
-        except (ImportError, OSError, RuntimeError, ValueError) as p_err:
-            logger.debug("Project memory saving skipped: %s", p_err)
+            sub_transcript_text = full_transcript_text(sub_segments)
+            seo = best_clip.seo if (best_clip.seo and best_clip.seo.title) else generate_seo(
+                transcript_text=sub_transcript_text, api_key=settings.gemini_api_key
+            )
 
-        slot = get_optimal_schedule_slot(slot_index=idx)
-        results.append(
-            {
-                "seo": seo,
-                "path": result.output_file,
-                "publish_at": slot.utc_datetime,
-                "schedule_display": slot.display_str,
-                "local_publish_time": slot.local_datetime,
-            }
-        )
+            record_processed_video(
+                video_id=f"{best_video.video_id}_c{best_clip.index}",
+                url=best_video.url,
+                title=best_video.title,
+                output_dir=ap_settings.output_dir,
+                mode="clip",
+                seo=seo,
+                output_file=result.output_file,
+            )
+
+            try:
+                from services.project_memory import ProjectRecord, save_project_record
+                clip_dur = max(1.0, best_clip.end_time - best_clip.start_time)
+                p_rec = ProjectRecord(
+                    project_id=f"proj_{best_video.video_id}_{best_clip.index}_{int(datetime.now(timezone.utc).timestamp())}",
+                    created_at=datetime.now(timezone.utc).isoformat(),
+                    source_title=best_video.title,
+                    source_url=best_video.url,
+                    duration_seconds=clip_dur,
+                    niche=ap_settings.niche_template,
+                    video_type=getattr(best_video, "channel_title", "video"),
+                    caption_style=getattr(ap_settings, "caption_style", "auto"),
+                    hook_summary=best_clip.hook_summary,
+                    hook_text=seo.title if seo else "",
+                    virality_score=best_clip.virality_score or 8.5,
+                    tags=seo.tags if seo else [],
+                    status="approved",
+                    output_path=str(result.output_file),
+                )
+                save_project_record(p_rec)
+            except Exception as p_err:
+                logger.debug("Project memory saving skipped: %s", p_err)
+
+            slot = get_optimal_schedule_slot(slot_index=len(results))
+            results.append(
+                {
+                    "seo": seo,
+                    "path": result.output_file,
+                    "publish_at": slot.utc_datetime,
+                    "schedule_display": slot.display_str,
+                    "local_publish_time": slot.local_datetime,
+                }
+            )
 
     if not results:
         raise RuntimeError("Failed to generate any videos successfully.")

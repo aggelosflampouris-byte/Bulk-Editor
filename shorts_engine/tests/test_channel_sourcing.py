@@ -387,3 +387,77 @@ def test_autopilot_enforces_9_16_clean_postprod_and_dynamic_captions(tmp_path: P
         assert passed_settings.broll_ken_burns is False
         # Must enforce dynamic fluid captions
         assert passed_settings.subtitle_mode == "dynamic"
+
+
+def test_autopilot_single_url_generates_multiple_clips(tmp_path: Path) -> None:
+    from shorts_engine.config import Settings
+    from shorts_engine.services.autopilot import run_autopilot_pipeline
+    from shorts_engine.services.clip_selector import ClipCandidate
+    from shorts_engine.services.downloader import UrlMetadata
+    from shorts_engine.services.transcriber import TranscriptionSegment
+
+    settings = Settings(gemini_api_key="test_api_key", output_dir=tmp_path)
+    url = "https://www.youtube.com/watch?v=xe2MXk-m428"
+    mock_video = VideoMeta(
+        video_id="xe2MXk-m428",
+        title="Vitara Gasket Replacement",
+        url=url,
+        view_count=50000,
+        duration_seconds=900,
+        upload_date="20260920",
+        like_count=500,
+        comment_count=100,
+        description="Car vlog repair",
+    )
+
+    clips = [
+        ClipCandidate(
+            index=i,
+            start_time=float(i * 40),
+            end_time=float(i * 40 + 35),
+            hook_summary=f"Viral Moment #{i}",
+            seo=None,
+            broll_query="car engine",
+        )
+        for i in range(1, 4)
+    ]
+
+    fake_sec_file = tmp_path / "sec.mp4"
+    fake_sec_file.touch()
+
+    with (
+        patch("shorts_engine.services.autopilot.fetch_youtube_videos", return_value=[mock_video]),
+        patch(
+            "shorts_engine.services.autopilot.fetch_youtube_transcript",
+            return_value=[TranscriptionSegment(start=0.0, end=900.0, text="Test spoken words", words=[])],
+        ),
+        patch("shorts_engine.services.autopilot.select_clips", return_value=clips) as mock_select,
+        patch(
+            "shorts_engine.services.autopilot.snap_to_silence",
+            side_effect=lambda start_time, end_time, **kw: (start_time, end_time),
+        ),
+        patch("shorts_engine.services.autopilot.download_video_section", return_value=fake_sec_file),
+        patch("shorts_engine.services.autopilot.process_url_clip") as mock_process,
+        patch("shorts_engine.services.autopilot.record_processed_video"),
+    ):
+        mock_process.side_effect = [
+            MagicMock(error=None, output_file=tmp_path / f"out_{i}.mp4")
+            for i in range(1, 4)
+        ]
+
+        gen = run_autopilot_pipeline(target_url=url, settings=settings, num_videos=3)
+        final_results = None
+        for _msg, _pct, data in gen:
+            if data is not None:
+                final_results = data
+
+        # 1. select_clips requested max_clips=3 for the single source video
+        mock_select.assert_called_once()
+        assert mock_select.call_args[1]["max_clips"] == 3
+        # 2. process_url_clip was called 3 times (once per extracted clip)
+        assert mock_process.call_count == 3
+        # 3. All 3 shorts are returned in the final result list
+        assert final_results is not None
+        assert len(final_results) == 3
+        assert [r["path"].name for r in final_results] == ["out_1.mp4", "out_2.mp4", "out_3.mp4"]
+
