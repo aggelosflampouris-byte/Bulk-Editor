@@ -38,7 +38,7 @@ def _best_torch_device() -> str:
 @dataclass(frozen=True)
 class SpeakerTrackingResult:
     """
-    Outcome of active speaker tracking across a video clip.
+    Outcome of active speaker and focal object tracking across a video clip.
     """
     has_speaker: bool
     speaker_presence_ratio: float  # Fraction of sampled frames containing a speaker (0.0 to 1.0)
@@ -47,6 +47,7 @@ class SpeakerTrackingResult:
     crop_expression: str           # Dynamic FFmpeg crop X expression
     crop_y_expression: str         # Dynamic FFmpeg crop Y expression
     shot_crop_offsets: list[tuple[float, float, int, int]]  # List of (t_start, t_end, crop_x, crop_y) segments
+    subject_type: str = "speaker_face"  # "speaker_face" | "salient_motion_focus" | "center"
 
 
 def _clamp(val: float, min_val: float, max_val: float) -> float:
@@ -198,6 +199,8 @@ def track_active_speaker(
     frame_idx = 0
     last_speaker_cx: float | None = None
     last_speaker_cy: float | None = None
+    speaker_detected_count = 0
+    prev_small_gray = None
 
     try:
         while True:
@@ -216,6 +219,7 @@ def track_active_speaker(
 
                 boxes = results[0].boxes if results else None
                 if boxes and len(boxes) > 0:
+                    speaker_detected_count += 1
                     best_idx = 0
                     best_score = -1.0
                     for b_i, b in enumerate(boxes):
@@ -275,6 +279,25 @@ def track_active_speaker(
                     last_speaker_cx = centroid_x
                     last_speaker_cy = centroid_y
                     samples.append((t_sec, centroid_x, centroid_y))
+                else:
+                    # No human face/speaker in frame: track salient visual motion & action
+                    # (e.g. car engine bay, hands pointing at parts, tools, product unboxing)
+                    small_gray = cv2.cvtColor(cv2.resize(frame, (320, 180)), cv2.COLOR_BGR2GRAY)
+                    if prev_small_gray is not None:
+                        diff = cv2.absdiff(small_gray, prev_small_gray)
+                        _, thresh = cv2.threshold(diff, 20, 255, cv2.THRESH_BINARY)
+                        moments = cv2.moments(thresh)
+                        if moments["m00"] > 300:
+                            cx_small = moments["m10"] / moments["m00"]
+                            cy_small = moments["m01"] / moments["m00"]
+                            focal_cx = (cx_small / 320.0) * source_width
+                            focal_cy = (cy_small / 180.0) * source_height
+                            last_speaker_cx = focal_cx
+                            last_speaker_cy = focal_cy
+                            samples.append((t_sec, focal_cx, focal_cy))
+                        elif last_speaker_cx is not None and last_speaker_cy is not None:
+                            samples.append((t_sec, last_speaker_cx, last_speaker_cy))
+                    prev_small_gray = small_gray
             frame_idx += 1
     except (RuntimeError, ValueError, OSError, cv2.error) as exc:
         logger.warning("Speaker tracking loop encountered an error: %s", exc)
@@ -283,11 +306,11 @@ def track_active_speaker(
         import gc
         gc.collect()
 
-    presence_ratio = (len(samples) / total_sampled) if total_sampled > 0 else 0.0
+    presence_ratio = (speaker_detected_count / total_sampled) if total_sampled > 0 else 0.0
 
     if not samples:
         logger.info(
-            "No active speaker recognized in '%s' — using center-crop.",
+            "No active speaker or salient focal motion recognized in '%s' — using center-crop.",
             video_path.name,
         )
         return SpeakerTrackingResult(
@@ -298,6 +321,7 @@ def track_active_speaker(
             crop_expression=str(default_center_x),
             crop_y_expression=str(default_center_y),
             shot_crop_offsets=[(0.0, 99999.0, default_center_x, default_center_y)],
+            subject_type="center",
         )
 
     # Compute detected median crop coordinates from samples to prevent empty background crop
@@ -305,14 +329,16 @@ def track_active_speaker(
     sorted_s_y = sorted(s[2] for s in samples)
     median_cx = sorted_s_x[len(sorted_s_x) // 2]
     median_cy = sorted_s_y[len(sorted_s_y) // 2]
-    # Eye-line at 35% from top of 9:16 portrait viewport for ideal portrait headroom
+    # Eye-line / focal-line at 35% from top of 9:16 portrait viewport for ideal portrait headroom
     detected_crop_x = int(_clamp((median_cx * scale_factor) - (target_width / 2.0), 0, max_crop_x))
     detected_crop_y = int(_clamp((median_cy * scale_factor) - (target_height * 0.35), 0, max_crop_y))
 
+    detected_subject = "speaker_face" if speaker_detected_count > 0 else "salient_motion_focus"
+
     if presence_ratio < _MIN_SPEAKER_PRESENCE_RATIO:
         logger.info(
-            "Low speaker presence in '%s' (%.1f%%) — using detected median crop X=%d, Y=%d.",
-            video_path.name, presence_ratio * 100.0, detected_crop_x, detected_crop_y,
+            "Low speaker presence in '%s' (%.1f%%, mode=%s) — using detected median crop X=%d, Y=%d.",
+            video_path.name, presence_ratio * 100.0, detected_subject, detected_crop_x, detected_crop_y,
         )
         return SpeakerTrackingResult(
             has_speaker=False,
@@ -322,6 +348,7 @@ def track_active_speaker(
             crop_expression=str(detected_crop_x),
             crop_y_expression=str(detected_crop_y),
             shot_crop_offsets=[(0.0, 99999.0, detected_crop_x, detected_crop_y)],
+            subject_type=detected_subject,
         )
 
     # Convert samples to desired crop bounds per frame:

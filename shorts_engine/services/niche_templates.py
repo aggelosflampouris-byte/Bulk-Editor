@@ -58,6 +58,9 @@ class NicheTemplate:
     brand_voice: str                 # Injected into Gemini prompts
     channel_niche_context: str       # Additional niche context for clip selection
 
+    # ── Caption Template ──────────────────────────────────────────────────
+    caption_style: str = "auto"      # e.g. "CAR_PULSE_INDUSTRIAL", "HORMOZI_PUNCH", "auto"
+
     def apply_to(self, settings: "Settings") -> "Settings":
         """
         Return a new Settings instance with this template's values applied.
@@ -77,6 +80,7 @@ class NicheTemplate:
             whisper_context_hint=self.whisper_context_hint,
             brand_voice=self.brand_voice,
             niche_template=self.name,
+            caption_style=self.caption_style,
         )
 
     @property
@@ -295,6 +299,30 @@ NICHE_TEMPLATES: dict[str, NicheTemplate] = {
             "Greek gaming community, and gaming culture."
         ),
     ),
+    "automotive": NicheTemplate(
+        name="automotive",
+        display_name="Automotive / Car Vlogs",
+        emoji="🏎️",
+        description="Car builds, mechanic repairs, engine diagnostics, and driving vlogs.",
+        clip_min_duration=35.0,
+        clip_max_duration=52.0,
+        bg_music_track="upbeat_groove",
+        bg_music_volume=0.18,
+        bg_music_ducking=True,
+        vfx_preset_override="VIBRANCE",
+        subtitle_position="lower_third",
+        whisper_context_hint="automotive",
+        brand_voice=(
+            "Passionate, authentic gearhead and mechanic tone. Focus on mechanical problems, "
+            "costly mistakes, horsepower, engine diagnostics, and practical car advice. "
+            "Intriguing and urgent hooks."
+        ),
+        channel_niche_context=(
+            "Automotive mechanics, Greek car community, track days, car tuning, "
+            "diagnostic tests, and garage repairs."
+        ),
+        caption_style="CAR_PULSE_INDUSTRIAL",
+    ),
     "custom": NicheTemplate(
         name="custom",
         display_name="Custom",
@@ -310,6 +338,7 @@ NICHE_TEMPLATES: dict[str, NicheTemplate] = {
         whisper_context_hint="",
         brand_voice="",
         channel_niche_context="High-value, engaging content across any topic.",
+        caption_style="auto",
     ),
 }
 
@@ -338,6 +367,7 @@ def template_options() -> list[tuple[str, str]]:
     """
     order = [
         "custom",
+        "automotive",
         "politics",
         "society",
         "science",
@@ -349,3 +379,78 @@ def template_options() -> list[tuple[str, str]]:
         "gaming",
     ]
     return [(k, NICHE_TEMPLATES[k].sidebar_label) for k in order if k in NICHE_TEMPLATES]
+
+
+def auto_detect_niche(
+    title: str = "",
+    description: str = "",
+    text_sample: str = "",
+) -> str:
+    """
+    Intelligently infer the content niche from video metadata and speech transcript.
+
+    Returns:
+        One of the registered niche keys (e.g. 'automotive', 'technology', 'politics')
+        or 'custom' if confidence is low.
+    """
+    corpus = f"{title} {description} {text_sample}".lower()
+
+    # 1. Automotive & Mechanics
+    auto_keywords = (
+        "κινητήρας", "αμάξι", "αυτοκίνητο", "μοτέρ", "φλάντζα", "μηχανικός",
+        "συνεργείο", "service", "τουρμπίνα", "turbo", "drift", "bmw", "audi",
+        "mercedes", "toyota", "λάδια", "γκάζι", "φρένα", "exhaust", "κιβώτιο",
+        "καπό", "ιπποδύναμη", "άλογα", "κυβικά", "car vlog", "tuning"
+    )
+    if any(k in corpus for k in auto_keywords):
+        return "automotive"
+
+    # 2. Politics & Economy
+    politics_keywords = (
+        "κυβέρνηση", "βουλή", "υπουργός", "πρωθυπουργός", "εκλογές", "κόμμα",
+        "προϋπολογισμός", "φόροι", "ακρίβεια", "διαφθορά", "πολιτική", "εε", "νατο"
+    )
+    if any(k in corpus for k in politics_keywords):
+        return "politics"
+
+    # 3. Technology & AI
+    tech_keywords = (
+        "τεχνολογία", "ai", "τεχνητή νοημοσύνη", "software", "coding", "προγραμματισμός",
+        "crypto", "bitcoin", "hardware", "smartphone", "iphone", "android", "app"
+    )
+    if any(k in corpus for k in tech_keywords):
+        return "technology"
+
+    # 4. Gaming
+    gaming_keywords = (
+        "gaming", "gamer", "playstation", "xbox", "gameplay", "streamer",
+        "esports", "fortnite", "gta", "minecraft", "counter-strike"
+    )
+    if any(k in corpus for k in gaming_keywords):
+        return "gaming"
+
+    # 5. Science & Education
+    science_keywords = (
+        "επιστήμη", "διάστημα", "nasa", "φυσική", "σύμπαν", "ιστορία",
+        "αρχαία ελλάδα", "φιλοσοφία", "εγκέφαλος", "ανακάλυψη"
+    )
+    if any(k in corpus for k in science_keywords):
+        return "science"
+
+    # 6. Business & Finance
+    biz_keywords = (
+        "επιχείρηση", "επένδυση", "χρήματα", "κεφάλαιο", "startup", "πωλήσεις",
+        "marketing", "real estate", "εισόδημα", "μετοχές"
+    )
+    if any(k in corpus for k in biz_keywords):
+        return "business"
+
+    # 7. Entertainment & Lifestyle
+    ent_keywords = (
+        "μουσική", "τραγούδι", "ηθοποιός", "ταινία", "σινεμά", "celebrity",
+        "φαγητό", "συνταγή", "ταξίδι", "διακοπές", "γυμναστική", "vlog"
+    )
+    if any(k in corpus for k in ent_keywords):
+        return "entertainment"
+
+    return "custom"

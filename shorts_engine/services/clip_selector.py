@@ -699,6 +699,20 @@ def select_clips(
         ocr_text=ocr_text or "No visual context available.",
     )
 
+    # Retrieve few-shot learning from project memory dataset
+    try:
+        from services.project_memory import get_memory_learning_context
+    except ImportError:
+        from shorts_engine.services.project_memory import get_memory_learning_context
+
+    memory_notes = get_memory_learning_context(
+        title=source_title,
+        niche=niche_template,
+        text_sample=transcript_block[:1500],
+    )
+    if memory_notes:
+        prompt = f"{prompt}\n\n{memory_notes}"
+
     logger.info(
         "Calling Gemini for clip selection (min=%d, max=%d, dur=[%d-%d]s, transcript_len=%d chars)...",
         min_clips, max_clips, int(effective_min), int(effective_max), len(transcript_block),

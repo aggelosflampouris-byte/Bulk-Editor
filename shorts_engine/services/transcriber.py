@@ -155,6 +155,11 @@ _DOMAIN_PROMPTS: dict[str, str] = {
         "Gaming, παιχνίδι, gamer, PlayStation, Xbox, PC, esports, streamer, "
         "Twitch, YouTube Gaming, update, patch, multiplayer, ranked, tournament."
     ),
+    "automotive": (
+        "Αυτοκίνητο, μηχανικός, κινητήρας, μοτέρ, κυβικά, ίπποι, άλογα, τουρμπίνα, turbo, "
+        "φλάντζα, ρελαντί, λάδια, φίλτρο, service, συμπλέκτης, σασμάν, κιβώτιο, φρένα, "
+        "αναρτήσεις, εξάτμιση, βελτίωση, drift, γκάζι, καύσιμο, κατανάλωση, συνεργείο."
+    ),
 }
 
 
@@ -461,6 +466,7 @@ def segments_to_ass(
     primary_keyword: str | None = None,
     subtitle_position: str = "lower_third",
     subtitle_mode: str = "dynamic",
+    caption_style: str | None = None,
 ) -> str:
     """
     Generate an ASS subtitle payload from a list of transcription segments.
@@ -473,8 +479,17 @@ def segments_to_ass(
         primary_keyword:     Keyword to highlight in yellow.
         subtitle_position:   "lower_third" | "center" | "top".
         subtitle_mode:       "dynamic" (fluid 2-3 words active highlight) | "phrase" | "word".
+        caption_style:       Optional template ID (e.g. "CAR_PULSE_INDUSTRIAL", "HORMOZI_PUNCH").
     """
     margin_v = _SUBTITLE_MARGIN_V.get(subtitle_position, _SUBTITLE_MARGIN_V["lower_third"])
+
+    if style_line is None and highlight_style_line is None and caption_style:
+        try:
+            from services.caption_styles import get_caption_style
+        except ImportError:
+            from shorts_engine.services.caption_styles import get_caption_style
+        c_template = get_caption_style(caption_style)
+        style_line, highlight_style_line = c_template.build_ass_styles(margin_v)
 
     effective_style = _build_style_line(
         style_line if style_line is not None else ASS_STYLE_LINE,
@@ -727,6 +742,7 @@ def write_ass_file(
     primary_keyword: str | None = None,
     subtitle_position: str = "lower_third",
     subtitle_mode: str = "dynamic",
+    caption_style: str | None = None,
 ) -> Path:
     """
     Generate and write an ASS subtitle file for the given segments.
@@ -739,6 +755,7 @@ def write_ass_file(
         primary_keyword:      Optional keyword to statically highlight.
         subtitle_position:    Vertical placement: "lower_third" | "center" | "top".
         subtitle_mode:        "dynamic" | "phrase" | "word".
+        caption_style:        Optional template ID (e.g. "CAR_PULSE_INDUSTRIAL").
 
     Returns:
         The resolved, written output_path.
@@ -753,6 +770,7 @@ def write_ass_file(
         primary_keyword=primary_keyword,
         subtitle_position=subtitle_position,
         subtitle_mode=subtitle_mode,
+        caption_style=caption_style,
     )
 
     # ASS files must be UTF-8 encoded to preserve Greek glyphs

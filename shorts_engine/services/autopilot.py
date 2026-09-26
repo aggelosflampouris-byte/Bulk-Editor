@@ -400,6 +400,26 @@ def run_autopilot_pipeline(
         source_is_section = False
         source_offset = 0.0
 
+        # Auto-detect content niche if template is custom or unconfigured
+        if getattr(ap_settings, "niche_template", "custom") in ("custom", "", "auto"):
+            try:
+                from services.niche_templates import auto_detect_niche, get_template
+                det_niche = auto_detect_niche(
+                    title=best_video.title,
+                    description=getattr(best_video, "description", ""),
+                    text_sample=" ".join(s.text for s in transcript[:10]) if transcript else "",
+                )
+                if det_niche != "custom":
+                    det_tpl = get_template(det_niche)
+                    ap_settings = det_tpl.apply_to(ap_settings)
+                    yield (
+                        f"[Video {idx + 1}/{num_videos}] Auto-detected Niche: {det_tpl.sidebar_label}",
+                        _p(0.18),
+                        None,
+                    )
+            except (ImportError, RuntimeError, ValueError) as n_err:
+                logger.debug("Auto-detect niche skipped: %s", n_err)
+
         if transcript:
             # AI selects viral clips directly from pre-fetched transcript
             yield (
@@ -955,6 +975,31 @@ def run_autopilot_pipeline(
             seo=seo,
             output_file=result.output_file,
         )
+
+        # Record into AI Project Memory Dataset for continuous learning
+        try:
+            from services.project_memory import ProjectRecord, save_project_record
+            clip_dur = (best_clip.end_time - best_clip.start_time) if 'best_clip' in locals() and best_clip else 45.0
+            p_rec = ProjectRecord(
+                project_id=f"proj_{best_video.video_id}_{idx}_{int(datetime.now(timezone.utc).timestamp())}",
+                created_at=datetime.now(timezone.utc).isoformat(),
+                source_title=best_video.title,
+                source_url=best_video.url,
+                duration_seconds=clip_dur,
+                niche=ap_settings.niche_template,
+                video_type=getattr(best_video, "channel_title", "video"),
+                caption_style=getattr(ap_settings, "caption_style", "auto"),
+                hook_summary=best_clip.hook_summary if 'best_clip' in locals() and best_clip else "",
+                hook_text=seo.title if seo else "",
+                virality_score=best_clip.virality_score if 'best_clip' in locals() and best_clip else 8.5,
+                tags=seo.tags if seo else [],
+                status="approved",
+                output_path=str(result.output_file) if hasattr(result, "output_file") else "",
+            )
+            save_project_record(p_rec)
+        except (ImportError, OSError, RuntimeError, ValueError) as p_err:
+            logger.debug("Project memory saving skipped: %s", p_err)
+
         slot = get_optimal_schedule_slot(slot_index=idx)
         results.append(
             {

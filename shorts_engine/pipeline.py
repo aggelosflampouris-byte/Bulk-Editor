@@ -214,12 +214,26 @@ def build_short_from_clip(
     # Write ASS subtitle file
     ass_path: Path = tmp_dir / f"{stem}.ass"
     if segments:
+        chosen_style = getattr(settings, "caption_style", "auto")
+        if chosen_style in ("auto", "", None):
+            try:
+                from services.caption_styles import recommend_caption_style
+            except ImportError:
+                from shorts_engine.services.caption_styles import recommend_caption_style
+            rec_template = recommend_caption_style(
+                niche=getattr(settings, "niche_template", ""),
+                topic_or_title=seo.title if seo else "",
+                transcript_sample=" ".join(s.text for s in segments[:10]),
+            )
+            chosen_style = rec_template.id
+
         write_ass_file(
             segments,
             ass_path,
             primary_keyword=seo.primary_keyword if seo else None,
             subtitle_position=getattr(settings, "subtitle_position", "lower_third"),
             subtitle_mode=getattr(settings, "subtitle_mode", "dynamic"),
+            caption_style=chosen_style,
         )
     else:
         warnings.append("No transcript segments provided — subtitles skipped.")

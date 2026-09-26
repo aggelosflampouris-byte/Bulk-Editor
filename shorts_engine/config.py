@@ -68,8 +68,13 @@ BUNDLED_BIN_DIR: Path = APP_ROOT / "bin"
 # Default output directory
 DEFAULT_OUTPUT_DIR: Path = APP_ROOT / "output"
 
-# Default bundled music directory
-DEFAULT_MUSIC_DIR: Path = APP_ROOT / "assets" / "music"
+# Default media & project directories
+DEFAULT_ASSETS_DIR: Path = APP_ROOT / "assets"
+DEFAULT_MUSIC_DIR: Path = DEFAULT_ASSETS_DIR / "music"
+DEFAULT_SFX_DIR: Path = DEFAULT_ASSETS_DIR / "sfx"
+DEFAULT_EFFECTS_DIR: Path = DEFAULT_ASSETS_DIR / "effects"
+DEFAULT_GREEN_SCREEN_DIR: Path = DEFAULT_ASSETS_DIR / "green_screen"
+DEFAULT_PROJECTS_DIR: Path = APP_ROOT / "projects"
 
 
 # ── Runtime PATH Injection ─────────────────────────────────────────────────────
@@ -268,6 +273,8 @@ class Settings:
     subtitle_position: str = "lower_third"
     # Caption animation style: "dynamic" (fluid 2-3 words active highlight) | "phrase" | "word"
     subtitle_mode: str = "dynamic"
+    # Caption template style: "auto" (occasion-based) | "CAR_PULSE_INDUSTRIAL" | "HORMOZI_PUNCH" | "VIRAL_TIKTOK_BOUNCE" | "NEON_CYBER" | "ELEGANT_MINIMAL" | "DOCUMENTARY_CLEAN" | "CLASSIC_YELLOW"
+    caption_style: str = "auto"
     # Dynamic jump-cut punch-in zoom on speech pauses (False = clean, steady framing)
     enable_dynamic_zoom: bool = False
     # Mask/obscure lower-third burned-in text before burning new subtitles
