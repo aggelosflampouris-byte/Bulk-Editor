@@ -476,7 +476,7 @@ def _render_sidebar() -> Settings:
         st.markdown("### VFX & Colour Grading")
         enable_vfx = st.checkbox(
             "Enable Auto VFX / Colour Grade",
-            value=True,
+            value=False,
             help=(
                 "Analyses the transcript and YOLO scene detections to automatically "
                 "select and apply one of five colour grades:\n"

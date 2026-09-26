@@ -66,18 +66,16 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-def get_optimal_schedule_time() -> datetime:
-    """
-    Returns the next optimal time to schedule a Short.
-    Defaults to the next available 6:00 PM local time (converted to UTC).
-    """
-    now = datetime.now(timezone.utc)
-    # Convert UTC to a roughly representative local time, or just schedule for UTC 22:00 (which is 6 PM EST)
-    # We will pick the next available 22:00 UTC.
-    target = now.replace(hour=22, minute=0, second=0, microsecond=0)
-    if now >= target:
-        target += timedelta(days=1)
-    return target
+try:
+    from services.traffic_scheduler import (
+        get_optimal_schedule_slot,
+        get_optimal_schedule_time,
+    )
+except ImportError:
+    from shorts_engine.services.traffic_scheduler import (
+        get_optimal_schedule_slot,
+        get_optimal_schedule_time,
+    )
 
 
 def run_autopilot_pipeline(
@@ -347,11 +345,14 @@ def run_autopilot_pipeline(
                     seo=seo,
                     output_file=final_output,
                 )
+                slot = get_optimal_schedule_slot(slot_index=idx)
                 results.append(
                     {
                         "seo": seo,
                         "path": final_output,
-                        "publish_at": get_optimal_schedule_time() + timedelta(days=idx),
+                        "publish_at": slot.utc_datetime,
+                        "schedule_display": slot.display_str,
+                        "local_publish_time": slot.local_datetime,
                     }
                 )
                 continue
@@ -518,12 +519,14 @@ def run_autopilot_pipeline(
                                 seo=seo,
                                 output_file=final_output,
                             )
+                            slot = get_optimal_schedule_slot(slot_index=idx)
                             results.append(
                                 {
                                     "seo": seo,
                                     "path": final_output,
-                                    "publish_at": get_optimal_schedule_time()
-                                    + timedelta(days=idx),
+                                    "publish_at": slot.utc_datetime,
+                                    "schedule_display": slot.display_str,
+                                    "local_publish_time": slot.local_datetime,
                                 }
                             )
                             continue
@@ -577,12 +580,14 @@ def run_autopilot_pipeline(
                             seo=seo,
                             output_file=final_output,
                         )
+                        slot = get_optimal_schedule_slot(slot_index=idx)
                         results.append(
                             {
                                 "seo": seo,
                                 "path": final_output,
-                                "publish_at": get_optimal_schedule_time()
-                                + timedelta(days=idx),
+                                "publish_at": slot.utc_datetime,
+                                "schedule_display": slot.display_str,
+                                "local_publish_time": slot.local_datetime,
                             }
                         )
                         continue
@@ -877,11 +882,14 @@ def run_autopilot_pipeline(
                     seo=seo,
                     output_file=final_output,
                 )
+                slot = get_optimal_schedule_slot(slot_index=idx)
                 results.append(
                     {
                         "seo": seo,
                         "path": final_output,
-                        "publish_at": get_optimal_schedule_time() + timedelta(days=idx),
+                        "publish_at": slot.utc_datetime,
+                        "schedule_display": slot.display_str,
+                        "local_publish_time": slot.local_datetime,
                     }
                 )
                 continue
@@ -947,12 +955,14 @@ def run_autopilot_pipeline(
             seo=seo,
             output_file=result.output_file,
         )
+        slot = get_optimal_schedule_slot(slot_index=idx)
         results.append(
             {
                 "seo": seo,
                 "path": result.output_file,
-                # Add an offset to publish_at so they aren't scheduled at the exact same time
-                "publish_at": get_optimal_schedule_time() + timedelta(days=idx),
+                "publish_at": slot.utc_datetime,
+                "schedule_display": slot.display_str,
+                "local_publish_time": slot.local_datetime,
             }
         )
 

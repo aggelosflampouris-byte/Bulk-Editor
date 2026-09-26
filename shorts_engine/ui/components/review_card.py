@@ -35,8 +35,12 @@ def render_review_and_approve_list(results: list[dict[str, Any]], key_prefix: st
                 edit_title = st.text_input("Title", value=seo.title, key=f"{key_prefix}_title_{idx}")
                 edit_desc = st.text_area("Description", value=seo.description, height=150, key=f"{key_prefix}_desc_{idx}")
                 edit_tags = st.text_input("Tags (comma separated)", value=", ".join(seo.tags), key=f"{key_prefix}_tags_{idx}")
-                st.info(f"Scheduled for: **{publish_at.strftime('%Y-%m-%d %H:%M UTC')}**")
-                
+
+                schedule_info = res.get("schedule_display")
+                if not schedule_info:
+                    schedule_info = f"📅 Scheduled for: **{publish_at.strftime('%Y-%m-%d %H:%M UTC')}**"
+                st.info(schedule_info)
+
                 if st.button(f"✅ Approve & Schedule Upload (Video {idx+1})", type="primary", use_container_width=True, key=f"{key_prefix}_upload_{idx}"):
                     with st.spinner("Uploading to YouTube..."):
                         try:
@@ -48,10 +52,10 @@ def render_review_and_approve_list(results: list[dict[str, Any]], key_prefix: st
                                 title=edit_title,
                                 description=edit_desc,
                                 tags=tag_list,
-                                publish_at=publish_at
+                                publish_at=publish_at,
                             )
                             st.success(f"🎉 **Upload Complete!** [View on YouTube Studio](https://www.youtube.com/watch?v={video_id})")
                             st.balloons()
-                        except Exception as e:
+                        except (RuntimeError, OSError, ValueError) as e:
                             logger.exception("Upload failed.")
                             st.error(f"Upload failed: {e}")

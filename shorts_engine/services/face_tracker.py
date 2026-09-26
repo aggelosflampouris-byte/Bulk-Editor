@@ -196,6 +196,8 @@ def track_active_speaker(
     samples: list[tuple[float, float, float]] = []
     total_sampled = 0
     frame_idx = 0
+    last_speaker_cx: float | None = None
+    last_speaker_cy: float | None = None
 
     try:
         while True:
@@ -214,17 +216,37 @@ def track_active_speaker(
 
                 boxes = results[0].boxes if results else None
                 if boxes and len(boxes) > 0:
-                    best_idx = max(
-                        range(len(boxes)),
-                        key=lambda i: float((boxes[i].xyxy[0][2] - boxes[i].xyxy[0][0]) * (boxes[i].xyxy[0][3] - boxes[i].xyxy[0][1]))
-                    )
+                    best_idx = 0
+                    best_score = -1.0
+                    for b_i, b in enumerate(boxes):
+                        bx1, by1, bx2, by2 = b.xyxy[0].tolist()
+                        b_area = float((bx2 - bx1) * (by2 - by1))
+                        b_cx = (bx1 + bx2) / 2.0
+                        b_cy = by1 + (by2 - by1) * 0.18
+
+                        # Spatial continuity bonus: track the same speaker across frames
+                        score = b_area
+                        if last_speaker_cx is not None and last_speaker_cy is not None:
+                            dist = ((b_cx - last_speaker_cx) ** 2 + (b_cy - last_speaker_cy) ** 2) ** 0.5
+                            max_dist = source_width * 0.35
+                            if dist < max_dist:
+                                score *= 1.0 + 1.8 * (1.0 - (dist / max_dist))
+
+                        # Center framing preference
+                        center_dist = abs(b_cx - (source_width / 2.0))
+                        score *= 1.0 - 0.20 * (center_dist / (source_width / 2.0))
+
+                        if score > best_score:
+                            best_score = score
+                            best_idx = b_i
+
                     best_box = boxes[best_idx]
                     x1, y1, x2, y2 = best_box.xyxy[0].tolist()
                     centroid_x = (x1 + x2) / 2.0
                     # Face is positioned in the upper ~18% of the human bounding box
                     centroid_y = y1 + (y2 - y1) * 0.18
 
-                    # Try to refine centroid using facial keypoints (Nose, L/R Eye, L/R Ear)
+                    # Refine centroid using facial keypoints (Nose, L/R Eye, L/R Ear)
                     keypoints = getattr(results[0], "keypoints", None)
                     if keypoints is not None and len(keypoints) > best_idx:
                         kp = keypoints[best_idx]
@@ -239,10 +261,19 @@ def track_active_speaker(
                                     valid_x.append(float(pt[0]))
                                     valid_y.append(float(pt[1]))
 
-                            if valid_x and valid_y:
+                            # Eye-level prioritization for optimal portrait framing
+                            if len(face_kps) >= 3 and confs is not None and confs[1] > 0.3 and confs[2] > 0.3:
+                                eye_cx = float((face_kps[1][0] + face_kps[2][0]) / 2.0)
+                                eye_cy = float((face_kps[1][1] + face_kps[2][1]) / 2.0)
+                                if eye_cx > 0 and eye_cy > 0:
+                                    centroid_x = eye_cx
+                                    centroid_y = eye_cy
+                            elif valid_x and valid_y:
                                 centroid_x = sum(valid_x) / len(valid_x)
                                 centroid_y = sum(valid_y) / len(valid_y)
 
+                    last_speaker_cx = centroid_x
+                    last_speaker_cy = centroid_y
                     samples.append((t_sec, centroid_x, centroid_y))
             frame_idx += 1
     except (RuntimeError, ValueError, OSError, cv2.error) as exc:
@@ -274,8 +305,9 @@ def track_active_speaker(
     sorted_s_y = sorted(s[2] for s in samples)
     median_cx = sorted_s_x[len(sorted_s_x) // 2]
     median_cy = sorted_s_y[len(sorted_s_y) // 2]
+    # Eye-line at 35% from top of 9:16 portrait viewport for ideal portrait headroom
     detected_crop_x = int(_clamp((median_cx * scale_factor) - (target_width / 2.0), 0, max_crop_x))
-    detected_crop_y = int(_clamp((median_cy * scale_factor) - (target_height * 0.38), 0, max_crop_y))
+    detected_crop_y = int(_clamp((median_cy * scale_factor) - (target_height * 0.35), 0, max_crop_y))
 
     if presence_ratio < _MIN_SPEAKER_PRESENCE_RATIO:
         logger.info(
@@ -293,13 +325,13 @@ def track_active_speaker(
         )
 
     # Convert samples to desired crop bounds per frame:
-    # Rule of thirds: Eye-line at 38% from top of 9:16 portrait viewport
+    # Rule of thirds: Eye-line at 35% from top of 9:16 portrait viewport
     target_crops: list[tuple[float, float, float]] = []
     for t_sec, cx, cy in samples:
         sc_x = cx * scale_factor
         sc_y = cy * scale_factor
         des_x = _clamp(sc_x - (target_width / 2.0), 0, max_crop_x)
-        des_y = _clamp(sc_y - (target_height * 0.38), 0, max_crop_y)
+        des_y = _clamp(sc_y - (target_height * 0.35), 0, max_crop_y)
         target_crops.append((t_sec, des_x, des_y))
 
     # Segment into distinct camera shots (cuts or large scene jumps)
@@ -346,35 +378,50 @@ def track_active_speaker(
                 int(_clamp(smoothed_cy, 0, max_crop_y)),
             ))
 
-        # Build dynamic follow keyframes with 15px deadzone to eliminate micro-jitter
-        kps_x: list[tuple[float, int]] = [(smoothed_pts[0][0], smoothed_pts[0][1])]
-        kps_y: list[tuple[float, int]] = [(smoothed_pts[0][0], smoothed_pts[0][2])]
+        # Shot-level representative offsets
+        median_shot_x = sorted([p[1] for p in smoothed_pts])[len(smoothed_pts) // 2]
+        median_shot_y = sorted([p[2] for p in smoothed_pts])[len(smoothed_pts) // 2]
+        shot_segments.append((t_shot_start, t_shot_end, median_shot_x, median_shot_y))
+        all_shot_offsets_x.append(median_shot_x)
+        all_shot_offsets_y.append(median_shot_y)
 
-        for pt_t, cur_x, cur_y in smoothed_pts[1:]:
-            if abs(cur_x - kps_x[-1][1]) >= 15:
-                kps_x.append((pt_t, cur_x))
-            if abs(cur_y - kps_y[-1][1]) >= 15:
-                kps_y.append((pt_t, cur_y))
+        # Movement span check: if range of motion in shot is subtle (< 32px), lock to median for rock-solid framing
+        range_x = max(p[1] for p in smoothed_pts) - min(p[1] for p in smoothed_pts)
+        range_y = max(p[2] for p in smoothed_pts) - min(p[2] for p in smoothed_pts)
 
-        # Ensure shot boundary end keyframe is present
-        last_pt = smoothed_pts[-1]
-        if kps_x[-1][0] < last_pt[0]:
-            kps_x.append((last_pt[0], last_pt[1]))
-        if kps_y[-1][0] < last_pt[0]:
-            kps_y.append((last_pt[0], last_pt[2]))
+        if range_x < 32 and range_y < 32:
+            kps_x: list[tuple[float, int]] = [(smoothed_pts[0][0], median_shot_x), (smoothed_pts[-1][0], median_shot_x)]
+            kps_y: list[tuple[float, int]] = [(smoothed_pts[0][0], median_shot_y), (smoothed_pts[-1][0], median_shot_y)]
+        else:
+            # Build dynamic follow keyframes with 24px adaptive deadzone to track intentional motion without jitter
+            kps_x = [(smoothed_pts[0][0], smoothed_pts[0][1])]
+            kps_y = [(smoothed_pts[0][0], smoothed_pts[0][2])]
 
-        # Decimate if excessive nodes (cap to max 8 nodes per shot)
-        if len(kps_x) > 8:
-            step = max(1, len(kps_x) // 8)
-            kps_x = [kps_x[idx] for idx in range(0, len(kps_x), step)]
-            if kps_x[-1] != (last_pt[0], last_pt[1]):
+            for pt_t, cur_x, cur_y in smoothed_pts[1:]:
+                if abs(cur_x - kps_x[-1][1]) >= 24:
+                    kps_x.append((pt_t, cur_x))
+                if abs(cur_y - kps_y[-1][1]) >= 24:
+                    kps_y.append((pt_t, cur_y))
+
+            # Ensure shot boundary end keyframe is present
+            last_pt = smoothed_pts[-1]
+            if kps_x[-1][0] < last_pt[0]:
                 kps_x.append((last_pt[0], last_pt[1]))
-
-        if len(kps_y) > 8:
-            step = max(1, len(kps_y) // 8)
-            kps_y = [kps_y[idx] for idx in range(0, len(kps_y), step)]
-            if kps_y[-1] != (last_pt[0], last_pt[2]):
+            if kps_y[-1][0] < last_pt[0]:
                 kps_y.append((last_pt[0], last_pt[2]))
+
+            # Decimate if excessive nodes (cap to max 8 nodes per shot)
+            if len(kps_x) > 8:
+                step = max(1, len(kps_x) // 8)
+                kps_x = [kps_x[idx] for idx in range(0, len(kps_x), step)]
+                if kps_x[-1] != (last_pt[0], last_pt[1]):
+                    kps_x.append((last_pt[0], last_pt[1]))
+
+            if len(kps_y) > 8:
+                step = max(1, len(kps_y) // 8)
+                kps_y = [kps_y[idx] for idx in range(0, len(kps_y), step)]
+                if kps_y[-1] != (last_pt[0], last_pt[2]):
+                    kps_y.append((last_pt[0], last_pt[2]))
 
         # Construct piecewise follow expression for this shot
         def _build_piecewise(kps: list[tuple[float, int]]) -> str:
@@ -401,13 +448,6 @@ def track_active_speaker(
 
         shot_expressions_x.append((t_shot_end, shot_expr_x))
         shot_expressions_y.append((t_shot_end, shot_expr_y))
-
-        # Shot-level static representative offsets
-        median_shot_x = sorted([p[1] for p in smoothed_pts])[len(smoothed_pts) // 2]
-        median_shot_y = sorted([p[2] for p in smoothed_pts])[len(smoothed_pts) // 2]
-        shot_segments.append((t_shot_start, t_shot_end, median_shot_x, median_shot_y))
-        all_shot_offsets_x.append(median_shot_x)
-        all_shot_offsets_y.append(median_shot_y)
 
     def _combine_shot_exprs(shot_exprs: list[tuple[float, str]]) -> str:
         if not shot_exprs:

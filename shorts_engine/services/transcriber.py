@@ -550,22 +550,22 @@ def segments_to_ass(
             text_field = _escape_ass_text(seg.text)
             dialogue_lines.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text_field}")
     elif subtitle_mode == "dynamic":
-        # Group words into 3-5 word natural fluid phrases with real-time active-word karaoke highlighting
+        # Group words into 2-3 word natural fluid phrases with real-time active-word karaoke highlighting (max 22 chars for single-line stability)
         idx = 0
         while idx < len(all_words):
             chunk = [all_words[idx]]
             idx += 1
-            while idx < len(all_words) and len(chunk) < 5:
+            while idx < len(all_words) and len(chunk) < 3:
                 curr_w = all_words[idx]
                 prev_w = chunk[-1]
-                # Break on long pauses between words (> 0.38s)
-                if curr_w[0] - prev_w[1] > 0.38:
+                # Break on long pauses between words (> 0.35s)
+                if curr_w[0] - prev_w[1] > 0.35:
                     break
                 # Break on clause or sentence punctuation at the end of the previous word
                 if prev_w[2].endswith((".", "!", "?", ";", ":", "…", ",")):
                     break
                 combined_len = sum(len(w[2]) for w in chunk) + len(curr_w[2]) + len(chunk)
-                if combined_len > 34:
+                if combined_len > 22:
                     break
                 chunk.append(curr_w)
                 idx += 1
@@ -576,7 +576,7 @@ def segments_to_ass(
                 if last_word_clean in _DANGLING_SUBTITLE_END_WORDS:
                     next_w = all_words[idx]
                     tentative_len = sum(len(w[2]) for w in chunk) + len(next_w[2]) + 1
-                    if tentative_len <= 38 and (next_w[0] - chunk[-1][1]) <= 0.35:
+                    if tentative_len <= 26 and (next_w[0] - chunk[-1][1]) <= 0.30:
                         chunk.append(next_w)
                         idx += 1
                     else:

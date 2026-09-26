@@ -55,7 +55,6 @@ try:
         write_ass_file,
     )
     from services.video_engine import (
-        apply_pacing_pattern_interrupts,
         burn_subtitles,
         crop_to_9_16,
         mix_background_music,
@@ -92,7 +91,6 @@ except ImportError:
         write_ass_file,
     )
     from shorts_engine.services.video_engine import (
-        apply_pacing_pattern_interrupts,
         burn_subtitles,
         crop_to_9_16,
         mix_background_music,
@@ -510,10 +508,6 @@ def build_hybrid_short(
         # Slice Bite 1
         b1_raw = tmp_dir / f"hybrid_spk_b1_{uid}.mp4"
         slice_video(masked_speaker, start_time=0.0, end_time=best_split_time, output_path=b1_raw)
-        if best_split_time > 3.5:
-            b1_paced = tmp_dir / f"hybrid_spk_b1_paced_{uid}.mp4"
-            apply_pacing_pattern_interrupts(b1_raw, b1_paced, cut_interval=3.5, zoom_factor=1.12, target_width=target_w, target_height=target_h)
-            b1_raw = b1_paced
         b1_segs = slice_segments(rebased_segs, 0.0, best_split_time)
         b1_sub = b1_raw
         if b1_segs:
@@ -544,10 +538,6 @@ def build_hybrid_short(
         # Slice Bite 2
         b2_raw = tmp_dir / f"hybrid_spk_b2_{uid}.mp4"
         slice_video(masked_speaker, start_time=best_split_time, end_time=total_spk_dur, output_path=b2_raw)
-        if (total_spk_dur - best_split_time) > 3.5:
-            b2_paced = tmp_dir / f"hybrid_spk_b2_paced_{uid}.mp4"
-            apply_pacing_pattern_interrupts(b2_raw, b2_paced, cut_interval=3.5, zoom_factor=1.12, target_width=target_w, target_height=target_h)
-            b2_raw = b2_paced
         b2_segs_raw = slice_segments(rebased_segs, best_split_time, total_spk_dur)
         # Rebase timestamps starting at 0.0
         b2_segs = [
@@ -591,10 +581,6 @@ def build_hybrid_short(
     else:
         # Single Speaker Bite structure: [Beat 1: Hook] -> [Beat 2: Speaker] -> [Beat 3: Commentary] -> [Beat 4: Outro]
         speaker_for_sub = masked_speaker
-        if total_spk_dur > 3.5:
-            spk_paced = tmp_dir / f"hybrid_spk_full_paced_{uid}.mp4"
-            apply_pacing_pattern_interrupts(masked_speaker, spk_paced, cut_interval=3.5, zoom_factor=1.12, target_width=target_w, target_height=target_h)
-            speaker_for_sub = spk_paced
         spk_sub = speaker_for_sub
         if rebased_segs:
             ass_spk = tmp_dir / f"hybrid_spk_full_{uid}.ass"

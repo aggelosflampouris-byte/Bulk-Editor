@@ -143,16 +143,16 @@ def assert_system_binaries() -> None:
 #   ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow,
 #   Alignment, MarginL, MarginR, MarginV, Encoding
 ASS_STYLE_LINE: str = (
-    "Style: Default,Impact,88,&H00FFFFFF,&H000000FF,&H00000000,&H66000000,"
-    "-1,0,0,0,100,100,0,0,1,5,3,2,80,80,540,1"
+    "Style: Default,DejaVu Sans,76,&H00FFFFFF,&H000000FF,&H00000000,&H66000000,"
+    "-1,0,0,0,100,100,0,0,1,4,2,2,80,80,540,1"
 )
 
 # Highlight box style — high contrast yellow bounding box (BorderStyle=3) for spoken words
 ASS_HIGHLIGHT_STYLE_LINE: str = (
-    "Style: HighlightBox,Impact,88,&H00000000,&H000000FF,&H0000FFFF,&H00000000,"
-    "-1,0,0,0,100,100,1,0,3,14,4,2,80,80,540,1\n"
-    "Style: Highlight,Impact,88,&H00000000,&H000000FF,&H0000FFFF,&H00000000,"
-    "-1,0,0,0,100,100,1,0,3,14,4,2,80,80,540,1"
+    "Style: HighlightBox,DejaVu Sans,76,&H00000000,&H000000FF,&H0000E6FF,&H00000000,"
+    "-1,0,0,0,100,100,1,0,3,12,3,2,80,80,540,1\n"
+    "Style: Highlight,DejaVu Sans,76,&H00000000,&H000000FF,&H0000E6FF,&H00000000,"
+    "-1,0,0,0,100,100,1,0,3,12,3,2,80,80,540,1"
 )
 
 # Full ASS file header template.  {dialogue_lines} is replaced at generation time.
@@ -221,8 +221,8 @@ class Settings:
     enable_face_tracking: bool = True
 
     # ── VFX / Colour Grading ──────────────────────────────────────────────
-    # Enable transcript- and YOLO-driven colour grading applied after subtitle burn.
-    enable_vfx: bool = True
+    # Enable transcript- and YOLO-driven colour grading applied after subtitle burn (False for clean, natural documentary look).
+    enable_vfx: bool = False
     # YOLO model weights used for scene analysis — must match face tracker model.
     vfx_yolo_model: str = "yolov8n-pose.pt"
 
@@ -238,8 +238,8 @@ class Settings:
     broll_overlay_duration: float = 5.0
     # Timestamp offset (seconds from start) at which B-roll starts
     broll_start_offset: float = 3.0
-    # Apply a Ken Burns zoom effect to B-roll
-    broll_ken_burns: bool = True
+    # Apply a Ken Burns zoom effect to B-roll (False = clean static cut)
+    broll_ken_burns: bool = False
     # Apply a Picture-in-Picture / Split-Screen effect to B-roll
     broll_split_screen: bool = False
     # Transition style between main clip, B-roll, and outro: "fade" | "flash" | "none"
