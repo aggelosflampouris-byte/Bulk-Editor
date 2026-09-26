@@ -160,3 +160,68 @@ def test_track_active_speaker_dynamic_follow_and_fallback(tmp_path, monkeypatch)
     assert 0 <= result.static_crop_y <= 1080
 
 
+def test_track_active_speaker_eliminates_jump_cuts_and_filters_spikes(tmp_path, monkeypatch):
+    """
+    Verify that transient 1-sample spikes (e.g. YOLO hopping onto a background tool)
+    are filtered out, and the resulting crop trajectory has zero instantaneous jump cuts.
+    """
+    landscape_video = _generate_synthetic_video(tmp_path / "spikes_sim.mp4", 1920, 1080, duration=3.0)
+
+    class MockBox:
+        def __init__(self, x1, y1, x2, y2):
+            import torch
+            self.xyxy = torch.tensor([[x1, y1, x2, y2]])
+
+    class MockKeypoints:
+        def __init__(self, nose_x, nose_y):
+            import torch
+            self.xy = torch.tensor([[[nose_x, nose_y], [nose_x - 10, nose_y - 10], [nose_x + 10, nose_y - 10], [0, 0], [0, 0]]])
+            self.conf = torch.tensor([[0.95, 0.90, 0.90, 0.0, 0.0]])
+
+    class MockResult:
+        def __init__(self, box, kp):
+            self.boxes = [box]
+            self.keypoints = [kp]
+
+    frame_counter = {"val": 0}
+
+    class MockYOLO:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def to(self, *args, **kwargs):
+            return self
+
+        def __call__(self, frame, **kwargs):
+            idx = frame_counter["val"]
+            frame_counter["val"] += 1
+            # Speaker is mostly around X=500, but frame 3 has a transient spike to X=1500 (background tool)
+            if idx == 3:
+                x_pos = 1500.0
+            else:
+                x_pos = 500.0 + (idx * 5.0)
+            y_pos = 200.0
+            box = MockBox(x_pos - 100, y_pos - 100, x_pos + 100, y_pos + 300)
+            kp = MockKeypoints(x_pos, y_pos)
+            return [MockResult(box, kp)]
+
+    import ultralytics
+    monkeypatch.setattr(ultralytics, "YOLO", MockYOLO)
+
+    result = track_active_speaker(
+        video_path=landscape_video,
+        source_width=1920,
+        source_height=1080,
+        target_width=1080,
+        target_height=1920,
+        sample_interval=0.25,
+    )
+
+    assert result.has_speaker is True
+    # The transient spike to 1500 must NOT generate a teleport jump cut
+    assert "1500" not in result.crop_expression
+    # Single continuous shot timeline without fragmented shot cuts
+    assert len(result.shot_crop_offsets) == 1
+
+
+

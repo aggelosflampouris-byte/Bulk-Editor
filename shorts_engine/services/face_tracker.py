@@ -361,138 +361,125 @@ def track_active_speaker(
         des_y = _clamp(sc_y - (target_height * 0.35), 0, max_crop_y)
         target_crops.append((t_sec, des_x, des_y))
 
-    # Segment into distinct camera shots (cuts or large scene jumps)
-    raw_shots: list[list[tuple[float, float, float]]] = []
-    current_shot: list[tuple[float, float, float]] = [target_crops[0]]
+    # 1. Outlier Rejection: eliminate transient 1-sample spikes (e.g. YOLO latching onto a background tool or passerby)
+    cleaned_crops = list(target_crops)
+    if len(cleaned_crops) >= 3:
+        for i in range(1, len(cleaned_crops) - 1):
+            prev_x = cleaned_crops[i - 1][1]
+            curr_x = cleaned_crops[i][1]
+            next_x = cleaned_crops[i + 1][1]
+            if abs(curr_x - prev_x) > 220.0 and abs(curr_x - next_x) > 220.0 and abs(prev_x - next_x) < 140.0:
+                cleaned_crops[i] = (cleaned_crops[i][0], (prev_x + next_x) / 2.0, cleaned_crops[i][2])
 
-    for prev_s, curr_s in itertools.pairwise(target_crops):
-        time_gap = curr_s[0] - prev_s[0]
-        pos_jump_x = abs(curr_s[1] - prev_s[1])
-        pos_jump_y = abs(curr_s[2] - prev_s[2])
+            prev_y = cleaned_crops[i - 1][2]
+            curr_y = cleaned_crops[i][2]
+            next_y = cleaned_crops[i + 1][2]
+            if abs(curr_y - prev_y) > 180.0 and abs(curr_y - next_y) > 180.0 and abs(prev_y - next_y) < 100.0:
+                cleaned_crops[i] = (cleaned_crops[i][0], cleaned_crops[i][1], (prev_y + next_y) / 2.0)
 
-        if max(pos_jump_x, pos_jump_y) > 180.0 or time_gap > 2.0:
-            raw_shots.append(current_shot)
-            current_shot = [curr_s]
-        else:
-            current_shot.append(curr_s)
+    # 2. Continuous Exponential Moving Average (EMA) with physical velocity clamping
+    # Guarantees the camera smoothly glides and never teleports or introduces jump cuts
+    smoothed_pts: list[tuple[float, int, int]] = []
+    cur_x = cleaned_crops[0][1]
+    cur_y = cleaned_crops[0][2]
+    smoothed_pts.append((
+        cleaned_crops[0][0],
+        int(_clamp(cur_x, 0, max_crop_x)),
+        int(_clamp(cur_y, 0, max_crop_y)),
+    ))
 
-    if current_shot:
-        raw_shots.append(current_shot)
+    for prev_c, curr_c in itertools.pairwise(cleaned_crops):
+        dt = max(0.01, curr_c[0] - prev_c[0])
+        target_x = curr_c[1]
+        target_y = curr_c[2]
 
-    shot_segments: list[tuple[float, float, int, int]] = []
-    all_shot_offsets_x: list[int] = []
-    all_shot_offsets_y: list[int] = []
-    shot_expressions_x: list[tuple[float, str]] = []
-    shot_expressions_y: list[tuple[float, str]] = []
+        next_x = (ema_alpha * target_x) + ((1.0 - ema_alpha) * cur_x)
+        next_y = (ema_alpha * target_y) + ((1.0 - ema_alpha) * cur_y)
 
-    for i, shot in enumerate(raw_shots):
-        t_shot_start = 0.0 if i == 0 else shot[0][0]
-        t_shot_end = shot[-1][0] if i < len(raw_shots) - 1 else 99999.0
+        # Max velocity limit: ~280px/s X and ~180px/s Y prevents jarring whip pans or jump cuts
+        max_step_x = 280.0 * dt
+        max_step_y = 180.0 * dt
+        diff_x = next_x - cur_x
+        diff_y = next_y - cur_y
+        clamped_diff_x = _clamp(diff_x, -max_step_x, max_step_x)
+        clamped_diff_y = _clamp(diff_y, -max_step_y, max_step_y)
 
-        # Exponential moving average filter within the shot
-        smoothed_cx = shot[0][1]
-        smoothed_cy = shot[0][2]
-        smoothed_pts: list[tuple[float, int, int]] = [
-            (shot[0][0], int(_clamp(smoothed_cx, 0, max_crop_x)), int(_clamp(smoothed_cy, 0, max_crop_y)))
-        ]
+        cur_x += clamped_diff_x
+        cur_y += clamped_diff_y
 
-        for pt_t, raw_cx, raw_cy in shot[1:]:
-            smoothed_cx = (ema_alpha * raw_cx) + ((1.0 - ema_alpha) * smoothed_cx)
-            smoothed_cy = (ema_alpha * raw_cy) + ((1.0 - ema_alpha) * smoothed_cy)
-            smoothed_pts.append((
-                pt_t,
-                int(_clamp(smoothed_cx, 0, max_crop_x)),
-                int(_clamp(smoothed_cy, 0, max_crop_y)),
-            ))
+        smoothed_pts.append((
+            curr_c[0],
+            int(_clamp(cur_x, 0, max_crop_x)),
+            int(_clamp(cur_y, 0, max_crop_y)),
+        ))
 
-        # Shot-level representative offsets
-        median_shot_x = sorted([p[1] for p in smoothed_pts])[len(smoothed_pts) // 2]
-        median_shot_y = sorted([p[2] for p in smoothed_pts])[len(smoothed_pts) // 2]
-        shot_segments.append((t_shot_start, t_shot_end, median_shot_x, median_shot_y))
-        all_shot_offsets_x.append(median_shot_x)
-        all_shot_offsets_y.append(median_shot_y)
+    all_x = [p[1] for p in smoothed_pts]
+    all_y = [p[2] for p in smoothed_pts]
+    median_x = sorted(all_x)[len(all_x) // 2]
+    median_y = sorted(all_y)[len(all_y) // 2]
+    range_x = max(all_x) - min(all_x)
+    range_y = max(all_y) - min(all_y)
 
-        # Movement span check: if range of motion in shot is subtle (< 32px), lock to median for rock-solid framing
-        range_x = max(p[1] for p in smoothed_pts) - min(p[1] for p in smoothed_pts)
-        range_y = max(p[2] for p in smoothed_pts) - min(p[2] for p in smoothed_pts)
+    # 3. Deadzone & Steady Shot Stability: if motion is subtle (< 48px), lock steadily to median
+    if range_x < 48 and range_y < 48:
+        kps_x = [(smoothed_pts[0][0], median_x), (smoothed_pts[-1][0], median_x)]
+        kps_y = [(smoothed_pts[0][0], median_y), (smoothed_pts[-1][0], median_y)]
+    else:
+        # Build continuous keyframes separated by at least 0.5s and 28px intentional movement
+        kps_x = [(smoothed_pts[0][0], smoothed_pts[0][1])]
+        kps_y = [(smoothed_pts[0][0], smoothed_pts[0][2])]
 
-        if range_x < 32 and range_y < 32:
-            kps_x: list[tuple[float, int]] = [(smoothed_pts[0][0], median_shot_x), (smoothed_pts[-1][0], median_shot_x)]
-            kps_y: list[tuple[float, int]] = [(smoothed_pts[0][0], median_shot_y), (smoothed_pts[-1][0], median_shot_y)]
-        else:
-            # Build dynamic follow keyframes with 24px adaptive deadzone to track intentional motion without jitter
-            kps_x = [(smoothed_pts[0][0], smoothed_pts[0][1])]
-            kps_y = [(smoothed_pts[0][0], smoothed_pts[0][2])]
+        for pt_t, p_x, p_y in smoothed_pts[1:]:
+            if abs(p_x - kps_x[-1][1]) >= 28 and (pt_t - kps_x[-1][0]) >= 0.45:
+                kps_x.append((pt_t, p_x))
+            if abs(p_y - kps_y[-1][1]) >= 28 and (pt_t - kps_y[-1][0]) >= 0.45:
+                kps_y.append((pt_t, p_y))
 
-            for pt_t, cur_x, cur_y in smoothed_pts[1:]:
-                if abs(cur_x - kps_x[-1][1]) >= 24:
-                    kps_x.append((pt_t, cur_x))
-                if abs(cur_y - kps_y[-1][1]) >= 24:
-                    kps_y.append((pt_t, cur_y))
+        last_pt = smoothed_pts[-1]
+        if kps_x[-1][0] < last_pt[0]:
+            kps_x.append((last_pt[0], last_pt[1]))
+        if kps_y[-1][0] < last_pt[0]:
+            kps_y.append((last_pt[0], last_pt[2]))
 
-            # Ensure shot boundary end keyframe is present
-            last_pt = smoothed_pts[-1]
-            if kps_x[-1][0] < last_pt[0]:
+        # Decimate if excessive nodes to keep FFmpeg expression clean and fast
+        if len(kps_x) > 10:
+            step = max(1, len(kps_x) // 10)
+            kps_x = [kps_x[idx] for idx in range(0, len(kps_x), step)]
+            if kps_x[-1] != (last_pt[0], last_pt[1]):
                 kps_x.append((last_pt[0], last_pt[1]))
-            if kps_y[-1][0] < last_pt[0]:
+
+        if len(kps_y) > 10:
+            step = max(1, len(kps_y) // 10)
+            kps_y = [kps_y[idx] for idx in range(0, len(kps_y), step)]
+            if kps_y[-1] != (last_pt[0], last_pt[2]):
                 kps_y.append((last_pt[0], last_pt[2]))
 
-            # Decimate if excessive nodes (cap to max 8 nodes per shot)
-            if len(kps_x) > 8:
-                step = max(1, len(kps_x) // 8)
-                kps_x = [kps_x[idx] for idx in range(0, len(kps_x), step)]
-                if kps_x[-1] != (last_pt[0], last_pt[1]):
-                    kps_x.append((last_pt[0], last_pt[1]))
-
-            if len(kps_y) > 8:
-                step = max(1, len(kps_y) // 8)
-                kps_y = [kps_y[idx] for idx in range(0, len(kps_y), step)]
-                if kps_y[-1] != (last_pt[0], last_pt[2]):
-                    kps_y.append((last_pt[0], last_pt[2]))
-
-        # Construct piecewise follow expression for this shot
-        def _build_piecewise(kps: list[tuple[float, int]]) -> str:
-            if not kps:
-                return "0"
-            if len(kps) == 1:
-                return str(kps[0][1])
-            pieces: list[tuple[float, str]] = []
-            for (t_a, pos_a), (t_b, pos_b) in itertools.pairwise(kps):
-                dur = round(t_b - t_a, 2)
-                if dur <= 0.05 or pos_a == pos_b:
-                    piece_expr = f"{pos_a}"
-                else:
-                    diff = pos_b - pos_a
-                    piece_expr = f"{pos_a}+({diff})*((t-{round(t_a, 2)})/{dur})"
-                pieces.append((t_b, piece_expr))
-            sub_expr = str(kps[-1][1])
-            for t_end, p_expr in reversed(pieces):
-                sub_expr = f"if(lt(t,{round(t_end, 2)}),{p_expr},{sub_expr})"
-            return sub_expr
-
-        shot_expr_x = _build_piecewise(kps_x)
-        shot_expr_y = _build_piecewise(kps_y)
-
-        shot_expressions_x.append((t_shot_end, shot_expr_x))
-        shot_expressions_y.append((t_shot_end, shot_expr_y))
-
-    def _combine_shot_exprs(shot_exprs: list[tuple[float, str]]) -> str:
-        if not shot_exprs:
+    # 4. Construct continuous, mathematically seamless piecewise follow expression (ZERO jump cuts)
+    def _build_piecewise(kps: list[tuple[float, int]]) -> str:
+        if not kps:
             return "0"
-        if len(shot_exprs) == 1:
-            return shot_exprs[0][1]
-        overall = shot_exprs[-1][1]
-        for t_end, s_expr in reversed(shot_exprs[:-1]):
-            overall = f"if(lt(t,{round(t_end, 2)}),{s_expr},{overall})"
-        return overall
+        if len(kps) == 1:
+            return str(kps[0][1])
+        pieces: list[tuple[float, str]] = []
+        for (t_a, pos_a), (t_b, pos_b) in itertools.pairwise(kps):
+            dur = round(t_b - t_a, 2)
+            if dur <= 0.05 or pos_a == pos_b:
+                piece_expr = f"{pos_a}"
+            else:
+                diff = pos_b - pos_a
+                piece_expr = f"{pos_a}+({diff})*((t-{round(t_a, 2)})/{dur})"
+            pieces.append((t_b, piece_expr))
+        sub_expr = str(kps[-1][1])
+        for t_end, p_expr in reversed(pieces):
+            sub_expr = f"if(lt(t,{round(t_end, 2)}),{p_expr},{sub_expr})"
+        return sub_expr
 
-    crop_expression = _combine_shot_exprs(shot_expressions_x)
-    crop_y_expression = _combine_shot_exprs(shot_expressions_y)
+    crop_expression = _build_piecewise(kps_x)
+    crop_y_expression = _build_piecewise(kps_y)
 
-    sorted_x = sorted(all_shot_offsets_x)
-    sorted_y = sorted(all_shot_offsets_y)
-    static_crop_x = sorted_x[len(sorted_x) // 2] if sorted_x else default_center_x
-    static_crop_y = sorted_y[len(sorted_y) // 2] if sorted_y else default_center_y
+    static_crop_x = median_x
+    static_crop_y = median_y
+    shot_segments = [(0.0, smoothed_pts[-1][0], median_x, median_y)]
 
     logger.info(
         "Active speaker recognized (presence=%.1f%% across %d shots). Dynamic follow: X=%s, Y=%s",

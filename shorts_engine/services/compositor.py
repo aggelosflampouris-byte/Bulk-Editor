@@ -148,7 +148,7 @@ def compose_timeline(
     clip_start_offset: float = 0.0,
     ken_burns: bool = False,
     split_screen: bool = False,
-    enable_dynamic_zoom: bool = True,
+    enable_dynamic_zoom: bool = False,
 ) -> Path:
     """
     Compose the final video using a multi-layer NLE approach.
