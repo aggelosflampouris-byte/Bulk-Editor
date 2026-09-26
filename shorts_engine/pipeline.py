@@ -309,7 +309,7 @@ def build_short_from_clip(
 
     # Subtitle Burn-in
     if ass_path is not None and ass_path.is_file():
-        if getattr(settings, "mask_old_subtitles", True):
+        if getattr(settings, "mask_old_subtitles", False):
             _report("Masking old burned-in subtitles with frosted plate...")
             masked_path: Path = tmp_dir / f"{stem}_masked.mp4"
             try:

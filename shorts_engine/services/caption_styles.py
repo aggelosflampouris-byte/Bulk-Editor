@@ -77,24 +77,46 @@ class CaptionStyleTemplate:
 # ── Registry of Diverse Caption Templates ─────────────────────────────────────
 
 CAPTION_TEMPLATES: dict[str, CaptionStyleTemplate] = {
-    # 1. Automotive & Garage Industrial: Sturdy, high contrast, hazard amber/yellow pop
+    # 0. Dynamic Caption Pill: Auto-sizing translucent pill wrapping active caption phrase
+    "DYNAMIC_PILL": CaptionStyleTemplate(
+        id="DYNAMIC_PILL",
+        display_name="Dynamic Caption Pill",
+        emoji="💊",
+        description="Dynamic translucent background pill that dynamically wraps and expands to caption length. Premium glassmorphic backdrop.",
+        font_name="DejaVu Sans",
+        font_size=80,
+        bold=True,
+        primary_color="&H00FFFFFF",          # Pure white text
+        outline_color="&HA0121212",          # Dynamic translucent dark charcoal pill background
+        back_color="&H00000000",
+        highlight_primary_color="&H0000D7FF",# Vibrant amber/yellow spoken word pop
+        highlight_outline_color="&HA0121212",# Matching unified pill container
+        highlight_back_color="&H00000000",
+        border_style=3,                      # Dynamic bounding pill box
+        outline_width=16,                    # Spacious dynamic border padding
+        shadow_depth=0,
+        spacing=1,
+        occasion_tags=("pill", "dynamic", "border", "modern", "vlog", "captions", "badge"),
+    ),
+
+    # 1. Automotive & Garage Industrial: Sturdy, high contrast dynamic pill, hazard amber/yellow pop
     "CAR_PULSE_INDUSTRIAL": CaptionStyleTemplate(
         id="CAR_PULSE_INDUSTRIAL",
         display_name="Car Pulse Industrial",
         emoji="🏎️",
-        description="Heavy industrial aesthetic with high-visibility hazard amber highlights. Ideal for car vlogs, mechanics & garage repairs.",
+        description="Heavy industrial dynamic pill aesthetic with high-visibility hazard amber highlights. Ideal for car vlogs, mechanics & garage repairs.",
         font_name="DejaVu Sans",
         font_size=82,
         bold=True,
         primary_color="&H00FFFFFF",          # Pure white
-        outline_color="&H00141414",          # Heavy asphalt dark outline
-        back_color="&H88000000",             # Shadow
+        outline_color="&HB8141414",          # Dynamic asphalt dark pill backing
+        back_color="&H00000000",
         highlight_primary_color="&H0000D7FF",# Vibrant safety / hazard yellow-amber
-        highlight_outline_color="&H00000000",# Crisp black edge
+        highlight_outline_color="&HB8141414",# Seamless matching pill
         highlight_back_color="&H00000000",
-        border_style=1,                      # Heavy outline + shadow
-        outline_width=6,
-        shadow_depth=3,
+        border_style=3,                      # Dynamic bounding pill box
+        outline_width=14,                    # Roomy dynamic pill padding
+        shadow_depth=0,
         spacing=1,
         occasion_tags=("automotive", "car", "mechanic", "diy", "garage", "vlog", "parts", "motor"),
     ),
@@ -109,14 +131,14 @@ CAPTION_TEMPLATES: dict[str, CaptionStyleTemplate] = {
         font_size=84,
         bold=True,
         primary_color="&H00FFFFFF",
-        outline_color="&H00000000",
-        back_color="&H80000000",
+        outline_color="&HB0000000",          # Translucent dark base box
+        back_color="&H00000000",
         highlight_primary_color="&H00000000",# Black text on vivid yellow bounding pill
         highlight_outline_color="&H0000FFFF",# Yellow pill box
         highlight_back_color="&H00000000",
         border_style=3,                      # Opaque highlight bounding box
         outline_width=14,
-        shadow_depth=3,
+        shadow_depth=0,
         spacing=2,
         occasion_tags=("motivation", "business", "urgency", "viral", "energy", "shock"),
     ),
@@ -197,19 +219,19 @@ CAPTION_TEMPLATES: dict[str, CaptionStyleTemplate] = {
         font_size=72,
         bold=True,
         primary_color="&H00FFFFFF",
-        outline_color="&H00000000",
-        back_color="&HB0121212",             # Translucent dark backing box
+        outline_color="&HB0121212",          # Translucent dark backing box
+        back_color="&H00000000",
         highlight_primary_color="&H0033E6FF",# Soft journalistic yellow
-        highlight_outline_color="&H00000000",
-        highlight_back_color="&HB0121212",
+        highlight_outline_color="&HB0121212",
+        highlight_back_color="&H00000000",
         border_style=3,                      # Bounding box
-        outline_width=10,
-        shadow_depth=2,
+        outline_width=12,
+        shadow_depth=0,
         spacing=0,
         occasion_tags=("politics", "news", "education", "science", "history", "documentary"),
     ),
 
-    # 7. Classic Yellow Box: Original baseline style
+    # 7. Classic Yellow Box: High-contrast yellow highlight bounding box
     "CLASSIC_YELLOW": CaptionStyleTemplate(
         id="CLASSIC_YELLOW",
         display_name="Classic Yellow Box",
@@ -219,14 +241,14 @@ CAPTION_TEMPLATES: dict[str, CaptionStyleTemplate] = {
         font_size=76,
         bold=True,
         primary_color="&H00FFFFFF",
-        outline_color="&H00000000",
-        back_color="&H66000000",
-        highlight_primary_color="&H00000000",
-        highlight_outline_color="&H0000E6FF",
+        outline_color="&HA0000000",          # Translucent dark base pill
+        back_color="&H00000000",
+        highlight_primary_color="&H00000000",# Black text on vivid yellow pill
+        highlight_outline_color="&H0000E6FF",# Yellow pill
         highlight_back_color="&H00000000",
         border_style=3,
-        outline_width=12,
-        shadow_depth=3,
+        outline_width=14,
+        shadow_depth=0,
         spacing=1,
         occasion_tags=("generic", "classic", "default"),
     ),
@@ -237,13 +259,13 @@ CAPTION_TEMPLATES: dict[str, CaptionStyleTemplate] = {
 
 def get_caption_style(style_id: str | None) -> CaptionStyleTemplate:
     """
-    Lookup a caption template by ID, falling back to CAR_PULSE_INDUSTRIAL or CLASSIC_YELLOW.
+    Lookup a caption template by ID, falling back to DYNAMIC_PILL, CAR_PULSE_INDUSTRIAL, or CLASSIC_YELLOW.
     """
     if not style_id or style_id.lower() in ("auto", "none", "default"):
-        return CAPTION_TEMPLATES["CLASSIC_YELLOW"]
+        return CAPTION_TEMPLATES["DYNAMIC_PILL"]
     
     key = style_id.upper().strip()
-    return CAPTION_TEMPLATES.get(key, CAPTION_TEMPLATES["CLASSIC_YELLOW"])
+    return CAPTION_TEMPLATES.get(key, CAPTION_TEMPLATES["DYNAMIC_PILL"])
 
 
 def recommend_caption_style(
@@ -261,6 +283,10 @@ def recommend_caption_style(
         The highest-scoring CaptionStyleTemplate for the occasion.
     """
     combined_text = f"{niche or ''} {topic_or_title or ''} {transcript_sample or ''}".lower()
+
+    # Priority 0: Explicit pill/border/badge requests
+    if any(k in combined_text for k in ("pill", "border", "badge", "dynamic_pill")):
+        return CAPTION_TEMPLATES["DYNAMIC_PILL"]
 
     # Priority 1: Automotive / Car Vlogs / Mechanics / Garage
     if any(k in combined_text for k in (
@@ -298,13 +324,14 @@ def recommend_caption_style(
     )):
         return CAPTION_TEMPLATES["VIRAL_TIKTOK_BOUNCE"]
 
-    # Default fallback to classic yellow
-    return CAPTION_TEMPLATES["CLASSIC_YELLOW"]
+    # Default fallback to modern dynamic caption pill
+    return CAPTION_TEMPLATES["DYNAMIC_PILL"]
 
 
 def list_caption_styles() -> list[CaptionStyleTemplate]:
     """Return all available caption style templates in recommended display order."""
     order = [
+        "DYNAMIC_PILL",
         "CAR_PULSE_INDUSTRIAL",
         "HORMOZI_PUNCH",
         "VIRAL_TIKTOK_BOUNCE",

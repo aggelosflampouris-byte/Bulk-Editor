@@ -49,6 +49,17 @@ def test_caption_templates_registered():
     assert "VIRAL_TIKTOK_BOUNCE" in ids
     assert "NEON_CYBER" in ids
     assert "DOCUMENTARY_CLEAN" in ids
+    assert "DYNAMIC_PILL" in ids
+
+
+def test_dynamic_pill_style_properties():
+    pill_style = get_caption_style("DYNAMIC_PILL")
+    assert pill_style.id == "DYNAMIC_PILL"
+    assert pill_style.border_style == 3
+    assert pill_style.outline_width >= 14
+    base_line, hl_line = pill_style.build_ass_styles(margin_v=540)
+    assert ",3,16,0,2," in base_line or ",3," in base_line
+
 
 
 def test_caption_style_ass_generation():

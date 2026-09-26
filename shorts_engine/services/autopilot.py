@@ -291,7 +291,7 @@ def run_autopilot_pipeline(
         broll_split_screen=False,
         broll_ken_burns=False,
         subtitle_mode="dynamic",
-        mask_old_subtitles=True,
+        mask_old_subtitles=getattr(settings, "mask_old_subtitles", False),
         enable_bg_music=True,
         bg_music_track=active_bg_track,
         bg_music_volume=getattr(settings, "bg_music_volume", 0.22)

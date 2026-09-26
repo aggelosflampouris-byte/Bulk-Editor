@@ -452,6 +452,7 @@ def render_autopilot_tab(settings: Any) -> None:
     with cap_c1:
         caption_choices = [
             "🤖 Auto-Detect (Dynamic AI Selection based on Occasion)",
+            "💊 Dynamic Caption Pill (Dynamic Translucent Backdrop)",
             "🏎️ Car Pulse Industrial (Automotive & Workshop)",
             "⚡ Hormozi Punch (High-Energy Bold Yellow Box)",
             "🔥 Viral TikTok Bounce (Neon Lime Green Highlights)",
@@ -462,6 +463,7 @@ def render_autopilot_tab(settings: Any) -> None:
         ]
         caption_map = {
             "🤖 Auto-Detect (Dynamic AI Selection based on Occasion)": "auto",
+            "💊 Dynamic Caption Pill (Dynamic Translucent Backdrop)": "DYNAMIC_PILL",
             "🏎️ Car Pulse Industrial (Automotive & Workshop)": "CAR_PULSE_INDUSTRIAL",
             "⚡ Hormozi Punch (High-Energy Bold Yellow Box)": "HORMOZI_PUNCH",
             "🔥 Viral TikTok Bounce (Neon Lime Green Highlights)": "VIRAL_TIKTOK_BOUNCE",
@@ -477,6 +479,11 @@ def render_autopilot_tab(settings: Any) -> None:
             help="Choose a visual subtitle theme. When set to Auto-Detect, the AI automatically picks the best template matching the video's content niche (e.g. Car Pulse for car vlogs, Neon for tech, Documentary for news).",
         )
         settings.caption_style = caption_map.get(selected_cap_label, "auto")
+        settings.mask_old_subtitles = st.checkbox(
+            "Mask preexisting hardcoded captions on raw footage",
+            value=getattr(settings, "mask_old_subtitles", False),
+            help="Enable ONLY if the source video has preexisting burned-in subtitles from another creator that you need to frost/blur. Leave unchecked to preserve 100% of the raw video.",
+        )
 
     with cap_c2:
         try:

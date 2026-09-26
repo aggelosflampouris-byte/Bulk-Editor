@@ -12,6 +12,7 @@ This module has zero FFmpeg or HTTP dependencies.
 from __future__ import annotations
 
 import logging
+import re
 import string
 from collections.abc import Callable
 from pathlib import Path
@@ -517,7 +518,8 @@ def segments_to_ass(
             elif seg.text and seg.text.strip():
                 # Segment in a mixed transcript missing word timestamps: interpolate across segment
                 # so subtitles never drop off or freeze halfway through the video!
-                w_list = seg.text.strip().split()
+                clean_seg_txt = re.sub(r'^[>»\-—\s]+', '', seg.text).strip()
+                w_list = clean_seg_txt.split()
                 if w_list:
                     s_dur = max(seg.end - seg.start, 0.12 * len(w_list))
                     total_c = max(1, sum(len(w) for w in w_list))
@@ -534,7 +536,8 @@ def segments_to_ass(
     raw_words.sort(key=lambda w: (w[0], w[1]))
     all_words: list[tuple[float, float, str]] = []
     for w_s, w_e, w_t in raw_words:
-        clean_t = w_t.strip()
+        # Strip leading punctuation/caption artifacts (e.g. YouTube ">> " or "> ")
+        clean_t = re.sub(r'^[>»\-—\s]+', '', w_t).strip()
         if not clean_t:
             continue
         w_start_val = max(0.0, float(w_s))
@@ -563,7 +566,8 @@ def segments_to_ass(
                     s_end = s_start + 0.05
             start = _seconds_to_ass_time(s_start)
             end = _seconds_to_ass_time(s_end)
-            text_field = _escape_ass_text(seg.text)
+            seg_text_clean = re.sub(r'^[>»\-—\s]+', '', seg.text).strip()
+            text_field = _escape_ass_text(seg_text_clean)
             dialogue_lines.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text_field}")
     elif subtitle_mode == "dynamic":
         # Group words into 2-3 word natural fluid phrases with real-time active-word karaoke highlighting (max 22 chars for single-line stability)

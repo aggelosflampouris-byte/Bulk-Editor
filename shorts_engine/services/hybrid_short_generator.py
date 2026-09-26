@@ -441,7 +441,7 @@ def build_hybrid_short(
 
     # Mask old burned-in subtitles on speaker footage
     masked_speaker = cropped_speaker
-    if getattr(settings, "mask_old_subtitles", True):
+    if getattr(settings, "mask_old_subtitles", False):
         _rpt("Masking old lower-third burned captions on speaker clip...")
         masked_dest = tmp_dir / f"hybrid_spk_masked_{uid}.mp4"
         masked_speaker = mask_burned_in_subtitles(cropped_speaker, masked_dest)

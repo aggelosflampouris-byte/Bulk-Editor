@@ -15,24 +15,28 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # Lower-third box coordinates tailored for 1080x1920 (9:16)
-_DEFAULT_MASK_Y = 1200
-_DEFAULT_MASK_H = 440
-_DEFAULT_OPACITY = 0.68
+_DEFAULT_MASK_Y = 1350
+_DEFAULT_MASK_H = 180
+_DEFAULT_OPACITY = 0.50
 
 
 def build_subtitle_mask_filter(
     mask_y: int = _DEFAULT_MASK_Y,
     mask_h: int = _DEFAULT_MASK_H,
     opacity: float = _DEFAULT_OPACITY,
+    mask_w: int | str = "iw",
+    mask_x: int | str = "0",
 ) -> str:
     """
-    Construct the FFmpeg complex filter string to blur the lower third and overlay a dark scrim.
+    Construct the FFmpeg complex filter string to blur the subtitle region and overlay a subtle dark scrim.
     """
+    w_str = str(mask_w)
+    x_str = str(mask_x)
     return (
         f"[0:v]split[base][blur];"
-        f"[blur]crop=iw:{mask_h}:0:{mask_y},boxblur=24:12[blurred];"
-        f"[base][blurred]overlay=0:{mask_y}[vmasked];"
-        f"[vmasked]drawbox=x=0:y={mask_y}:w=iw:h={mask_h}:color=black@{opacity:.2f}:t=fill[vout]"
+        f"[blur]crop={w_str}:{mask_h}:{x_str}:{mask_y},boxblur=24:12[blurred];"
+        f"[base][blurred]overlay={x_str}:{mask_y}[vmasked];"
+        f"[vmasked]drawbox=x={x_str}:y={mask_y}:w={w_str}:h={mask_h}:color=black@{opacity:.2f}:t=fill[vout]"
     )
 
 

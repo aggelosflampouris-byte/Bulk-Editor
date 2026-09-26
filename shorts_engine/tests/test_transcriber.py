@@ -305,3 +305,19 @@ def test_dynamic_subtitle_chunking_avoids_dangling_particles() -> None:
     plain_words = [w for w in first_line_text.replace(r"{\rHighlightBox}", "").replace(r"{\rDefault}", "").split() if w]
     assert plain_words[-1] != "των"
 
+
+def test_segments_to_ass_strips_leading_arrows_and_artifacts() -> None:
+    words = [
+        (0.0, 0.5, ">>"),
+        (0.5, 1.0, "Δεν"),
+        (1.0, 1.5, "έχω"),
+    ]
+    seg = TranscriptionSegment(start=0.0, end=1.5, text=">> Δεν έχω", words=words)
+    ass_out = segments_to_ass([seg], subtitle_mode="dynamic")
+    dialogues = [line for line in ass_out.splitlines() if line.startswith("Dialogue:")]
+    assert len(dialogues) > 0
+    for d in dialogues:
+        assert ">>" not in d
+        assert "Δεν" in d
+
+
