@@ -161,7 +161,8 @@ _DOMAIN_PROMPTS: dict[str, str] = {
     "automotive": (
         "Αυτοκίνητο, μηχανικός, κινητήρας, μοτέρ, κυβικά, ίπποι, άλογα, τουρμπίνα, turbo, "
         "φλάντζα, ρελαντί, λάδια, φίλτρο, service, συμπλέκτης, σασμάν, κιβώτιο, φρένα, "
-        "αναρτήσεις, εξάτμιση, βελτίωση, drift, γκάζι, καύσιμο, κατανάλωση, συνεργείο."
+        "αναρτήσεις, εξάτμιση, βελτίωση, drift, γκάζι, καύσιμο, κατανάλωση, συνεργείο, "
+        "γκαράζ, vlog, μάστορας, παντιλίκια, ώ να σου γαμήσω, γαμώτο, μαλακία, ρε φίλε, όπα."
     ),
 }
 
@@ -169,7 +170,8 @@ _DOMAIN_PROMPTS: dict[str, str] = {
 _DEFAULT_WHISPER_PROMPT: str = (
     "Ελληνικά, ορθογραφία με τόνους, σωστή στίξη (κόμματα, τελείες, ερωτηματικά), "
     "κεφαλαία, ακρωνύμια και δημόσιοι οργανισμοί (ΜΜΕ, ΑΑΔΕ, ΔΕΗ, ΔΕΔΔΗΕ, ΕΦΚΑ, ΕΕ, ΟΑΣΑ, ΓΕΕΘΑ, ΑΣΕΠ, ΟΠΕΚΑ, ΦΠΑ, ΕΛΣΤΑΤ), "
-    "καθαρή αποτύπωση ομιλίας χωρίς παραλείψεις."
+    "φυσικός προφορικός λόγος, διάλογος, καθημερινή ομιλία, αυθεντικές εκφράσεις, αργκό και επιφωνήματα (ώ να σου γαμήσω, γαμώτο, μαλακία, ρε συ, ρε φίλε, ρε μαλάκα, έλα ρε, όπα, χαμός, παντιλίκια), "
+    "καθαρή αποτύπωση ομιλίας χωρίς παραλείψεις ή λογοκρισία."
 )
 
 
@@ -355,16 +357,33 @@ def transcribe(
         if is_hallucinated_text(seg_text, seg_dur):
             logger.info("Discarding hallucinated transcript segment [%.2f-%.2f]: %s", seg.start, seg.end, seg_text)
             continue
+        try:
+            from services.seo_generator import normalize_greek_spoken_idioms, align_words_with_corrected_text
+            norm_seg_text = normalize_greek_spoken_idioms(seg_text)
+        except Exception:
+            try:
+                from shorts_engine.services.seo_generator import normalize_greek_spoken_idioms, align_words_with_corrected_text
+                norm_seg_text = normalize_greek_spoken_idioms(seg_text)
+            except Exception:
+                norm_seg_text = seg_text
+
         # Extract word-level timing when available
         word_data: list[tuple[float, float, str]] | None = None
         if seg.words:
-            word_data = [
+            raw_w_data = [
                 (w.start, w.end, w.word)
                 for w in seg.words
                 if w.word.strip()
             ]
+            if norm_seg_text != seg_text:
+                try:
+                    word_data = align_words_with_corrected_text(raw_w_data, norm_seg_text, seg.start, seg.end)
+                except Exception:
+                    word_data = raw_w_data
+            else:
+                word_data = raw_w_data
         segments.append(
-            TranscriptionSegment(seg.start, seg.end, seg.text, word_data)
+            TranscriptionSegment(seg.start, seg.end, norm_seg_text, word_data)
         )
 
         # Stream real-time progress per decoded segment
@@ -572,22 +591,35 @@ def segments_to_ass(
             text_field = _escape_ass_text(seg_text_clean)
             dialogue_lines.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text_field}")
     elif subtitle_mode == "dynamic":
-        # Group words into 2-3 word natural fluid phrases with real-time active-word karaoke highlighting (max 24 chars for single-line stability)
+        # Group words into 2-4 word natural fluid phrases with real-time active-word karaoke highlighting (max 28 chars for single-line stability)
+        min_word_duration = 0.08
+        lead_offset = 0.05  # 50ms anticipatory onset matching vocal articulation
+
         idx = 0
         while idx < len(all_words):
             chunk = [all_words[idx]]
             idx += 1
-            while idx < len(all_words) and len(chunk) < 3:
+            while idx < len(all_words) and len(chunk) < 4:
                 curr_w = all_words[idx]
                 prev_w = chunk[-1]
-                # Break on longer pauses between phrases (> 0.55s) to keep natural conversational 2-3 word phrases intact
-                if curr_w[0] - prev_w[1] > 0.55:
+                gap = curr_w[0] - prev_w[1]
+
+                # Natural breath pause (> 0.45s) closes the phrase
+                if gap > 0.45:
                     break
-                # Break on clause or sentence punctuation at the end of the previous word
-                if prev_w[2].endswith((".", "!", "?", ";", ":", "…", ",")):
-                    break
+
+                prev_txt = prev_w[2].strip()
+                # Full stop, question mark, colon or ellipsis closes phrase if at least 2 words or clear pause
+                if prev_txt.endswith((".", "?", ";", ":", "…")):
+                    if len(chunk) >= 2 or gap > 0.20:
+                        break
+                # Comma or exclamation mark: only break if chunk already has at least 2 words and is long enough
+                elif prev_txt.endswith((",", "!")):
+                    if len(chunk) >= 2 and (gap > 0.20 or sum(len(w[2]) for w in chunk) > 16):
+                        break
+
                 combined_len = sum(len(w[2]) for w in chunk) + len(curr_w[2]) + len(chunk)
-                if combined_len > 24:
+                if combined_len > 28:
                     break
                 chunk.append(curr_w)
                 idx += 1
@@ -598,7 +630,7 @@ def segments_to_ass(
                 if last_word_clean in _DANGLING_SUBTITLE_END_WORDS:
                     next_w = all_words[idx]
                     tentative_len = sum(len(w[2]) for w in chunk) + len(next_w[2]) + 1
-                    if tentative_len <= 26 and (next_w[0] - chunk[-1][1]) <= 0.45:
+                    if tentative_len <= 30 and (next_w[0] - chunk[-1][1]) <= 0.45:
                         chunk.append(next_w)
                         idx += 1
                     else:
@@ -608,28 +640,29 @@ def segments_to_ass(
             # Compute strictly non-overlapping, strictly monotonic active intervals for each word in chunk
             chunk_intervals: list[tuple[float, float]] = []
             for w_i, active_w in enumerate(chunk):
-                cur_s = active_w[0]
+                raw_s = max(0.0, active_w[0] - lead_offset)
+                cur_s = raw_s
                 if chunk_intervals:
                     prev_e = chunk_intervals[-1][1]
                     cur_s = max(cur_s, prev_e)
 
                 if w_i + 1 < len(chunk):
-                    next_s = chunk[w_i + 1][0]
-                    cur_e = max(cur_s + 0.06, next_s)
+                    next_raw_s = max(0.0, chunk[w_i + 1][0] - lead_offset)
+                    cur_e = max(cur_s + 0.06, next_raw_s)
                 else:
                     cur_e = max(active_w[1], cur_s + min_word_duration)
                     if idx < len(all_words):
-                        next_chunk_start = all_words[idx][0]
+                        next_chunk_start = max(0.0, all_words[idx][0] - lead_offset)
                         if next_chunk_start > cur_s:
                             gap = next_chunk_start - cur_e
-                            if 0 <= gap <= gap_bridge_threshold:
+                            if 0 <= gap <= 0.18:
                                 cur_e = next_chunk_start
                             else:
-                                cur_e = min(cur_e + 0.15, next_chunk_start)
+                                cur_e = min(cur_e + 0.08, next_chunk_start)
                         else:
                             cur_e = cur_s + 0.08
                     else:
-                        cur_e = cur_e + 0.20
+                        cur_e = cur_e + 0.10
 
                 if cur_e <= cur_s:
                     cur_e = cur_s + 0.08

@@ -186,3 +186,52 @@ def test_sanitize_voiceover_script_pronounces_dianisma_in_greek() -> None:
     assert "Διάνυσμα" in cleaned2
 
 
+def test_normalize_greek_spoken_idioms_repairs_euphemisms_and_slang() -> None:
+    from shorts_engine.services.seo_generator import normalize_greek_spoken_idioms
+
+    # Test phonetic mishearings and euphemisms of "Ώ να σου γαμήσω!"
+    assert "Ώ να σου γαμήσω!" in normalize_greek_spoken_idioms("Ωνα, σου γαπήσω. Ω! Ωραία!")
+    assert "Ώ να σου γαμήσω!" in normalize_greek_spoken_idioms("Όνα σου γραφίσω.")
+    assert "Ώ να σου γαμήσω!" in normalize_greek_spoken_idioms("να σου γραφτεί!")
+    assert "Ώ να σου γαμήσω!" in normalize_greek_spoken_idioms("ας γραφτεί")
+    assert "Ώ να σου γαμήσω!" in normalize_greek_spoken_idioms("Ωχ, να σου γραφτεί!")
+    assert "Ώ να σου γαμήσω!" in normalize_greek_spoken_idioms("ω να σου γαβήσω!")
+    assert "Ώ να σου γαμήσω!" in normalize_greek_spoken_idioms("Ω να σου γαμίσω.")
+
+    # Test colloquial mechanic & vlog expressions
+    assert "γαμώτο" in normalize_greek_spoken_idioms("Δεν ξέρω ότι σημαίνει ολαφτάρε γαμότος.")
+    assert "βίδα" in normalize_greek_spoken_idioms("Αυτή η βύδετα είναι πολύ χαλάρη.")
+    assert "φλάντζα" in normalize_greek_spoken_idioms("Και η φλάρτζια επίσης.")
+    assert "παντιλίκια" in normalize_greek_spoken_idioms("να κάνουμε παντηλίκια")
+    assert "πες τα μου" in normalize_greek_spoken_idioms("πέσταγαν μου σήμερα")
+
+
+def test_dynamic_subtitle_chunking_keeps_exclamations_fluid() -> None:
+    # 4-word exclamatory phrase with active word timestamps
+    segs = [
+        TranscriptionSegment(
+            start=0.0,
+            end=1.2,
+            text="Ώ να σου γαμήσω!",
+            words=[
+                (0.00, 0.10, "Ώ"),
+                (0.10, 0.25, "να"),
+                (0.25, 0.40, "σου"),
+                (0.40, 1.05, "γαμήσω!"),
+            ],
+        )
+    ]
+
+    ass_content = segments_to_ass(segs, subtitle_mode="dynamic")
+    lines = [line for line in ass_content.splitlines() if line.startswith("Dialogue:")]
+    assert len(lines) == 4  # 4 karaoke steps for the 4 words
+
+    # All 4 dialogue lines should contain the full 4-word phrase without premature breaking
+    for line in lines:
+        assert "Ώ" in line
+        assert "να" in line
+        assert "σου" in line
+        assert "γαμήσω!" in line
+
+
+

@@ -871,12 +871,18 @@ def process_url_clip(
         if (source_is_section or is_yt or not any(s.words for s in clip_segments)) and raw_clip_path.is_file():
             try:
                 _report("Acoustic sync: transcribing clip audio for fluid word-level cadence...")
+                # Enforce high-accuracy large-v3-turbo for sub-clip sync so colloquialisms & swearing are never phonetically mangled
+                sync_model = (
+                    "large-v3-turbo"
+                    if getattr(settings, "whisper_model_size", "base") in ("tiny", "base", "small")
+                    else settings.whisper_model_size
+                )
                 whisper_clip_segs = transcribe(
                     video_path=raw_clip_path,
-                    model_size=settings.whisper_model_size,
+                    model_size=sync_model,
                     device=settings.whisper_device,
                     compute_type=settings.whisper_compute_type,
-                    beam_size=settings.whisper_beam_size,
+                    beam_size=max(2, settings.whisper_beam_size),
                     context_hint=settings.whisper_context_hint or None,
                     source_title=clip.seo.title if clip.seo else None,
                 )

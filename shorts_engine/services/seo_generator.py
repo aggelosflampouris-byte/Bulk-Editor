@@ -667,6 +667,50 @@ def generate_broll_query(transcript_text: str, api_key: str) -> str | None:
 
 # ── Greek Transcript Correction ────────────────────────────────────────────────
 
+def normalize_greek_spoken_idioms(text: str) -> str:
+    """
+    Deterministically repair common speech-to-text phonetic distortions,
+    AI hallucinations, and censorship euphemisms in colloquial Greek video dialogue.
+    Prevents spontaneous spoken expletives/slang from being replaced with sanitized nonsense
+    (e.g., 'ας γραφτεί' / 'να σου γραφτεί' / 'όνα σου γραφίσω' -> 'Ώ να σου γαμήσω!').
+    """
+    if not text:
+        return text
+
+    # 1. Ώ να σου γαμήσω variations (handling phonetic garble, typos, and euphemistic auto-captions)
+    text = re.sub(
+        r"\b(?:[όοώω]χ?[,\s]+)?(?:[όοώω]να|[όοώω]\s+να)[,\s]+σου[,\s]+(?:γραφ[ίει]σω|γραφτε[ίι]|γαπ[ήη]σω|γαβ[ήη]σω|γαμπ[ήη]σω|γαμ[ήηίι]σω)[!.]?",
+        "Ώ να σου γαμήσω!",
+        text,
+        flags=re.IGNORECASE,
+    )
+    # Euphemisms / false auto-captions turning exclamations into "να σου γραφτεί" or "ας γραφτεί"
+    text = re.sub(
+        r"\b(?:[όοώω]χ?[,\s]+)?(?:να|ας)[,\s]+(?:σου\s+)?γραφτε[ίι][!]?",
+        "Ώ να σου γαμήσω!",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"\b(?:να|ας)\s+σου\s+γραφτεί\b",
+        "ώ να σου γαμήσω",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    # 2. Profanity spelling & common mechanic / vlog phonetic slips
+    text = re.sub(r"\bγαμ[ίι]σω\b", "γαμήσω", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bγαμότος?\b", "γαμώτο", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bβύδετα\b", "βίδα", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bφλάρτζ[ιη]α\b", "φλάντζα", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bπαντηλ[ίι]κια\b", "παντιλίκια", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bπέσταγαν\s+μου\b", "πες τα μου", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bπες\s+να\s+(?:γραψ[ει]ς|γαμμ?ε)\b", "πέστα, γαμώ,", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bνα\s+γράψεις\s+πολύ\s+μεγάλη\s+μαλακ[ίι][αά]\b", "πέστα, γαμώ, πολύ μεγάλη μαλακία", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bλιθώσκενη\s+τύρας\b", "ανοιχτός κινητήρας", text, flags=re.IGNORECASE)
+    return text
+
+
 _CORRECTION_PROMPT = """\
 You are a professional Greek language editor and proofreader.
 
@@ -676,6 +720,11 @@ errors, wrong word boundaries, missing/wrong diacritics (τόνοι), or grammar
 
 Common Whisper Greek errors to ALWAYS correct:
 - Phonetic misinterpretations: Fix words that sound similar but make no sense in the context of the sentence.
+- Colloquial Greek, Vlog Slang & Spoken Exclamations (CRITICAL):
+  Informal Greek speech, vlogs, automotive videos, and podcasts regularly feature spontaneous slang, emotional interjections, and swearing (e.g., "Ώ να σου γαμήσω!", "γαμώτο", "μαλακία", "ρε φίλε", "ρε μαλάκα", "παντιλίκια", "έλα ρε", "όπα").
+  DO NOT sanitize, censor, or euphemize these expressions into polite or formal words.
+  Whisper and YouTube auto-captions frequently mishear or euphemize swear words phonetically (e.g. "όνα σου γραφίσω" / "όλα σου γραφίσω" / "ω να σου γαπήσω" / "ω να σου γαβήσω" -> "Ώ να σου γαμήσω!", "πέσταγαν μου" -> "πες τα μου", "πες να γράψεις" -> "πέστα, γαμώ").
+  NEVER replace colloquial or profane Greek with polite distortions like "ας γραφτεί" or "να σου γραφτεί". Reconstruct the true colloquial Greek exclamation intended by the speaker.
 - Repetitions & Hallucinations (CRITICAL): Eliminate phantom phrases that Whisper hallucinates during background music or pauses (e.g. "Υπότιτλοι:", "Υποτιτλισμός:", "Ευχαριστούμε για την παρακολούθηση", "Κάντε like", "Εγγραφείτε στο κανάλι", "Σας ευχαριστώ πολύ", or repeating stutter loops like "και και και", "της της της"). If a line contains AI hallucinations or broken disjointed words, reconstruct the authentic speech or eliminate the phantom text.
 - Passive verb endings misheard as separate words (e.g. "Χαίρο με" / "χαίρο με" -> "Χαίρομαι" / "χαίρομαι", "σκέφτο με" -> "σκέφτομαι")
 - Verb forms: "είσαστε" -> "είστε", "βλέπωμε" -> "βλέπουμε"
@@ -705,9 +754,10 @@ Correct EACH line so it reads as accurate, natural, grammatically correct Greek.
 3. Do NOT merge or split lines.
 4. Do NOT add unnecessary punctuation; keep subtitles clean and natural.
 5. Do NOT change the speaker's intended meaning, but aggressively clean out AI hallucinations, phantom subtitle text, and speech-to-text glitches.
-6. LOGICAL GUARDRAIL (CRITICAL): Ensure the sentence actually makes sense. If the literal words form a confusing or disjointed sentence, rewrite them slightly to form a coherent, logical statement that fits the context.
-7. If a line is already correct, output it with its tag unchanged.
-8. Output ONLY the tagged lines, nothing else.
+6. Do NOT censor or euphemize Greek slang, swear words, or emotional vernacular. Maintain the authentic raw energy of the speaker.
+7. LOGICAL GUARDRAIL (CRITICAL): Ensure the sentence actually makes sense. If the literal words form a confusing or disjointed sentence, rewrite them slightly to form a coherent, logical statement that fits the context, but NEVER replace authentic colloquial speech or swear words with polite or unrelated words.
+8. If a line is already correct, output it with its tag unchanged.
+9. Output ONLY the tagged lines, nothing else.
 
 Lines to correct:
 {lines}
@@ -869,7 +919,8 @@ def correct_transcript_greek(
 
     for b_idx in range(total_batches):
         batch = segments[b_idx * batch_size : (b_idx + 1) * batch_size]
-        input_lines = [f"[{i}] {seg.text}" for i, seg in enumerate(batch)]
+        pre_normalized_batch_texts = [normalize_greek_spoken_idioms(seg.text) for seg in batch]
+        input_lines = [f"[{i}] {t}" for i, t in enumerate(pre_normalized_batch_texts)]
         prompt = _CORRECTION_PROMPT.format(lines="\n".join(input_lines))
 
         try:
@@ -882,8 +933,28 @@ def correct_transcript_greek(
                 ),
             ).strip()
         except (genai_errors.APIError, RuntimeError, ValueError, OSError) as exc:
-            logger.warning("Gemini transcript correction failed on batch %d: %s — using original.", b_idx + 1, exc)
-            corrected_segments.extend(batch)
+            logger.warning("Gemini transcript correction failed on batch %d: %s — using normalized original.", b_idx + 1, exc)
+            raw = ""
+
+        # If LLM returned empty string (e.g. content safety false-positive or outage),
+        # gracefully fall back to pre-normalized segments preserving speech timestamps.
+        if not raw:
+            for i, seg in enumerate(batch):
+                norm_t = pre_normalized_batch_texts[i]
+                aligned_words = align_words_with_corrected_text(
+                    original_words=seg.words,
+                    corrected_text=norm_t,
+                    seg_start=seg.start,
+                    seg_end=seg.end,
+                )
+                corrected_segments.append(
+                    TranscriptionSegment(
+                        start=seg.start,
+                        end=seg.end,
+                        text=norm_t,
+                        words=aligned_words,
+                    )
+                )
             continue
 
         # Strip markdown fences if present
@@ -912,7 +983,7 @@ def correct_transcript_greek(
 
         # Rebuild segments with corrected text and synchronised word timings
         for i, seg in enumerate(batch):
-            new_text = corrected_map.get(i, seg.text)
+            new_text = normalize_greek_spoken_idioms(corrected_map.get(i, pre_normalized_batch_texts[i]))
             aligned_words = align_words_with_corrected_text(
                 original_words=seg.words,
                 corrected_text=new_text,

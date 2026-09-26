@@ -402,5 +402,30 @@ def test_align_words_with_corrected_text_clamps_to_segment_bounds() -> None:
         assert aligned[i][0] >= aligned[i - 1][0]
 
 
+def test_correct_transcript_greek_preserves_slang_on_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    from shorts_engine.services.seo_generator import correct_transcript_greek
+    from shorts_engine.services.transcriber import TranscriptionSegment
+
+    segments = [
+        TranscriptionSegment(start=0.0, end=1.5, text="ας γραφτεί ρε παιδιά!"),
+        TranscriptionSegment(start=1.5, end=3.0, text="κοίτα τι έγινε με τη βύδετα"),
+    ]
+
+    # Simulate Gemini failing or returning empty string due to safety filter trigger
+    def fake_gemini_blocked(*args, **kwargs) -> str:
+        return ""
+
+    monkeypatch.setattr(
+        "shorts_engine.services.seo_generator._call_gemini_with_fallback",
+        fake_gemini_blocked,
+    )
+
+    corrected = correct_transcript_greek(segments, api_key="test-key")
+    assert len(corrected) == 2
+    assert "Ώ να σου γαμήσω!" in corrected[0].text
+    assert "βίδα" in corrected[1].text
+
+
+
 
 
