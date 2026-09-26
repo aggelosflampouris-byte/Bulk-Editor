@@ -83,17 +83,19 @@ Bulk-Editor/
 │   ├── run.sh                 # Direct engine launcher (Linux/macOS)
 │   ├── services/              # Core business logic & AI models
 │   │   ├── clip_selector.py   # AI hook & clip detection
-│   │   ├── face_tracker.py    # Speaker tracking & centering
+│   │   ├── face_tracker.py    # Spatial continuity speaker tracking & centering
 │   │   ├── hw_encoder.py      # Hardware encoder detection (QSV/AMF/VAAPI)
+│   │   ├── hybrid_short_generator.py # Hybrid authentic speaker + AI breakdown
 │   │   ├── niche_templates.py # Niche presets & brand profiles
 │   │   ├── ocr_engine.py      # Gemini Vision frame text extraction
 │   │   ├── seo_generator.py   # Greek title, tags & description generator
+│   │   ├── traffic_scheduler.py # Greek high-traffic upload schedule pool
 │   │   ├── transcriber.py     # Whisper transcription & subtitle generation
 │   │   ├── video_engine.py    # FFmpeg cropping, audio mixing & burning
 │   │   ├── vfx_engine.py      # Color grading & scene analysis
 │   │   └── youtube_uploader.py# YouTube Data API upload handling
 │   ├── ui/                    # Streamlit modular tabs and components
-│   └── tests/                 # Comprehensive test suite (44 unit tests)
+│   └── tests/                 # Comprehensive test suite (186 unit tests)
 ```
 
 ---
