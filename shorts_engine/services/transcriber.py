@@ -302,7 +302,8 @@ def transcribe(
     logger.debug("Whisper initial_prompt: %s", initial_prompt[:120])
 
     import tempfile
-    temp_wav = Path(tempfile.mktemp(suffix="_speech16k.wav"))
+    with tempfile.NamedTemporaryFile(suffix="_speech16k.wav", delete=False) as _tmp:
+        temp_wav = Path(_tmp.name)
     audio_target = extract_speech_audio(video_path, temp_wav)
 
     try:

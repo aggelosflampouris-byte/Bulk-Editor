@@ -1,22 +1,27 @@
 #!/usr/bin/env bash
+# =============================================================================
+# run.sh -- Root launcher for Bulk Editor (Linux / macOS)
+# Delegates to shorts_engine/run.sh with correct PYTHONPATH.
+# =============================================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENGINE_SH="$SCRIPT_DIR/shorts_engine/run.sh"
 
 echo ""
-echo "===================================================="
-echo "  Batch Greek Shorts Processing Engine"
-echo "  Launching from root directory..."
-echo "===================================================="
+echo " ===================================================="
+echo "   Batch Greek Shorts Processing Engine"
+echo " ===================================================="
 echo ""
 
-if [[ ! -d "$SCRIPT_DIR/shorts_engine" ]] || [[ ! -f "$SCRIPT_DIR/shorts_engine/run.sh" ]]; then
-    echo "[ERROR] Could not find shorts_engine/run.sh."
-    echo "Please make sure the shorts_engine folder exists in the project root."
+if [[ ! -f "$ENGINE_SH" ]]; then
+    echo " [ERROR] Could not find shorts_engine/run.sh"
+    echo ""
+    echo " Make sure the 'shorts_engine' folder exists next to this run.sh file."
+    echo " If you downloaded the zip, re-extract it and try again."
     exit 1
 fi
 
-chmod +x "$SCRIPT_DIR/shorts_engine/run.sh" 2>/dev/null || true
+chmod +x "$ENGINE_SH"
 export PYTHONPATH="$SCRIPT_DIR:$SCRIPT_DIR/shorts_engine:${PYTHONPATH:-}"
-cd "$SCRIPT_DIR/shorts_engine"
-exec bash run.sh "$@"
+exec bash "$ENGINE_SH" "$@"
