@@ -39,7 +39,7 @@ class TranscriptionSegment:
     Uses __slots__ for memory efficiency when processing many segments.
     """
 
-    __slots__ = ("end", "start", "text", "words")
+    __slots__ = ("end", "start", "text", "words", "is_youtube_captions")
 
     def __init__(
         self,
@@ -47,12 +47,14 @@ class TranscriptionSegment:
         end: float,
         text: str,
         words: list[tuple[float, float, str]] | None = None,
+        is_youtube_captions: bool = False,
     ) -> None:
         self.start: float = start
         self.end: float = end
         self.text: str = text.strip()
         # Each entry: (word_start, word_end, word_text)
         self.words: list[tuple[float, float, str]] | None = words
+        self.is_youtube_captions: bool = is_youtube_captions
 
     def __repr__(self) -> str:
         return f"TranscriptionSegment(start={self.start:.2f}, end={self.end:.2f}, text={self.text!r})"
@@ -549,7 +551,7 @@ def segments_to_ass(
                 w_end_val = max(w_end_val, w_start_val + 0.05)
         all_words.append((w_start_val, w_end_val, clean_t))
 
-    min_word_duration = 0.20
+    min_word_duration = 0.09
     gap_bridge_threshold = 0.35
 
     # If no words available, fallback to segments
@@ -570,7 +572,7 @@ def segments_to_ass(
             text_field = _escape_ass_text(seg_text_clean)
             dialogue_lines.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text_field}")
     elif subtitle_mode == "dynamic":
-        # Group words into 2-3 word natural fluid phrases with real-time active-word karaoke highlighting (max 22 chars for single-line stability)
+        # Group words into 2-3 word natural fluid phrases with real-time active-word karaoke highlighting (max 24 chars for single-line stability)
         idx = 0
         while idx < len(all_words):
             chunk = [all_words[idx]]
@@ -578,14 +580,14 @@ def segments_to_ass(
             while idx < len(all_words) and len(chunk) < 3:
                 curr_w = all_words[idx]
                 prev_w = chunk[-1]
-                # Break on long pauses between words (> 0.35s)
-                if curr_w[0] - prev_w[1] > 0.35:
+                # Break on longer pauses between phrases (> 0.55s) to keep natural conversational 2-3 word phrases intact
+                if curr_w[0] - prev_w[1] > 0.55:
                     break
                 # Break on clause or sentence punctuation at the end of the previous word
                 if prev_w[2].endswith((".", "!", "?", ";", ":", "…", ",")):
                     break
                 combined_len = sum(len(w[2]) for w in chunk) + len(curr_w[2]) + len(chunk)
-                if combined_len > 22:
+                if combined_len > 24:
                     break
                 chunk.append(curr_w)
                 idx += 1
@@ -596,7 +598,7 @@ def segments_to_ass(
                 if last_word_clean in _DANGLING_SUBTITLE_END_WORDS:
                     next_w = all_words[idx]
                     tentative_len = sum(len(w[2]) for w in chunk) + len(next_w[2]) + 1
-                    if tentative_len <= 26 and (next_w[0] - chunk[-1][1]) <= 0.30:
+                    if tentative_len <= 26 and (next_w[0] - chunk[-1][1]) <= 0.45:
                         chunk.append(next_w)
                         idx += 1
                     else:

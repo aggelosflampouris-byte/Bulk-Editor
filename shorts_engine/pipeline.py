@@ -863,6 +863,29 @@ def process_url_clip(
 
         clip_segments = slice_segments(all_segments, clip.start_time, clip.end_time)
 
+        # For URL clips or when transcript originates from YouTube auto-captions,
+        # perform rapid acoustic transcription on the sliced clip audio so word
+        # timings follow the true speed, pauses, and vocal cadence of the speaker.
+        is_yt = any(getattr(s, "is_youtube_captions", False) for s in all_segments)
+        used_clip_whisper = False
+        if (source_is_section or is_yt or not any(s.words for s in clip_segments)) and raw_clip_path.is_file():
+            try:
+                _report("Acoustic sync: transcribing clip audio for fluid word-level cadence...")
+                whisper_clip_segs = transcribe(
+                    video_path=raw_clip_path,
+                    model_size=settings.whisper_model_size,
+                    device=settings.whisper_device,
+                    compute_type=settings.whisper_compute_type,
+                    beam_size=settings.whisper_beam_size,
+                    context_hint=settings.whisper_context_hint or None,
+                    source_title=clip.seo.title if clip.seo else None,
+                )
+                if whisper_clip_segs and any(s.words for s in whisper_clip_segs):
+                    clip_segments = whisper_clip_segs
+                    used_clip_whisper = True
+            except Exception as w_exc:
+                logger.warning("Direct clip Whisper acoustic sync failed (%s) — using sliced segments.", w_exc)
+
         if settings.gemini_api_key and clip_segments:
             _report("AI logic scan: correcting captions for grammar and gibberish...")
             clip_segments = correct_transcript_greek(clip_segments, settings.gemini_api_key)
@@ -882,7 +905,7 @@ def process_url_clip(
             _report=_report,
             warnings=warnings,
             custom_broll_path=Path(custom_broll_path) if custom_broll_path else None,
-            clip_start_offset=clip.start_time,
+            clip_start_offset=0.0 if used_clip_whisper else clip.start_time,
         )
 
         result.output_file = final_output

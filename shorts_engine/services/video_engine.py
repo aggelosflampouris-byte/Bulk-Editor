@@ -757,8 +757,8 @@ def slice_video(
         "ffmpeg", "-y",
         *hw_input_args,
         "-ss", f"{start_time:.3f}",
-        "-to", f"{end_time:.3f}",
         "-i", str(source_path),
+        "-t", f"{expected_duration:.3f}",
         *get_encoder_args(crf_equivalent=23),
         *get_pix_fmt_args(),
     ]

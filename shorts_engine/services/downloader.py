@@ -344,6 +344,7 @@ def download_video_section(
         "--restrict-filenames",
         "--merge-output-format", "mp4",
         "--download-sections", section_str,
+        "--force-keyframes-at-cuts",
         "--output", output_template,
         "--quiet",
         "--no-warnings",

@@ -176,11 +176,19 @@ def fetch_youtube_transcript(
         words_raw = text.split()
         words_timed: list[tuple[float, float, str]] | None = None
         if words_raw:
-            w_step = effective_duration / len(words_raw)
-            words_timed = [
-                (round(start + j * w_step, 3), round(start + (j + 1) * w_step, 3), w)
-                for j, w in enumerate(words_raw)
-            ]
+            total_chars = max(1, sum(len(w) for w in words_raw))
+            # Distribute time proportionally to character length, avoiding sluggish word stretching
+            cur_w_time = start
+            words_timed = []
+            for j, w in enumerate(words_raw):
+                if j == len(words_raw) - 1:
+                    w_end_time = effective_end
+                else:
+                    prop_dur = (len(w) / total_chars) * effective_duration
+                    w_dur = max(0.10, min(0.38, prop_dur))
+                    w_end_time = min(cur_w_time + w_dur, effective_end)
+                words_timed.append((round(cur_w_time, 3), round(max(cur_w_time + 0.08, w_end_time), 3), w))
+                cur_w_time = w_end_time
 
         segments.append(
             TranscriptionSegment(
@@ -188,6 +196,7 @@ def fetch_youtube_transcript(
                 end=round(effective_end, 3),
                 text=text,
                 words=words_timed,
+                is_youtube_captions=True,
             )
         )
 
