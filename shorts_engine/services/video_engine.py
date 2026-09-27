@@ -571,13 +571,17 @@ def burn_subtitles(
         if not path.is_file():
             raise FileNotFoundError(f"Input file not found: {path}")
 
-    # Determine platform font directory for Greek glyph coverage
-    if sys.platform == "win32":
+    # Determine font directory for Greek glyph coverage (prioritize local bundled Google Fonts)
+    local_assets_fonts = Path(__file__).resolve().parent.parent / "assets" / "fonts"
+    if local_assets_fonts.is_dir() and any(local_assets_fonts.glob("*.ttf")):
+        fonts_dir = local_assets_fonts
+    elif sys.platform == "win32":
         fonts_dir = Path("C:/Windows/Fonts")
     elif sys.platform == "darwin":
         fonts_dir = Path("/Library/Fonts")
     else:
-        fonts_dir = Path("/usr/share/fonts")
+        user_fonts = Path.home() / ".local" / "share" / "fonts"
+        fonts_dir = user_fonts if user_fonts.is_dir() else Path("/usr/share/fonts")
 
     escaped_ass = _escape_filter_path(ass_path)
     escaped_fonts = _escape_filter_path(fonts_dir)
