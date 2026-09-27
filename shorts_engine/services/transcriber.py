@@ -235,10 +235,10 @@ def extract_speech_audio(video_path: Path, output_wav: Path) -> Path:
 
 def transcribe(
     video_path: Path,
-    model_size: str = "base",
+    model_size: str = "large-v3",
     device: str = "cpu",
     compute_type: str = "int8",
-    beam_size: int = 1,
+    beam_size: int = 2,
     progress_cb: Callable[[float, str], None] | None = None,
     context_hint: str | None = None,
     source_title: str | None = None,
@@ -596,6 +596,7 @@ def segments_to_ass(
         lead_offset = 0.05  # 50ms anticipatory onset matching vocal articulation
 
         idx = 0
+        global_prev_e = 0.0
         while idx < len(all_words):
             chunk = [all_words[idx]]
             idx += 1
@@ -604,18 +605,18 @@ def segments_to_ass(
                 prev_w = chunk[-1]
                 gap = curr_w[0] - prev_w[1]
 
-                # Natural breath pause (> 0.45s) closes the phrase
-                if gap > 0.45:
+                # Natural breath pause (> 0.40s) closes the phrase
+                if gap > 0.40:
                     break
 
                 prev_txt = prev_w[2].strip()
                 # Full stop, question mark, colon or ellipsis closes phrase if at least 2 words or clear pause
                 if prev_txt.endswith((".", "?", ";", ":", "…")):
-                    if len(chunk) >= 2 or gap > 0.20:
+                    if len(chunk) >= 2 or gap > 0.15:
                         break
                 # Comma or exclamation mark: only break if chunk already has at least 2 words and is long enough
                 elif prev_txt.endswith((",", "!")):
-                    if len(chunk) >= 2 and (gap > 0.20 or sum(len(w[2]) for w in chunk) > 16):
+                    if len(chunk) >= 2 and (gap > 0.15 or sum(len(w[2]) for w in chunk) > 16):
                         break
 
                 combined_len = sum(len(w[2]) for w in chunk) + len(curr_w[2]) + len(chunk)
@@ -630,7 +631,7 @@ def segments_to_ass(
                 if last_word_clean in _DANGLING_SUBTITLE_END_WORDS:
                     next_w = all_words[idx]
                     tentative_len = sum(len(w[2]) for w in chunk) + len(next_w[2]) + 1
-                    if tentative_len <= 30 and (next_w[0] - chunk[-1][1]) <= 0.45:
+                    if tentative_len <= 30 and (next_w[0] - chunk[-1][1]) <= 0.40:
                         chunk.append(next_w)
                         idx += 1
                     else:
@@ -642,32 +643,43 @@ def segments_to_ass(
             for w_i, active_w in enumerate(chunk):
                 raw_s = max(0.0, active_w[0] - lead_offset)
                 cur_s = raw_s
+                
+                # Enforce monotonicity within chunk AND across chunks to prevent ASS overlap glitches
                 if chunk_intervals:
                     prev_e = chunk_intervals[-1][1]
                     cur_s = max(cur_s, prev_e)
+                else:
+                    cur_s = max(cur_s, global_prev_e)
 
                 if w_i + 1 < len(chunk):
                     next_raw_s = max(0.0, chunk[w_i + 1][0] - lead_offset)
-                    cur_e = max(cur_s + 0.06, next_raw_s)
+                    cur_e = max(cur_s + min_word_duration, next_raw_s)
                 else:
                     cur_e = max(active_w[1], cur_s + min_word_duration)
                     if idx < len(all_words):
                         next_chunk_start = max(0.0, all_words[idx][0] - lead_offset)
+                        # We must not overlap with the next chunk.
+                        # If next_chunk_start is VERY close, bridge the gap to make it fluid.
                         if next_chunk_start > cur_s:
                             gap = next_chunk_start - cur_e
-                            if 0 <= gap <= 0.18:
+                            if 0 <= gap <= 0.35:
                                 cur_e = next_chunk_start
-                            else:
-                                cur_e = min(cur_e + 0.08, next_chunk_start)
+                            elif gap < 0:
+                                # Next chunk starts before this word ends. Prevent overlap!
+                                cur_e = max(cur_s + 0.08, next_chunk_start)
                         else:
+                            # Next chunk starts before this word even started
                             cur_e = cur_s + 0.08
                     else:
-                        cur_e = cur_e + 0.10
+                        cur_e = cur_e + 0.15
 
                 if cur_e <= cur_s:
                     cur_e = cur_s + 0.08
 
                 chunk_intervals.append((cur_s, cur_e))
+
+            # Update global state for next chunk to strictly prevent overlaps
+            global_prev_e = chunk_intervals[-1][1]
 
             for w_i, (w_start, w_end) in enumerate(chunk_intervals):
                 t_start = _seconds_to_ass_time(w_start)
@@ -677,8 +689,9 @@ def segments_to_ass(
                 for j, w in enumerate(chunk):
                     w_safe = _escape_ass_text(w[2])
                     if j == w_i:
-                        # Active spoken word inside high-contrast highlight border box
-                        words_formatted.append(rf"{{\rHighlightBox}}{w_safe}{{\rDefault}}")
+                        # Active spoken word inside high-contrast highlight border box with fluid kinetic pop
+                        pop = r"{\fscx108\fscy108\t(0,50,\fscx100\fscy100)}"
+                        words_formatted.append(rf"{{\rHighlightBox}}{pop}{w_safe}{{\rDefault}}")
                     else:
                         words_formatted.append(w_safe)
 
@@ -687,6 +700,7 @@ def segments_to_ass(
     elif subtitle_mode == "phrase":
         # Group words into 2-3 word natural phrases
         idx = 0
+        global_prev_e = 0.0
         while idx < len(all_words):
             chunk = [all_words[idx]]
             idx += 1
@@ -702,8 +716,9 @@ def segments_to_ass(
                 chunk.append(curr_w)
                 idx += 1
             
-            p_start = chunk[0][0]
+            p_start = max(chunk[0][0], global_prev_e)
             p_end = max(chunk[-1][1], p_start + 0.40)
+            
             if idx < len(all_words):
                 next_start = all_words[idx][0]
                 if next_start > p_start:
@@ -716,9 +731,12 @@ def segments_to_ass(
                         else:
                             p_end = min(p_end + 0.15, next_start)
                 else:
-                    p_end = p_start + 0.05
+                    # Next chunk starts before this one ends. Force strictly monotonic chronological order!
+                    p_end = max(p_start + 0.05, next_start)
             else:
                 p_end = p_end + 0.20
+                
+            global_prev_e = p_end
 
             t_start = _seconds_to_ass_time(p_start)
             t_end = _seconds_to_ass_time(p_end)
