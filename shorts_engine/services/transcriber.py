@@ -666,6 +666,7 @@ def segments_to_ass(
                                 cur_e = next_chunk_start
                             elif gap < 0:
                                 # Next chunk starts before this word ends. Prevent overlap!
+                                logger.debug("Overlap prevented in dynamic mode: next_chunk_start=%.3f, cur_s=%.3f", next_chunk_start, cur_s)
                                 cur_e = max(cur_s + 0.08, next_chunk_start)
                         else:
                             # Next chunk starts before this word even started
@@ -680,6 +681,7 @@ def segments_to_ass(
 
             # Update global state for next chunk to strictly prevent overlaps
             global_prev_e = chunk_intervals[-1][1]
+            logger.debug("Dynamic Chunk built: words=%d, start=%.3f, end=%.3f", len(chunk), chunk_intervals[0][0], global_prev_e)
 
             for w_i, (w_start, w_end) in enumerate(chunk_intervals):
                 t_start = _seconds_to_ass_time(w_start)
@@ -732,11 +734,13 @@ def segments_to_ass(
                             p_end = min(p_end + 0.15, next_start)
                 else:
                     # Next chunk starts before this one ends. Force strictly monotonic chronological order!
+                    logger.debug("Overlap prevented in phrase mode: next_start=%.3f, p_start=%.3f", next_start, p_start)
                     p_end = max(p_start + 0.05, next_start)
             else:
                 p_end = p_end + 0.20
                 
             global_prev_e = p_end
+            logger.debug("Phrase Chunk built: words=%d, start=%.3f, end=%.3f", len(chunk), p_start, p_end)
 
             t_start = _seconds_to_ass_time(p_start)
             t_end = _seconds_to_ass_time(p_end)
