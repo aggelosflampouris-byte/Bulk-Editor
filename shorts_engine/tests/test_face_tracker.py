@@ -229,4 +229,60 @@ def test_track_active_speaker_eliminates_jump_cuts_and_filters_spikes(tmp_path, 
     assert len(result.shot_crop_offsets) == 1
 
 
+def test_track_active_speaker_multi_person_prefers_active_speaker_over_silent_center_listener(tmp_path, monkeypatch):
+    """
+    In multi-person split screens or panels (e.g. journalist at center, guest on side),
+    the tracker must identify and follow speakers rather than defaulting to static center coordinates.
+    """
+    landscape_video = _generate_synthetic_video(tmp_path / "panel_interview.mp4", 1920, 1080, duration=2.0)
+
+    class MockBox:
+        def __init__(self, x1, y1, x2, y2):
+            import torch
+            self.xyxy = torch.tensor([[x1, y1, x2, y2]])
+
+    class MockKeypoints:
+        def __init__(self, nose_x, nose_y):
+            import torch
+            self.xy = torch.tensor([[[nose_x, nose_y], [nose_x - 10, nose_y - 10], [nose_x + 10, nose_y - 10], [0, 0], [0, 0]]])
+            self.conf = torch.tensor([[0.95, 0.90, 0.90, 0.0, 0.0]])
+
+    class MockResult:
+        def __init__(self, boxes, keypoints):
+            self.boxes = boxes
+            self.keypoints = keypoints
+
+    class MockYOLO:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def to(self, *args, **kwargs):
+            return self
+
+        def __call__(self, frame, **kwargs):
+            # Candidate 0: Person in center (x=960)
+            box0 = MockBox(860, 200, 1060, 600)
+            kp0 = MockKeypoints(960, 280)
+            # Candidate 1: Person on right side (x=1600)
+            box1 = MockBox(1500, 200, 1700, 600)
+            kp1 = MockKeypoints(1600, 280)
+            return [MockResult([box0, box1], [kp0, kp1])]
+
+    import ultralytics
+    monkeypatch.setattr(ultralytics, "YOLO", MockYOLO)
+
+    result = track_active_speaker(
+        video_path=landscape_video,
+        source_width=1920,
+        source_height=1080,
+        target_width=1080,
+        target_height=1920,
+        sample_interval=0.25,
+    )
+
+    assert result.has_speaker is True
+    assert isinstance(result.static_crop_x, int)
+    assert isinstance(result.crop_expression, str)
+
+
 

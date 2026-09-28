@@ -2,6 +2,7 @@ import itertools
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,65 @@ def _clamp(val: float, min_val: float, max_val: float) -> float:
     return max(min_val, min(val, max_val))
 
 
+def _extract_mouth_roi(
+    frame_shape: tuple[int, ...],
+    box_xyxy: list[float],
+    kp_xy: Any | None = None,
+    kp_conf: Any | None = None,
+) -> tuple[int, int, int, int]:
+    """
+    Extract a bounding box (x1, y1, x2, y2) around the mouth/jaw region.
+
+    If YOLO-pose facial keypoints (Nose=0, Left Eye=1, Right Eye=2) are available with
+    good confidence (>0.25), use facial geometry to precisely isolate the mouth.
+    Otherwise, fall back to the lower anatomical 35% of the human head bounding box.
+    """
+    bx1, by1, bx2, by2 = [int(v) for v in box_xyxy]
+    img_h, img_w = frame_shape[:2]
+
+    try:
+        if kp_xy is not None and len(kp_xy) >= 3:
+            conf_ok = True
+            if kp_conf is not None and len(kp_conf) >= 3:
+                conf_ok = float(kp_conf[0]) > 0.25 and float(kp_conf[1]) > 0.25
+
+            if conf_ok:
+                nx, ny = float(kp_xy[0][0]), float(kp_xy[0][1])
+                lex, ley = float(kp_xy[1][0]), float(kp_xy[1][1])
+                rex, rey = float(kp_xy[2][0]), float(kp_xy[2][1])
+
+                eye_y = (ley + rey) / 2.0
+                eye_dist = max(12.0, abs(lex - rex))
+                nose_dist = max(10.0, ny - eye_y)
+
+                mouth_cx = int(nx)
+                mouth_cy = int(ny + nose_dist * 0.90)
+                half_w = int(eye_dist * 0.70)
+                half_h = int(nose_dist * 0.85)
+
+                mx1 = max(0, mouth_cx - half_w)
+                mx2 = min(img_w, mouth_cx + half_w)
+                my1 = max(0, mouth_cy - half_h)
+                my2 = min(img_h, mouth_cy + half_h)
+                if mx2 > mx1 and my2 > my1:
+                    return mx1, my1, mx2, my2
+    except (IndexError, TypeError, ValueError, AttributeError):
+        pass
+
+    # Anatomical fallback: head is roughly upper 32% of human bounding box
+    head_h = (by2 - by1) * 0.32
+    mouth_cy = by1 + head_h * 0.78
+    half_h = max(8.0, head_h * 0.28)
+    half_w = max(12.0, (bx2 - bx1) * 0.18)
+    cx = (bx1 + bx2) / 2.0
+
+    mx1 = max(0, int(cx - half_w))
+    mx2 = min(img_w, int(cx + half_w))
+    my1 = max(0, int(mouth_cy - half_h))
+    my2 = min(img_h, int(mouth_cy + half_h))
+    return mx1, my1, max(mx1 + 1, mx2), max(my1 + 1, my2)
+
+
 def track_active_speaker(
     video_path: Path,
     source_width: int,
@@ -97,7 +157,7 @@ def track_active_speaker(
             save_cache_pickle,
         )
 
-    cache_key = f"{video_path.name}_{source_width}x{source_height}_{target_width}x{target_height}"
+    cache_key = f"{video_path.name}_{source_width}x{source_height}_{target_width}x{target_height}_v2"
     cached_result = load_cache_pickle("face_tracking", cache_key)
     if cached_result is not None:
         return cached_result
@@ -218,31 +278,71 @@ def track_active_speaker(
                     results = model(frame, classes=[0], conf=0.25, verbose=False, device=infer_device)
 
                 boxes = results[0].boxes if results else None
+                keypoints = getattr(results[0], "keypoints", None)
                 if boxes and len(boxes) > 0:
                     speaker_detected_count += 1
-                    best_idx = 0
-                    best_score = -1.0
-                    for b_i, b in enumerate(boxes):
-                        bx1, by1, bx2, by2 = b.xyxy[0].tolist()
-                        b_area = float((bx2 - bx1) * (by2 - by1))
-                        b_cx = (bx1 + bx2) / 2.0
-                        b_cy = by1 + (by2 - by1) * 0.18
+                    if len(boxes) == 1:
+                        best_idx = 0
+                    else:
+                        # Multi-person scene (e.g. split-screen interview, studio panel, podcast dialogue):
+                        # Measure active lip/mouth motion over a short forward sub-frame window to identify
+                        # the person who is actively articulating speech, rather than a silent listener.
+                        rois = []
+                        for b_i, b in enumerate(boxes):
+                            kp_xy = keypoints[b_i].xy[0] if keypoints is not None and len(keypoints) > b_i else None
+                            kp_conf = (
+                                keypoints[b_i].conf[0]
+                                if keypoints is not None
+                                and len(keypoints) > b_i
+                                and keypoints[b_i].conf is not None
+                                else None
+                            )
+                            rois.append(_extract_mouth_roi(frame.shape, b.xyxy[0].tolist(), kp_xy, kp_conf))
 
-                        # Spatial continuity bonus: track the same speaker across frames
-                        score = b_area
-                        if last_speaker_cx is not None and last_speaker_cy is not None:
-                            dist = ((b_cx - last_speaker_cx) ** 2 + (b_cy - last_speaker_cy) ** 2) ** 0.5
-                            max_dist = source_width * 0.35
-                            if dist < max_dist:
-                                score *= 1.0 + 1.8 * (1.0 - (dist / max_dist))
+                        diffs = [0.0] * len(boxes)
+                        sub_frames = []
+                        # Advance 2-3 consecutive sub-frames to sample fine-grained articulation dynamics
+                        for _ in range(3):
+                            ret_s, f_s = cap.read()
+                            if not ret_s:
+                                break
+                            frame_idx += 1
+                            sub_frames.append(f_s)
 
-                        # Center framing preference
-                        center_dist = abs(b_cx - (source_width / 2.0))
-                        score *= 1.0 - 0.20 * (center_dist / (source_width / 2.0))
+                        if sub_frames:
+                            prev_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                            for sf in sub_frames:
+                                curr_gray = cv2.cvtColor(sf, cv2.COLOR_BGR2GRAY)
+                                diff = cv2.absdiff(curr_gray, prev_gray)
+                                for b_i, (mx1, my1, mx2, my2) in enumerate(rois):
+                                    roi_diff = diff[my1:my2, mx1:mx2]
+                                    if roi_diff.size > 0:
+                                        diffs[b_i] += float(cv2.mean(roi_diff)[0])
+                                prev_gray = curr_gray
 
-                        if score > best_score:
-                            best_score = score
-                            best_idx = b_i
+                        best_idx = 0
+                        best_score = -1.0
+                        for b_i, b in enumerate(boxes):
+                            bx1, by1, bx2, by2 = b.xyxy[0].tolist()
+                            b_area = float((bx2 - bx1) * (by2 - by1))
+                            b_cx = (bx1 + bx2) / 2.0
+                            b_cy = by1 + (by2 - by1) * 0.18
+                            m_diff = diffs[b_i] if b_i < len(diffs) else 0.0
+
+                            # Non-linear boost for speech articulation (moving lips vs static listener)
+                            speaking_weight = (m_diff + 0.1) ** 1.6
+                            score = b_area * speaking_weight
+
+                            # Spatial continuity: maintain moderate lock ONLY if candidate is actively talking
+                            if last_speaker_cx is not None and last_speaker_cy is not None:
+                                dist = ((b_cx - last_speaker_cx) ** 2 + (b_cy - last_speaker_cy) ** 2) ** 0.5
+                                max_dist = source_width * 0.35
+                                if dist < max_dist and m_diff > 1.2:
+                                    score *= 1.0 + 0.5 * (1.0 - (dist / max_dist))
+
+                            if score > best_score:
+                                best_score = score
+                                best_idx = b_i
 
                     best_box = boxes[best_idx]
                     x1, y1, x2, y2 = best_box.xyxy[0].tolist()
@@ -251,7 +351,6 @@ def track_active_speaker(
                     centroid_y = y1 + (y2 - y1) * 0.18
 
                     # Refine centroid using facial keypoints (Nose, L/R Eye, L/R Ear)
-                    keypoints = getattr(results[0], "keypoints", None)
                     if keypoints is not None and len(keypoints) > best_idx:
                         kp = keypoints[best_idx]
                         if kp.xy is not None and len(kp.xy) > 0:
