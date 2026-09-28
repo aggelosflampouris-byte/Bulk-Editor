@@ -15,11 +15,16 @@ try:
 except ImportError:
     from shorts_engine.services.hw_encoder import get_encoder_args, get_optimal_threads
 
-from moviepy import (
-    CompositeVideoClip,
-    VideoFileClip,
-)
-from moviepy.video.fx import FadeIn, FadeOut, Resize
+try:
+    from moviepy import (
+        CompositeVideoClip,
+        VideoFileClip,
+    )
+    from moviepy.video.fx import FadeIn, FadeOut, Resize
+except ImportError:
+    CompositeVideoClip = None
+    VideoFileClip = None
+    FadeIn = FadeOut = Resize = None
 
 logger = logging.getLogger(__name__)
 

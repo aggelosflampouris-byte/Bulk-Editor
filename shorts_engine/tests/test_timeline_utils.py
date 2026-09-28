@@ -291,3 +291,41 @@ def test_apply_dynamic_zoom_ffmpeg_calls_correct_overlay_filter(tmp_path: Path):
         assert "scale=1080:1920" in cmd_str
 
 
+def test_snap_to_silence_rejects_comma_prefers_terminal_stop():
+    # Transcript has a comma at 24.0s with a 0.35s pause, and a full stop at 26.5s.
+    # Target cut end is at 24.2s (closer to comma than full stop).
+    segments = [
+        TranscriptionSegment(
+            start=0.0,
+            end=30.0,
+            text="Αυτό είναι το πρώτο σκέλος, και εδώ ολοκληρώνεται η πρόταση.",
+            words=[
+                (0.0, 1.0, "Αυτό"),
+                (1.0, 2.0, "είναι"),
+                (2.0, 2.5, "το"),
+                (2.5, 3.5, "πρώτο"),
+                (22.0, 24.0, "σκέλος,"),
+                # 0.4s pause
+                (24.4, 24.8, "και"),
+                (24.9, 25.4, "εδώ"),
+                (25.5, 26.0, "ολοκληρώνεται"),
+                (26.0, 26.5, "η"),
+                (26.5, 27.0, "πρόταση."),
+            ],
+        )
+    ]
+
+    _snapped_start, snapped_end = snap_to_silence(
+        start_time=0.0,
+        end_time=24.2,
+        segments=segments,
+        min_dur=15.0,
+        max_dur=30.0,
+    )
+
+    # Must NOT snap to the comma around 24.0; must snap to the terminal sentence stop at 27.0 (+ post-roll)
+    assert snapped_end >= 26.5
+    assert 26.9 <= snapped_end <= 27.2
+
+
+

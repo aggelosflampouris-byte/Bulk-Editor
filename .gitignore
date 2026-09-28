@@ -20,3 +20,4 @@ tmp/
 *.env
 client_secrets.json
 yt_token.json
+shorts_engine/projects/proj_*.json

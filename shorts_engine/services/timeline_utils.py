@@ -44,6 +44,14 @@ _SENTENCE_TERMINATORS: tuple[str, ...] = (".", "!", "?", ";", "…", "...", "·"
 # Clause separating punctuation marks (comma, colon, dash)
 _CLAUSE_SEPARATORS: tuple[str, ...] = (",", ":", "-")
 
+# Dangling words that must never terminate a clip or sentence cut
+_DANGLING_END_WORDS: frozenset[str] = frozenset({
+    "και", "κι", "ότι", "πως", "αλλά", "όμως", "όταν", "γιατί", "επειδή",
+    "να", "που", "σε", "με", "για", "ή", "είτε", "άρα", "λοιπόν", "καθώς",
+    "αν", "εάν", "ώστε", "ενώ", "αφού", "πριν", "χωρίς", "προς", "από",
+    "τη", "την", "το", "τον", "τους", "της", "των", "τα", "ο", "η", "οι",
+})
+
 
 # ── Public API ─────────────────────────────────────────────────────────────────
 
@@ -156,7 +164,7 @@ def snap_to_silence(
 
     # ── Candidate Ends ─────────────────────────────────────────────────────────
     # A clip end must finish at a word end with post-roll, never cutting the next word.
-    candidate_ends: list[tuple[float, float]] = []  # (timestamp, quality_bonus)
+    candidate_ends: list[tuple[float, float, bool]] = []  # (timestamp, quality_bonus, is_terminal_stop)
     for i in range(total_words):
         w_start, w_end, w_text = all_words[i]
         next_start = all_words[i + 1][0] if i + 1 < total_words else None
@@ -166,26 +174,34 @@ def snap_to_silence(
         else:
             t_cand = w_end + _POST_ROLL
 
-        bonus = 0.0
-        gap_after = (next_start - w_end) if next_start is not None else 1.0
         cur_text = w_text.strip()
+        clean_word = cur_text.lower().strip(".,!?;:…\"'«»-")
+        gap_after = (next_start - w_end) if next_start is not None else 1.0
 
-        is_sentence_end = (
+        is_terminal = (
             i == total_words - 1
             or any(cur_text.endswith(p) for p in _SENTENCE_TERMINATORS)
-            or gap_after >= _MIN_SILENCE_GAP
         )
-        is_clause_end = any(cur_text.endswith(p) for p in _CLAUSE_SEPARATORS)
+        is_comma = any(cur_text.endswith(p) for p in _CLAUSE_SEPARATORS)
+        is_dangling = clean_word in _DANGLING_END_WORDS
 
-        if is_sentence_end:
-            bonus += 0.8
-        elif is_clause_end:
-            bonus += 0.4
+        # Guardrail: A speaker's sentence must always stop when a stop comes and NOT in the middle of a sentence or a comma
+        if is_comma or is_dangling:
+            bonus = -10.0
+            is_stop = False
+        elif is_terminal:
+            bonus = 8.0
+            if gap_after >= 0.15:
+                bonus += 0.5
+            is_stop = True
+        else:
+            is_stop = False
+            if gap_after >= _MIN_SILENCE_GAP:
+                bonus = 0.5
+            else:
+                bonus = -5.0
 
-        if gap_after >= 0.15:
-            bonus += 0.2
-
-        candidate_ends.append((round(t_cand, 3), bonus))
+        candidate_ends.append((round(t_cand, 3), bonus, is_stop))
 
     # ── Find Best Start ────────────────────────────────────────────────────────
     best_start: float = start_time
@@ -199,15 +215,27 @@ def snap_to_silence(
                 best_start = t_cand
 
     # ── Find Best End ──────────────────────────────────────────────────────────
-    best_end: float = end_time
-    best_end_score: float = float("inf")
-    for t_cand, bonus in candidate_ends:
-        dist = abs(t_cand - end_time)
-        if dist <= _SNAP_RADIUS:
-            score = dist - bonus
-            if score < best_end_score:
-                best_end_score = score
-                best_end = t_cand
+    # Guardrail: Prioritize true terminal stops within snap radius / vicinity
+    terminal_ends = [
+        c for c in candidate_ends
+        if c[2] and abs(c[0] - end_time) <= max(_SNAP_RADIUS, 4.5)
+    ]
+    if terminal_ends:
+        best_end = min(terminal_ends, key=lambda x: abs(x[0] - end_time) - x[1])[0]
+    else:
+        # Fallback: strictly exclude commas and dangling words if possible
+        acceptable_ends = [
+            c for c in candidate_ends
+            if abs(c[0] - end_time) <= _SNAP_RADIUS and c[1] > -8.0
+        ]
+        pool = acceptable_ends if acceptable_ends else [
+            c for c in candidate_ends
+            if abs(c[0] - end_time) <= _SNAP_RADIUS
+        ]
+        if pool:
+            best_end = min(pool, key=lambda x: abs(x[0] - end_time) - x[1])[0]
+        else:
+            best_end = end_time
 
     snapped_start = best_start
     snapped_end = best_end
@@ -238,14 +266,18 @@ def snap_to_silence(
     if duration > max_dur:
         # Try to find a candidate end in [snapped_start + min_dur, snapped_start + max_dur]
         valid_ends = [
-            (t, bonus)
-            for t, bonus in candidate_ends
+            (t, bonus, is_stop)
+            for t, bonus, is_stop in candidate_ends
             if snapped_start + min_dur <= t <= snapped_start + max_dur
         ]
         if valid_ends:
-            # Pick the one closest to snapped_start + max_dur with bonus
+            # Pick terminal sentence stop if available in clamped duration range
+            terminal_valid = [x for x in valid_ends if x[2]]
+            pool = terminal_valid if terminal_valid else [x for x in valid_ends if x[1] > -8.0]
+            if not pool:
+                pool = valid_ends
             best_e = min(
-                valid_ends,
+                pool,
                 key=lambda x: abs(x[0] - (snapped_start + max_dur)) - x[1],
             )
             snapped_end = best_e[0]
@@ -254,13 +286,17 @@ def snap_to_silence(
 
     elif duration < min_dur:
         valid_ends = [
-            (t, bonus)
-            for t, bonus in candidate_ends
+            (t, bonus, is_stop)
+            for t, bonus, is_stop in candidate_ends
             if snapped_start + min_dur <= t <= snapped_start + max_dur
         ]
         if valid_ends:
+            terminal_valid = [x for x in valid_ends if x[2]]
+            pool = terminal_valid if terminal_valid else [x for x in valid_ends if x[1] > -8.0]
+            if not pool:
+                pool = valid_ends
             best_e = min(
-                valid_ends,
+                pool,
                 key=lambda x: abs(x[0] - (snapped_start + min_dur)) - x[1],
             )
             snapped_end = best_e[0]

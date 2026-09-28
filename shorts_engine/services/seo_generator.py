@@ -20,10 +20,16 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
-from google import genai
-from google.genai import errors as genai_errors
-from google.genai import types as genai_types
-from google.genai.errors import APIError
+try:
+    from google import genai
+    from google.genai import errors as genai_errors
+    from google.genai import types as genai_types
+    from google.genai.errors import APIError
+except ImportError:
+    genai = None
+    genai_errors = None
+    genai_types = None
+    APIError = Exception
 
 logger = logging.getLogger(__name__)
 

@@ -2,7 +2,13 @@
 tests/test_logic_guardrail.py — Unit tests for logic guardrails and subtitle synchronization.
 """
 
+import sys
 from unittest.mock import MagicMock, patch
+
+if "google" not in sys.modules:
+    mock_g = MagicMock()
+    sys.modules["google"] = mock_g
+    sys.modules["google.genai"] = mock_g.genai
 
 from shorts_engine.services.logic_guardrail import (
     enforce_clip_coherence,
@@ -232,6 +238,59 @@ def test_dynamic_subtitle_chunking_keeps_exclamations_fluid() -> None:
         assert "να" in line
         assert "σου" in line
         assert "γαμήσω!" in line
+
+
+def test_enforce_clip_coherence_never_stops_on_comma_and_extends_to_full_stop() -> None:
+    # Speaker statement: "Όταν φτάσαμε στο σημείο," (2.0s), "όλα είχαν αλλάξει." (3.8s)
+    # Proposed cut asks to stop at 2.0s (on the comma)
+    segs = [
+        TranscriptionSegment(
+            start=0.0,
+            end=4.0,
+            text="Όταν φτάσαμε στο σημείο, όλα είχαν αλλάξει.",
+            words=[
+                (0.0, 0.5, "Όταν"),
+                (0.5, 1.2, "φτάσαμε"),
+                (1.2, 1.5, "στο"),
+                (1.5, 2.0, "σημείο,"),
+                (2.2, 2.6, "όλα"),
+                (2.6, 3.1, "είχαν"),
+                (3.1, 3.8, "αλλάξει."),
+            ],
+        )
+    ]
+
+    _s, adj_e, text = enforce_clip_coherence(segs, 0.0, 2.0)
+    # Must NOT stop on the comma at 2.0; must extend to the full stop at 3.8s
+    assert adj_e == 3.8
+    assert not text.endswith(",")
+    assert text.endswith(".")
+    assert "αλλάξει." in text
+
+
+def test_enforce_clip_coherence_never_stops_mid_sentence() -> None:
+    # Speaker statement cuts off mid-sentence: "Αυτός ο νόμος ψηφίστηκε" (2.0s) -> "πέρυσι." (2.8s)
+    segs = [
+        TranscriptionSegment(
+            start=0.0,
+            end=3.0,
+            text="Αυτός ο νόμος ψηφίστηκε πέρυσι.",
+            words=[
+                (0.0, 0.4, "Αυτός"),
+                (0.4, 0.6, "ο"),
+                (0.6, 1.2, "νόμος"),
+                (1.2, 2.0, "ψηφίστηκε"),
+                (2.1, 2.8, "πέρυσι."),
+            ],
+        )
+    ]
+
+    _s, adj_e, text = enforce_clip_coherence(segs, 0.0, 2.0)
+    # Must extend to include "πέρυσι." where the sentence stop comes
+    assert adj_e == 2.8
+    assert text.endswith(".")
+    assert "πέρυσι." in text
+
 
 
 

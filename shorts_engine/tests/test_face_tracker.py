@@ -5,7 +5,12 @@ tests/test_face_tracker.py — Unit tests for active speaker face tracking and d
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
+from unittest.mock import MagicMock
+
+if "ultralytics" not in sys.modules:
+    sys.modules["ultralytics"] = MagicMock()
 
 from shorts_engine.services.face_tracker import track_active_speaker
 from shorts_engine.services.video_engine import crop_to_9_16, probe_resolution

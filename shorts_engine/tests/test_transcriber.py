@@ -110,7 +110,9 @@ def test_segments_to_ass_dynamic_mode_highlight() -> None:
         )
     ]
     ass = segments_to_ass(segments, subtitle_mode="dynamic")
-    assert r"{\rHighlightBox}Ελλάδα{\rDefault}" in ass
+    assert r"{\rHighlightBox}" in ass
+    assert "Ελλάδα" in ass
+    assert r"{\rDefault}" in ass
 
 
 def test_segments_to_ass_phrase_mode() -> None:

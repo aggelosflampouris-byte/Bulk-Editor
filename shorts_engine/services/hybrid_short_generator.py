@@ -495,14 +495,18 @@ def build_hybrid_short(
         timeline_parts.append(beat1_path)
 
     if can_split_speaker:
-        # Find split boundary near middle of speaker clip
+        # Find split boundary near middle of speaker clip, prioritizing complete sentence stops
         mid_target = total_spk_dur / 2.0
         best_split_time = mid_target
         min_diff = 999.0
         for seg in rebased_segs[:-1]:
             diff = abs(seg.end - mid_target)
-            if diff < min_diff and 4.0 <= seg.end <= total_spk_dur - 4.0:
-                min_diff = diff
+            txt = seg.text.strip()
+            is_stop = any(txt.endswith(p) for p in (".", "!", "?", ";", "…"))
+            is_comma = any(txt.endswith(p) for p in (",", ":", "-"))
+            score = diff + (0.0 if is_stop else (15.0 if is_comma else 6.0))
+            if score < min_diff and 4.0 <= seg.end <= total_spk_dur - 4.0:
+                min_diff = score
                 best_split_time = seg.end
 
         # Slice Bite 1

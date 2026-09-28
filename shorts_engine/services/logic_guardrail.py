@@ -20,9 +20,14 @@ import logging
 import re
 from dataclasses import dataclass
 
-from google import genai
-from google.genai import errors as genai_errors
-from google.genai import types as genai_types
+try:
+    from google import genai
+    from google.genai import errors as genai_errors
+    from google.genai import types as genai_types
+except ImportError:
+    genai = None
+    genai_errors = None
+    genai_types = None
 
 try:
     from services.seo_generator import _call_gemini_with_fallback
@@ -384,44 +389,140 @@ def evaluate_logical_coherence(
         )
 
 
+def _is_terminal_stop(word: str) -> bool:
+    w = word.strip()
+    return any(w.endswith(p) for p in (".", "!", "?", ";", "…", "..."))
+
+
+def _is_clause_comma(word: str) -> bool:
+    w = word.strip()
+    return any(w.endswith(p) for p in (",", ":", "-"))
+
+
+def _is_dangling_word(word: str) -> bool:
+    clean = word.lower().strip(".,!?;:…\"'«»-")
+    return clean in DANGLING_END_WORDS
+
+
 def enforce_clip_coherence(
     segments: list[TranscriptionSegment],
     clip_start: float,
     clip_end: float,
+    min_dur: float | None = None,
+    max_dur: float | None = None,
 ) -> tuple[float, float, str]:
     """
     Adjust clip start and end boundaries to ensure the selected snippet
     starts and ends on complete words and valid sentences without dangling cuts.
+
+    Guardrail (Critical):
+      A speaker's sentence must ALWAYS stop when a full stop comes ('.', '!', '?', ';', '…')
+      and NEVER in the middle of a sentence or on a comma (',').
     """
     if not segments:
         return clip_start, clip_end, ""
 
-    # Filter segments within [clip_start, clip_end]
-    in_range = [s for s in segments if s.end > clip_start and s.start < clip_end]
-    if not in_range:
-        return clip_start, clip_end, ""
-
-    words: list[tuple[float, float, str]] = []
-    for s in in_range:
+    # Flatten all words from full transcript for context-aware forward/backward boundary search
+    all_words: list[tuple[float, float, str]] = []
+    for s in segments:
         if s.words:
-            words.extend(s.words)
+            all_words.extend(s.words)
         else:
             w_list = s.text.split()
             dur = max(s.end - s.start, 0.1)
             for i, w in enumerate(w_list):
-                words.append((s.start + (i / max(1, len(w_list))) * dur, s.start + ((i + 1) / max(1, len(w_list))) * dur, w))
+                all_words.append((
+                    round(s.start + (i / max(1, len(w_list))) * dur, 3),
+                    round(s.start + ((i + 1) / max(1, len(w_list))) * dur, 3),
+                    w,
+                ))
 
-    words_in_cut = [w for w in words if w[0] >= clip_start - 0.2 and w[1] <= clip_end + 0.2]
+    if not all_words:
+        return clip_start, clip_end, ""
+
+    all_words.sort(key=lambda w: w[0])
+    total_words = len(all_words)
+
+    # Find words overlapping the initial [clip_start, clip_end] range
+    words_in_cut: list[tuple[float, float, str]] = [
+        w for w in all_words if w[0] >= clip_start - 0.2 and w[1] <= clip_end + 0.2
+    ]
     if not words_in_cut:
+        in_range = [s for s in segments if s.end > clip_start and s.start < clip_end]
         return clip_start, clip_end, " ".join(s.text for s in in_range)
 
-    # Check if last word is dangling
-    last_w = words_in_cut[-1][2].lower().strip(".,!?;:…")
-    adj_end = clip_end
-    if last_w in DANGLING_END_WORDS and len(words_in_cut) > 3:
-        # Snap back to previous word end
-        adj_end = words_in_cut[-2][1]
-        words_in_cut = words_in_cut[:-1]
+    # Identify index of the last word currently in cut within all_words
+    last_word_idx = -1
+    for i, w in enumerate(all_words):
+        if w[1] <= words_in_cut[-1][1] + 0.05:
+            last_word_idx = i
 
-    text = " ".join(w[2] for w in words_in_cut)
-    return clip_start, adj_end, text
+    last_w = words_in_cut[-1][2]
+    is_stopped = _is_terminal_stop(last_w) and not _is_clause_comma(last_w) and not _is_dangling_word(last_w)
+
+    adj_end = clip_end
+
+    if not is_stopped:
+        logger.info(
+            "[Logic Guardrail] Speaker cut ends non-terminally on '%s' (clip_end=%.2f). Enforcing sentence boundary...",
+            last_w, clip_end,
+        )
+        resolved = False
+
+        # 1. Forward search: look ahead up to ~4.5s (or up to 12 words) for the speaker to complete this sentence
+        if last_word_idx != -1 and last_word_idx + 1 < total_words:
+            for f_i in range(last_word_idx + 1, min(total_words, last_word_idx + 12)):
+                fw = all_words[f_i]
+                fw_dur = fw[1] - clip_start
+                # Stop looking if we exceed allowable duration or forward search horizon (> 4.5s beyond proposed cut)
+                if fw[1] - clip_end > 4.5 or (max_dur is not None and fw_dur > max_dur + 1.5):
+                    break
+                if _is_terminal_stop(fw[2]) and not _is_clause_comma(fw[2]) and not _is_dangling_word(fw[2]):
+                    # Found forward sentence completion
+                    words_in_cut = [w for w in all_words if w[0] >= clip_start - 0.2 and w[1] <= fw[1] + 0.05]
+                    adj_end = fw[1]
+                    resolved = True
+                    logger.info(
+                        "[Logic Guardrail] Sentence boundary extended forward to '%s' at %.2fs",
+                        fw[2], adj_end,
+                    )
+                    break
+
+        # 2. Backward search: if forward search found no stop within reach, snap back to the previous complete sentence
+        if not resolved and len(words_in_cut) > 3:
+            for b_i in range(len(words_in_cut) - 2, -1, -1):
+                bw = words_in_cut[b_i]
+                bw_dur = bw[1] - clip_start
+                if _is_terminal_stop(bw[2]) and not _is_clause_comma(bw[2]) and not _is_dangling_word(bw[2]):
+                    # Only accept if remaining clip meets reasonable minimum length
+                    if min_dur is None or bw_dur >= (min_dur - 3.0) or b_i >= 5:
+                        words_in_cut = words_in_cut[: b_i + 1]
+                        adj_end = bw[1]
+                        resolved = True
+                        logger.info(
+                            "[Logic Guardrail] Sentence boundary snapped backward to '%s' at %.2fs",
+                            bw[2], adj_end,
+                        )
+                        break
+
+        # 3. Clean up dangling conjunctions or commas if no terminal punctuation mark was found
+        if not resolved:
+            while len(words_in_cut) > 3:
+                curr_last = words_in_cut[-1][2]
+                if _is_clause_comma(curr_last) or _is_dangling_word(curr_last):
+                    adj_end = words_in_cut[-2][1]
+                    words_in_cut = words_in_cut[:-1]
+                else:
+                    break
+
+    # Build final sanitized text
+    text_words = [w[2] for w in words_in_cut]
+    final_text = " ".join(text_words).strip()
+
+    # Strip any dangling comma from the text representation and ensure valid terminal punctuation
+    if final_text.endswith((",", ":", "-")):
+        final_text = final_text.rstrip(",:- ").strip()
+    if final_text and not _is_terminal_stop(final_text):
+        final_text += "."
+
+    return clip_start, round(adj_end, 3), final_text

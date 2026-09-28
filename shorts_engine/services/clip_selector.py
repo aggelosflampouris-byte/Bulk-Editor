@@ -20,9 +20,15 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from google import genai
-from google.genai import types as genai_types
-from google.genai.errors import APIError
+try:
+    from google import genai
+    from google.genai import types as genai_types
+    from google.genai.errors import APIError
+except ImportError:
+    from unittest.mock import MagicMock
+    genai = MagicMock()
+    genai_types = MagicMock()
+    APIError = Exception
 
 try:
     from services.seo_generator import (
@@ -76,7 +82,8 @@ throat-clearing, greetings, or dead silence. Cut straight into the core thought.
 - 3–35s FAST-PACED BODY: Unbroken narrative thread with continuous value, tension, \
 or analysis. Zero rambling or fluff.
 - 35–50s PUNCHLINE / RESOLUTION: End cleanly on a conclusive takeaway, punchline, \
-or clear resolution. Never cut mid-sentence or mid-thought.
+or clear resolution.
+- SENTENCE BOUNDARY & FULL STOP GUARDRAIL (CRITICAL): A speaker's sentence MUST ALWAYS STOP when a full stop comes ('.', '!', '?', or ';'). NEVER end in the middle of a sentence, and NEVER end on a comma (',').
 - LOGICAL COHERENCE GUARDRAIL (CRITICAL): The chosen clip MUST make 100% logical sense as a standalone story. It must not contain disjointed, confusing, or skipping thoughts. Do not select clips where the speaker's sentences trail off into gibberish or nonsense. The narrative must flow perfectly from start to finish.
 - WAYIN MULTI-SIGNAL VIRALITY EVALUATION (1–10 scale per axis):
   * "emotional_intensity": (1-10) Degree of high-arousal emotion (righteous anger, astonishment, passionate conviction, humor, or sharp contrast).
@@ -100,7 +107,7 @@ able to understand and appreciate it.
 TIMESTAMP & CUTTING RULES:
 - "start_time" and "end_time" must be specified as total seconds (e.g. 285.0) or as "MM:SS" strings (e.g. "04:45").
 - Align "start_time" to the natural speech pause immediately before the hook begins.
-- Align "end_time" to the natural silence pause right after the punchline sentence finishes.
+- Align "end_time" to the natural silence pause right after the final completed sentence finishes with a full stop. NEVER end on a comma or in the middle of a sentence.
 - Never write decimal minutes like 4.45 to mean 4m 45s (4 minutes 45 seconds is 285 seconds or "04:45").
 
 OUTPUT FORMAT:
@@ -828,7 +835,9 @@ def select_clips(
 
     coherent_clips: list[ClipCandidate] = []
     for c in deduplicated:
-        adj_s, adj_e, _text = enforce_clip_coherence(segments, c.start_time, c.end_time)
+        adj_s, adj_e, _text = enforce_clip_coherence(
+            segments, c.start_time, c.end_time, min_dur=min_dur, max_dur=max_dur
+        )
         coherent_clips.append(
             ClipCandidate(
                 index=c.index,

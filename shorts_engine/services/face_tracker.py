@@ -329,9 +329,9 @@ def track_active_speaker(
     sorted_s_y = sorted(s[2] for s in samples)
     median_cx = sorted_s_x[len(sorted_s_x) // 2]
     median_cy = sorted_s_y[len(sorted_s_y) // 2]
-    # Eye-line / focal-line at 35% from top of 9:16 portrait viewport for ideal portrait headroom
+    # Speaker head center framing in 9:16 portrait viewport
     detected_crop_x = int(_clamp((median_cx * scale_factor) - (target_width / 2.0), 0, max_crop_x))
-    detected_crop_y = int(_clamp((median_cy * scale_factor) - (target_height * 0.35), 0, max_crop_y))
+    detected_crop_y = int(_clamp((median_cy * scale_factor) - (target_height / 2.0), 0, max_crop_y))
 
     detected_subject = "speaker_face" if speaker_detected_count > 0 else "salient_motion_focus"
 
@@ -352,13 +352,13 @@ def track_active_speaker(
         )
 
     # Convert samples to desired crop bounds per frame:
-    # Rule of thirds: Eye-line at 35% from top of 9:16 portrait viewport
+    # Speaker's head is kept at the center of the screen (50% horizontal and 50% vertical)
     target_crops: list[tuple[float, float, float]] = []
     for t_sec, cx, cy in samples:
         sc_x = cx * scale_factor
         sc_y = cy * scale_factor
         des_x = _clamp(sc_x - (target_width / 2.0), 0, max_crop_x)
-        des_y = _clamp(sc_y - (target_height * 0.35), 0, max_crop_y)
+        des_y = _clamp(sc_y - (target_height / 2.0), 0, max_crop_y)
         target_crops.append((t_sec, des_x, des_y))
 
     # 1. Outlier Rejection: eliminate transient 1-sample spikes (e.g. YOLO latching onto a background tool or passerby)
