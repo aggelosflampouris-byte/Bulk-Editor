@@ -107,25 +107,25 @@ def test_piper_tts_synthesize_mp3_conversion(tmp_path: Path) -> None:
 
 
 def test_edge_tts_synthesize_mocked(tmp_path: Path) -> None:
-    """Verify EdgeTTSEngine creates aligned segments from SentenceBoundary events."""
+    """Verify EdgeTTSEngine creates aligned segments from WordBoundary events."""
     out_mp3 = tmp_path / "edge_test.mp3"
     engine = EdgeTTSEngine()
 
-    sample_sentence = {
-        "type": "SentenceBoundary",
-        "offset": 5000000,  # 0.5s
-        "duration": 15000000,  # 1.5s
-        "text": "Επίσημη δήλωση.",
-    }
+    # WordBoundary events carry exact per-word offset + duration in 100ns ticks.
+    word_events = [
+        {"type": "WordBoundary", "offset": 5_000_000,  "duration": 5_000_000,  "text": "Επίσημη"},
+        {"type": "WordBoundary", "offset": 10_500_000, "duration": 9_500_000,  "text": "δήλωση."},
+    ]
 
     async def fake_stream():
         yield {"type": "audio", "data": b"EDGE_AUDIO"}
-        yield sample_sentence
+        for ev in word_events:
+            yield ev
 
     mock_comm = MagicMock()
     mock_comm.stream = fake_stream
 
-    with patch("edge_tts.Communicate", return_value=mock_comm):
+    with patch("edge_tts.Communicate", return_value=mock_comm) as mock_init:
         res_path, segments = engine.synthesize(
             text="Επίσημη δήλωση.",
             output_path=out_mp3,
@@ -133,9 +133,13 @@ def test_edge_tts_synthesize_mocked(tmp_path: Path) -> None:
         )
         assert res_path == out_mp3
         assert out_mp3.is_file()
+        # Words grouped into one sentence segment ending on "."
         assert len(segments) == 1
-        assert segments[0].start == pytest.approx(0.5, 0.01)
-        assert segments[0].end == pytest.approx(2.0, 0.01)
+        assert segments[0].start == pytest.approx(0.5, abs=0.01)   # offset 5_000_000 ticks
+        assert segments[0].end == pytest.approx(2.0, abs=0.01)     # offset 10_500_000 + 9_500_000 ticks
+        assert len(segments[0].words) == 2
+        # Verify WordBoundary boundary mode was requested
+        assert mock_init.call_args.kwargs.get("boundary") == "WordBoundary"
 
 
 def test_synthesize_voiceover_fallback(tmp_path: Path) -> None:
@@ -159,6 +163,40 @@ def test_synthesize_voiceover_fallback(tmp_path: Path) -> None:
             engine="piper",
         )
         assert mock_edge.synthesize.called
+
+
+def test_mature_male_voice_preset(tmp_path: Path) -> None:
+    """Verify mature male voice presets correctly apply pitch modulation."""
+    out_mp3 = tmp_path / "mature_male.mp3"
+    engine = EdgeTTSEngine()
+
+    word_events = [
+        {"type": "WordBoundary", "offset": 0,          "duration": 6_000_000,  "text": "Σοβαρή"},
+        {"type": "WordBoundary", "offset": 6_500_000,  "duration": 7_000_000,  "text": "πολιτική"},
+        {"type": "WordBoundary", "offset": 14_000_000, "duration": 6_000_000,  "text": "εξέλιξη."},
+    ]
+
+    mock_comm = MagicMock()
+    async def fake_stream():
+        yield {"type": "audio", "data": b"MALE_AUDIO"}
+        for ev in word_events:
+            yield ev
+
+    mock_comm.stream = fake_stream
+
+    with patch("edge_tts.Communicate", return_value=mock_comm) as mock_init:
+        res_path, _ = engine.synthesize(
+            text="Σοβαρή πολιτική εξέλιξη.",
+            output_path=out_mp3,
+            voice="el-GR-Nestoras-Deep",
+        )
+        assert res_path == out_mp3
+        # Check Communicate was called with pitch -7Hz for Deep preset
+        assert mock_init.called
+        call_kwargs = mock_init.call_args.kwargs
+        assert call_kwargs.get("pitch") == "-7Hz"
+        assert call_kwargs.get("boundary") == "WordBoundary"
+        assert mock_init.call_args.args[1] == "el-GR-NestorasNeural"
 
 
 def test_settings_tts_validation() -> None:

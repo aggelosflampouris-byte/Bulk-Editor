@@ -285,10 +285,12 @@ class Settings:
     brand_voice: str = ""
 
     # ── Text-to-Speech Engine ─────────────────────────────────
-    # Primary synthesis backend: "piper" (local offline neural) | "edge" (online Microsoft neural)
-    tts_engine: str = "piper"
-    # Active voice model identifier
-    tts_voice: str = "el_GR-rapunzelina-medium"
+    # Primary synthesis backend: "edge" (online Microsoft neural) | "piper" (local offline neural)
+    tts_engine: str = "edge"
+    # Active voice model identifier (Nestoras = authoritative mature male Greek newscaster)
+    tts_voice: str = "el-GR-NestorasNeural"
+    # Vocal pitch tuning ("-4Hz" for rich mature newscaster, "-7Hz" for deep documentary baritone)
+    tts_pitch: str = "-4Hz"
     # Speech tempo multiplier (1.0 = normal, 1.05 = snappy short-form pace)
     tts_speed: float = 1.0
 

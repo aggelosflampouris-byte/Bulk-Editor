@@ -597,6 +597,9 @@ def segments_to_ass(
         # Group words into 2-4 word natural fluid phrases with real-time active-word karaoke highlighting (max 28 chars for single-line stability)
         min_word_duration = 0.08
         lead_offset = 0.05  # 50ms anticipatory onset matching vocal articulation
+        # Hold the last phrase visible for up to this many seconds during natural speech pauses
+        # (breath / sentence breaks) — prevents blank-screen flashes between phrases.
+        _MAX_HOLD_DURATION = 0.80
 
         idx = 0
         global_prev_e = 0.0
@@ -641,44 +644,57 @@ def segments_to_ass(
                         chunk.pop()
                         idx -= 1
 
+            # Pre-compute next phrase start once (used in both overlap guard and hold-on logic)
+            next_chunk_start: float | None = (
+                max(0.0, all_words[idx][0] - lead_offset) if idx < len(all_words) else None
+            )
+
             # Compute strictly non-overlapping, strictly monotonic active intervals for each word in chunk
             chunk_intervals: list[tuple[float, float]] = []
             for w_i, active_w in enumerate(chunk):
                 raw_s = max(0.0, active_w[0] - lead_offset)
-                cur_s = raw_s
-                
-                # Enforce monotonicity within chunk AND across chunks to prevent ASS overlap glitches
-                if chunk_intervals:
-                    prev_e = chunk_intervals[-1][1]
-                    cur_s = max(cur_s, prev_e)
-                else:
-                    cur_s = max(cur_s, global_prev_e)
 
-                if w_i + 1 < len(chunk):
+                # Enforce global monotonicity: no word may start at or before the previous chunk ended,
+                # AND no word may start before the previous word in this chunk ended.
+                if chunk_intervals:
+                    cur_s = max(raw_s, chunk_intervals[-1][1])
+                else:
+                    cur_s = max(raw_s, global_prev_e)
+
+                is_last_word = w_i == len(chunk) - 1
+
+                if not is_last_word:
+                    # Non-last word: end right before the next word in this chunk starts
                     next_raw_s = max(0.0, chunk[w_i + 1][0] - lead_offset)
                     cur_e = max(cur_s + min_word_duration, next_raw_s)
                 else:
+                    # Last word of chunk: base end on its natural timestamp
                     cur_e = max(active_w[1], cur_s + min_word_duration)
-                    if idx < len(all_words):
-                        next_chunk_start = max(0.0, all_words[idx][0] - lead_offset)
-                        # We must not overlap with the next chunk.
-                        # If next_chunk_start is VERY close, bridge the gap to make it fluid.
-                        if next_chunk_start > cur_s:
-                            gap = next_chunk_start - cur_e
-                            if 0 <= gap <= 0.35:
-                                cur_e = next_chunk_start
-                            elif gap < 0:
-                                # Next chunk starts before this word ends. Prevent overlap!
-                                logger.debug("Overlap prevented in dynamic mode: next_chunk_start=%.3f, cur_s=%.3f", next_chunk_start, cur_s)
-                                cur_e = max(cur_s + 0.08, next_chunk_start)
+
+                    if next_chunk_start is not None:
+                        gap_to_next = next_chunk_start - cur_e
+                        if gap_to_next < 0:
+                            # Overlap: next phrase already started — clamp to next phrase start,
+                            # but never shorten below the minimum duration floor.
+                            logger.debug(
+                                "Overlap prevented in dynamic mode: next_chunk_start=%.3f, cur_e=%.3f",
+                                next_chunk_start, cur_e,
+                            )
+                            cur_e = max(cur_s + min_word_duration, next_chunk_start)
+                        elif gap_to_next <= 0.35:
+                            # Small gap: bridge seamlessly to next phrase start (no blank frame)
+                            cur_e = next_chunk_start
                         else:
-                            # Next chunk starts before this word even started
-                            cur_e = cur_s + 0.08
+                            # Large gap (natural breath/pause > 0.35s): hold the last phrase visible
+                            # for up to _MAX_HOLD_DURATION so the screen never goes blank mid-speech.
+                            hold_until = min(cur_e + _MAX_HOLD_DURATION, next_chunk_start)
+                            cur_e = max(cur_e, hold_until)
                     else:
-                        cur_e = cur_e + 0.15
+                        # Last phrase of the entire subtitle — generous tail padding
+                        cur_e = cur_e + 0.40
 
                 if cur_e <= cur_s:
-                    cur_e = cur_s + 0.08
+                    cur_e = cur_s + min_word_duration
 
                 chunk_intervals.append((cur_s, cur_e))
 

@@ -244,6 +244,7 @@ def synthesize_voiceover_with_segments(
     output_path: Path,
     voice: str = _DEFAULT_VOICE,
     speed: float = 1.0,
+    pitch: str = "-4Hz",
 ) -> tuple[Path, list[TranscriptionSegment]]:
     """
     Synthesize natural Greek voiceover audio and extract exact sentence
@@ -255,6 +256,7 @@ def synthesize_voiceover_with_segments(
         output_path=output_path,
         voice=voice,
         speed=speed,
+        pitch=pitch,
     )
 
 
@@ -402,6 +404,7 @@ def build_full_ai_short(
 
     active_voice = getattr(settings, "tts_voice", _DEFAULT_VOICE)
     active_speed = getattr(settings, "tts_speed", 1.0)
+    active_pitch = getattr(settings, "tts_pitch", "-4Hz")
     _rpt(f"Synthesizing natural Greek voiceover ({active_voice})...")
     voice_path = tmp_dir / f"ai_voiceover_{uid}.mp3"
     voice_path, segments = synthesize_voiceover_with_segments(
@@ -409,6 +412,7 @@ def build_full_ai_short(
         voice_path,
         voice=active_voice,
         speed=active_speed,
+        pitch=active_pitch,
     )
 
     speech_dur = probe_duration(voice_path)

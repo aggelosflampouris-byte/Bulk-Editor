@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_PIPER_VOICE = "el_GR-rapunzelina-medium"
 DEFAULT_EDGE_VOICE = "el-GR-NestorasNeural"
+DEFAULT_VOICE = DEFAULT_EDGE_VOICE
 PIPER_MODELS_DIR = APP_ROOT / "assets" / "models" / "piper"
 
 SUPPORTED_PIPER_VOICES: list[str] = [
@@ -55,6 +56,13 @@ SUPPORTED_EDGE_VOICES: list[str] = [
     "en-US-GuyNeural",
     "en-US-JennyNeural",
 ]
+
+# Preset mappings for specialized vocal styles
+VOICE_PRESET_PROSODY: dict[str, dict[str, str]] = {
+    "el-GR-NestorasNeural": {"pitch": "-4Hz", "voice": "el-GR-NestorasNeural"},
+    "el-GR-Nestoras-Deep": {"pitch": "-7Hz", "voice": "el-GR-NestorasNeural"},
+    "el-GR-AthinaNeural": {"pitch": "+0Hz", "voice": "el-GR-AthinaNeural"},
+}
 
 
 def sanitize_voiceover_speech(text: str) -> str:
@@ -355,91 +363,110 @@ class EdgeTTSEngine(TTSEngine):
         output_path: Path,
         voice: str,
         speed: float = 1.0,
+        pitch: str | None = None,
     ) -> list[TranscriptionSegment]:
         import edge_tts
 
         rate_str = f"+{int(round((speed - 1.0) * 100))}%" if speed >= 1.0 else f"{int(round((speed - 1.0) * 100))}%"
-        comm = edge_tts.Communicate(clean_text, voice, rate=rate_str)
+        active_pitch = pitch if pitch is not None else VOICE_PRESET_PROSODY.get(voice, {}).get("pitch", "-4Hz")
+
+        # Use WordBoundary (not SentenceBoundary) so every spoken word carries its own
+        # exact offset + duration in 100-nanosecond ticks.  SentenceBoundary only marks
+        # the sentence envelope and forces us to interpolate word times from character
+        # counts — which is inaccurate for Greek (syllable weight varies a lot) and also
+        # drifts due to Microsoft's tick-counter integer overflow on texts > ~60 s.
+        comm = edge_tts.Communicate(
+            clean_text, voice, rate=rate_str, pitch=active_pitch, boundary="WordBoundary"
+        )
         audio_bytes = bytearray()
-        raw_sentences: list[dict[str, Any]] = []
+        raw_words: list[dict[str, Any]] = []
 
         async for chunk in comm.stream():
             chunk_type = chunk.get("type")
             if chunk_type == "audio":
                 audio_bytes.extend(chunk.get("data", b""))
-            elif chunk_type == "SentenceBoundary":
-                raw_sentences.append(chunk)
+            elif chunk_type == "WordBoundary":
+                raw_words.append(chunk)
+            # SentenceBoundary events are ignored — we reconstruct sentence groups below.
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(audio_bytes)
         if not output_path.is_file() or output_path.stat().st_size == 0:
             raise RuntimeError(f"Edge-TTS synthesis produced empty file at {output_path}")
 
-        segments: list[TranscriptionSegment] = []
-        for s_info in raw_sentences:
-            s_text = str(s_info.get("text", "")).strip()
-            if not s_text:
+        # Convert 100-nanosecond tick offsets to seconds and build word tuples.
+        TICKS_PER_SEC = 10_000_000.0
+        MIN_WORD_DUR = 0.06  # floor to prevent zero-width words
+
+        flat_words: list[tuple[float, float, str]] = []
+        for w in raw_words:
+            w_text = str(w.get("text", "")).strip()
+            if not w_text:
                 continue
-            # offset and duration in 100-nanosecond ticks
-            s_start = float(s_info.get("offset", 0)) / 10_000_000.0
-            s_dur = float(s_info.get("duration", 0)) / 10_000_000.0
-            s_end = max(s_start + 0.1, s_start + s_dur)
+            w_start = float(w.get("offset", 0)) / TICKS_PER_SEC
+            w_dur = float(w.get("duration", 0)) / TICKS_PER_SEC
+            w_end = max(w_start + MIN_WORD_DUR, w_start + w_dur)
+            flat_words.append((round(w_start, 3), round(w_end, 3), w_text))
 
-            words_list = s_text.split()
-            if not words_list:
-                continue
-            total_chars = max(1, sum(len(w) for w in words_list))
-            word_tuples: list[tuple[float, float, str]] = []
-            cur_w_start = s_start
-            for w_idx, w in enumerate(words_list):
-                if w_idx == len(words_list) - 1:
-                    cur_w_end = s_end
-                else:
-                    w_dur = (len(w) / total_chars) * s_dur
-                    cur_w_end = cur_w_start + w_dur
-                word_tuples.append((
-                    round(cur_w_start, 3),
-                    round(max(cur_w_start + 0.06, cur_w_end), 3),
-                    w,
-                ))
-                cur_w_start = cur_w_end
-
-            segments.append(
-                TranscriptionSegment(
-                    start=round(s_start, 3),
-                    end=round(s_end, 3),
-                    text=s_text,
-                    words=word_tuples,
-                )
-            )
-
-        if not segments:
+        if not flat_words:
+            # Fallback: single segment covering the full file, with character-proportional words
             dur = probe_duration(output_path)
             words_list = clean_text.split()
             total_chars = max(1, sum(len(w) for w in words_list))
-            word_tuples = []
+            word_tuples: list[tuple[float, float, str]] = []
             cur_start = 0.0
             for w_idx, w in enumerate(words_list):
                 if w_idx == len(words_list) - 1:
                     cur_end = dur
                 else:
-                    w_dur = (len(w) / total_chars) * dur
-                    cur_end = cur_start + w_dur
+                    w_dur_fb = (len(w) / total_chars) * dur
+                    cur_end = cur_start + w_dur_fb
                 word_tuples.append((
                     round(cur_start, 3),
-                    round(max(cur_start + 0.06, cur_end), 3),
+                    round(max(cur_start + MIN_WORD_DUR, cur_end), 3),
                     w,
                 ))
                 cur_start = cur_end
-            segments.append(
-                TranscriptionSegment(
-                    start=0.0,
-                    end=round(dur, 3),
-                    text=clean_text,
-                    words=word_tuples,
-                )
-            )
+            return [TranscriptionSegment(start=0.0, end=round(dur, 3), text=clean_text, words=word_tuples)]
 
+        # Group flat word list into sentence-level TranscriptionSegments by detecting
+        # sentence-terminal punctuation on each word.  This keeps the downstream
+        # segment structure intact (e.g. SEO, logic guardrail) while word-level
+        # timestamps remain exact.
+        _SENTENCE_END = (".", "!", "?", "…", ";")
+        segments: list[TranscriptionSegment] = []
+        current_words: list[tuple[float, float, str]] = []
+
+        for word_tuple in flat_words:
+            current_words.append(word_tuple)
+            stripped = word_tuple[2].rstrip("\"'»")
+            if stripped.endswith(_SENTENCE_END) and len(current_words) >= 2:
+                seg_text = " ".join(w[2] for w in current_words)
+                segments.append(TranscriptionSegment(
+                    start=current_words[0][0],
+                    end=current_words[-1][1],
+                    text=seg_text,
+                    words=list(current_words),
+                ))
+                current_words = []
+
+        # Flush any remaining words that didn't end with a sentence terminator
+        if current_words:
+            seg_text = " ".join(w[2] for w in current_words)
+            segments.append(TranscriptionSegment(
+                start=current_words[0][0],
+                end=current_words[-1][1],
+                text=seg_text,
+                words=list(current_words),
+            ))
+
+        logger.info(
+            "Edge-TTS synthesized %d words → %d segments (%.2fs) with '%s'",
+            len(flat_words),
+            len(segments),
+            segments[-1].end if segments else 0.0,
+            voice,
+        )
         return segments
 
     def synthesize(
@@ -448,15 +475,24 @@ class EdgeTTSEngine(TTSEngine):
         output_path: Path,
         voice: str | None = None,
         speed: float = 1.0,
+        pitch: str | None = None,
     ) -> tuple[Path, list[TranscriptionSegment]]:
         clean_text = sanitize_voiceover_speech(text)
         if not clean_text:
             raise ValueError("Cannot synthesize empty text.")
 
-        active_voice = voice if voice and "Neural" in voice else DEFAULT_EDGE_VOICE
-        logger.info("Synthesizing Greek voiceover with Edge-TTS ('%s')...", active_voice)
+        active_voice = voice if voice and ("Neural" in voice or "el-GR-" in voice) else DEFAULT_EDGE_VOICE
+        preset_info = VOICE_PRESET_PROSODY.get(active_voice, {})
+        target_voice = preset_info.get("voice", active_voice)
+        target_pitch = pitch if pitch is not None else preset_info.get("pitch", "-4Hz")
+
+        logger.info(
+            "Synthesizing mature Greek voiceover with Edge-TTS ('%s', pitch: %s)...",
+            target_voice,
+            target_pitch,
+        )
         segments = asyncio.run(
-            self._async_synthesize(clean_text, output_path, active_voice, speed=speed)
+            self._async_synthesize(clean_text, output_path, target_voice, speed=speed, pitch=target_pitch)
         )
         return output_path, segments
 
@@ -469,14 +505,14 @@ _ENGINES: dict[str, TTSEngine] = {
 }
 
 
-def get_tts_engine(engine_name: str = "piper") -> TTSEngine:
+def get_tts_engine(engine_name: str = "edge") -> TTSEngine:
     """
-    Retrieve a singleton TTSEngine instance by name ('piper' or 'edge').
+    Retrieve a singleton TTSEngine instance by name ('edge' or 'piper').
     """
     engine_key = engine_name.lower().strip()
     if engine_key not in _ENGINES:
-        logger.warning("Unknown TTS engine '%s', falling back to 'piper'.", engine_name)
-        engine_key = "piper"
+        logger.warning("Unknown TTS engine '%s', falling back to 'edge'.", engine_name)
+        engine_key = "edge"
     return _ENGINES[engine_key]
 
 
@@ -484,33 +520,40 @@ def synthesize_voiceover_with_segments(
     text: str,
     output_path: Path,
     voice: str | None = None,
-    engine: str = "piper",
+    engine: str | None = None,
     speed: float = 1.0,
+    pitch: str | None = None,
 ) -> tuple[Path, list[TranscriptionSegment]]:
     """
     Unified entrypoint for voiceover synthesis with boundary-aligned segments.
+    Defaults to authoritative mature male Greek voice (NestorasNeural with -4Hz pitch tuning).
     """
-    # If voice name indicates Edge-TTS (e.g., 'el-GR-NestorasNeural'), route to edge
-    if voice and ("Neural" in voice or "el-GR-" in voice):
-        engine = "edge"
-    elif voice and ("rapunzelina" in voice or "lessac" in voice or "amy" in voice):
-        engine = "piper"
+    # Auto-route based on voice naming if engine is not explicitly forced
+    if engine is None:
+        if voice and ("rapunzelina" in voice or "lessac" in voice or "amy" in voice):
+            engine = "piper"
+        else:
+            engine = "edge"
 
+    active_voice = voice if voice is not None else (DEFAULT_EDGE_VOICE if engine == "edge" else DEFAULT_PIPER_VOICE)
     tts_engine = get_tts_engine(engine)
+
     try:
-        return tts_engine.synthesize(text, output_path, voice=voice, speed=speed)
+        if isinstance(tts_engine, EdgeTTSEngine):
+            return tts_engine.synthesize(text, output_path, voice=active_voice, speed=speed, pitch=pitch)
+        return tts_engine.synthesize(text, output_path, voice=active_voice, speed=speed)
     except Exception as exc:
-        if engine == "piper":
-            logger.warning("Piper synthesis failed (%s), falling back to Edge-TTS...", exc)
-            fallback_engine = get_tts_engine("edge")
-            return fallback_engine.synthesize(
-                text, output_path, voice=DEFAULT_EDGE_VOICE, speed=speed
-            )
-        elif engine == "edge":
+        if engine == "edge":
             logger.warning("Edge-TTS synthesis failed (%s), falling back to Piper...", exc)
             fallback_engine = get_tts_engine("piper")
             return fallback_engine.synthesize(
                 text, output_path, voice=DEFAULT_PIPER_VOICE, speed=speed
+            )
+        elif engine == "piper":
+            logger.warning("Piper synthesis failed (%s), falling back to Edge-TTS...", exc)
+            fallback_engine = get_tts_engine("edge")
+            return fallback_engine.synthesize(
+                text, output_path, voice=DEFAULT_EDGE_VOICE, speed=speed, pitch=pitch
             )
         raise
 
@@ -519,13 +562,14 @@ def synthesize_voiceover(
     text: str,
     output_path: Path,
     voice: str | None = None,
-    engine: str = "piper",
+    engine: str | None = None,
     speed: float = 1.0,
+    pitch: str | None = None,
 ) -> Path:
     """
     Unified entrypoint for synthesizing voiceover audio file.
     """
     path, _ = synthesize_voiceover_with_segments(
-        text, output_path, voice=voice, engine=engine, speed=speed
+        text, output_path, voice=voice, engine=engine, speed=speed, pitch=pitch
     )
     return path

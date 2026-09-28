@@ -49,7 +49,7 @@ try:
         correct_transcript_greek,
     )
     from services.subtitle_masker import mask_burned_in_subtitles
-    from services.timeline_utils import slice_segments
+    from services.timeline_utils import slice_segments, snap_to_silence
     from services.transcriber import (
         TranscriptionSegment,
         write_ass_file,
@@ -85,7 +85,7 @@ except ImportError:
         correct_transcript_greek,
     )
     from shorts_engine.services.subtitle_masker import mask_burned_in_subtitles
-    from shorts_engine.services.timeline_utils import slice_segments
+    from shorts_engine.services.timeline_utils import slice_segments, snap_to_silence
     from shorts_engine.services.transcriber import (
         TranscriptionSegment,
         write_ass_file,
@@ -338,6 +338,7 @@ def _render_ai_subtitled_beat(
         output_path=voice_path,
         voice=getattr(settings, "tts_voice", _DEFAULT_VOICE),
         speed=getattr(settings, "tts_speed", 1.0),
+        pitch=getattr(settings, "tts_pitch", "-4Hz"),
     )
     beat_dur = probe_duration(voice_path)
     if beat_dur <= 0.2:
@@ -496,19 +497,30 @@ def build_hybrid_short(
         timeline_parts.append(beat1_path)
 
     if can_split_speaker:
-        # Find split boundary near middle of speaker clip, prioritizing complete sentence stops
+        # Find split boundary near middle of speaker clip using natural speech pauses,
+        # word boundary protection, and complete sentence stops.
         mid_target = total_spk_dur / 2.0
-        best_split_time = mid_target
-        min_diff = 999.0
-        for seg in rebased_segs[:-1]:
-            diff = abs(seg.end - mid_target)
-            txt = seg.text.strip()
-            is_stop = any(txt.endswith(p) for p in (".", "!", "?", ";", "…"))
-            is_comma = any(txt.endswith(p) for p in (",", ":", "-"))
-            score = diff + (0.0 if is_stop else (15.0 if is_comma else 6.0))
-            if score < min_diff and 4.0 <= seg.end <= total_spk_dur - 4.0:
-                min_diff = score
-                best_split_time = seg.end
+        _, snapped_split = snap_to_silence(
+            start_time=0.0,
+            end_time=mid_target,
+            segments=rebased_segs,
+            min_dur=4.0,
+            max_dur=max(4.0, total_spk_dur - 4.0),
+        )
+        if 4.0 <= snapped_split <= total_spk_dur - 4.0:
+            best_split_time = snapped_split
+        else:
+            best_split_time = mid_target
+            min_diff = 999.0
+            for seg in rebased_segs[:-1]:
+                diff = abs(seg.end - mid_target)
+                txt = seg.text.strip()
+                is_stop = any(txt.endswith(p) for p in (".", "!", "?", ";", "…"))
+                is_comma = any(txt.endswith(p) for p in (",", ":", "-"))
+                score = diff + (0.0 if is_stop else (15.0 if is_comma else 6.0))
+                if score < min_diff and 4.0 <= seg.end <= total_spk_dur - 4.0:
+                    min_diff = score
+                    best_split_time = seg.end
 
         # Slice Bite 1
         b1_raw = tmp_dir / f"hybrid_spk_b1_{uid}.mp4"
@@ -517,7 +529,13 @@ def build_hybrid_short(
         b1_sub = b1_raw
         if b1_segs:
             ass_b1 = tmp_dir / f"hybrid_spk_b1_{uid}.ass"
-            write_ass_file(b1_segs, ass_b1, primary_keyword=None, subtitle_position=getattr(settings, "subtitle_position", "lower_third"), subtitle_mode="dynamic")
+            write_ass_file(
+                b1_segs,
+                ass_b1,
+                primary_keyword=None,
+                subtitle_position=getattr(settings, "subtitle_position", "lower_third"),
+                subtitle_mode="dynamic",
+            )
             b1_sub_dest = tmp_dir / f"hybrid_spk_b1_sub_{uid}.mp4"
             burn_subtitles(b1_raw, ass_b1, b1_sub_dest)
             if b1_sub_dest.is_file():
@@ -540,27 +558,20 @@ def build_hybrid_short(
         if beat3_path and beat3_path.is_file():
             timeline_parts.append(beat3_path)
 
-        # Slice Bite 2
+        # Slice Bite 2 (slice_segments already rebases timestamps relative to best_split_time)
         b2_raw = tmp_dir / f"hybrid_spk_b2_{uid}.mp4"
         slice_video(masked_speaker, start_time=best_split_time, end_time=total_spk_dur, output_path=b2_raw)
-        b2_segs_raw = slice_segments(rebased_segs, best_split_time, total_spk_dur)
-        # Rebase timestamps starting at 0.0
-        b2_segs = [
-            TranscriptionSegment(
-                start=max(0.0, round(s.start - best_split_time, 3)),
-                end=max(0.05, round(s.end - best_split_time, 3)),
-                text=s.text,
-                words=[
-                    (max(0.0, round(w[0] - best_split_time, 3)), max(0.05, round(w[1] - best_split_time, 3)), w[2])
-                    for w in (s.words or [])
-                ] if s.words else None,
-            )
-            for s in b2_segs_raw
-        ]
+        b2_segs = slice_segments(rebased_segs, best_split_time, total_spk_dur)
         b2_sub = b2_raw
         if b2_segs:
             ass_b2 = tmp_dir / f"hybrid_spk_b2_{uid}.ass"
-            write_ass_file(b2_segs, ass_b2, primary_keyword=None, subtitle_position=getattr(settings, "subtitle_position", "lower_third"), subtitle_mode="dynamic")
+            write_ass_file(
+                b2_segs,
+                ass_b2,
+                primary_keyword=None,
+                subtitle_position=getattr(settings, "subtitle_position", "lower_third"),
+                subtitle_mode="dynamic",
+            )
             b2_sub_dest = tmp_dir / f"hybrid_spk_b2_sub_{uid}.mp4"
             burn_subtitles(b2_raw, ass_b2, b2_sub_dest)
             if b2_sub_dest.is_file():

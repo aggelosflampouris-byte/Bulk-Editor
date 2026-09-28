@@ -446,30 +446,35 @@ def render_autopilot_tab(settings: Any) -> None:
         settings.bg_music_volume = bg_vol
         settings.bg_music_ducking = True
 
-    # ── Voiceover & Speech Synthesis (Piper TTS & Edge-TTS) ────────────────────
+    # ── Voiceover & Speech Synthesis (Mature Male News Narrator) ───────────────
     st.markdown("#### 🎙️ Voiceover & Greek Speech Engine")
     v_col1, v_col2 = st.columns([2, 1])
     with v_col1:
         voice_engine_label = st.selectbox(
-            "Speech Synthesis Voice & Backend",
+            "Speech Synthesis Voice & Persona",
             [
-                "⚡ Piper TTS (Fast Offline Neural • el_GR-rapunzelina-medium)",
-                "⚡ Piper TTS (Ultra-Fast Low Res • el_GR-rapunzelina-low)",
-                "🌐 Microsoft Edge-TTS (Online Neural • el-GR-Nestoras)",
-                "🌐 Microsoft Edge-TTS (Online Neural • el-GR-Athina)",
+                "🎙️ Mature Greek Male (Authoritative Journalist • Nestoras -4Hz) [Recommended]",
+                "🎙️ Deep Mature Male (Investigative Documentary Baritone • Nestoras -7Hz)",
+                "⚡ Greek Female (Fast Offline Neural • Piper Rapunzelina Medium)",
+                "⚡ Greek Female (Fast Offline Low Res • Piper Rapunzelina Low)",
+                "🌐 Greek Female (Microsoft Neural • Athina)",
             ],
             index=0,
-            help="Piper TTS runs locally on CPU with zero cloud latency and produces natural, non-robotic Greek voiceover. Edge-TTS provides Microsoft cloud neural voices.",
+            help="Mature male voice is tuned specifically for serious Greek news commentary, breaking politics, and documentary storytelling. Piper runs 100% offline.",
         )
         voice_map = {
-            "⚡ Piper TTS (Fast Offline Neural • el_GR-rapunzelina-medium)": ("piper", "el_GR-rapunzelina-medium"),
-            "⚡ Piper TTS (Ultra-Fast Low Res • el_GR-rapunzelina-low)": ("piper", "el_GR-rapunzelina-low"),
-            "🌐 Microsoft Edge-TTS (Online Neural • el-GR-Nestoras)": ("edge", "el-GR-NestorasNeural"),
-            "🌐 Microsoft Edge-TTS (Online Neural • el-GR-Athina)": ("edge", "el-GR-AthinaNeural"),
+            "🎙️ Mature Greek Male (Authoritative Journalist • Nestoras -4Hz) [Recommended]": ("edge", "el-GR-NestorasNeural", "-4Hz"),
+            "🎙️ Deep Mature Male (Investigative Documentary Baritone • Nestoras -7Hz)": ("edge", "el-GR-Nestoras-Deep", "-7Hz"),
+            "⚡ Greek Female (Fast Offline Neural • Piper Rapunzelina Medium)": ("piper", "el_GR-rapunzelina-medium", "+0Hz"),
+            "⚡ Greek Female (Fast Offline Low Res • Piper Rapunzelina Low)": ("piper", "el_GR-rapunzelina-low", "+0Hz"),
+            "🌐 Greek Female (Microsoft Neural • Athina)": ("edge", "el-GR-AthinaNeural", "+0Hz"),
         }
-        engine_name, voice_name = voice_map.get(voice_engine_label, ("piper", "el_GR-rapunzelina-medium"))
+        engine_name, voice_name, pitch_val = voice_map.get(
+            voice_engine_label, ("edge", "el-GR-NestorasNeural", "-4Hz")
+        )
         settings.tts_engine = engine_name
         settings.tts_voice = voice_name
+        settings.tts_pitch = pitch_val
 
     with v_col2:
         voice_speed = st.slider(
