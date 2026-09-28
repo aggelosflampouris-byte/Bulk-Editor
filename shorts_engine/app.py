@@ -450,18 +450,6 @@ def _render_sidebar() -> Settings:
             help="Vertical position of animated captions in the 9:16 frame.",
             key="subtitle_position_select",
         )
-        subtitle_mode = st.selectbox(
-            "Caption Style",
-            options=["dynamic", "phrase", "word"],
-            index=0,
-            format_func=lambda x: {
-                "dynamic": "⚡ Dynamic Karaoke (Fluid 2–3 words)",
-                "phrase": "📖 Natural Phrases (2–3 words grouped)",
-                "word": "🔥 1-Word Pop (Single word)",
-            }.get(x, x),
-            help="Dynamic Karaoke keeps 2-3 words on screen while highlighting each active word in real time. Ideal for authoritative news.",
-            key="subtitle_mode_select",
-        )
 
         st.markdown("---")
         st.markdown("### Auto-Framing")
@@ -470,84 +458,6 @@ def _render_sidebar() -> Settings:
             value=True,
             help="Tracks active speaker face keypoints frame-by-frame to keep the subject centered when cropping 16:9 to 9:16 vertical Shorts.",
             key="enable_face_tracking_check",
-        )
-
-        st.markdown("---")
-        st.markdown("### VFX & Colour Grading")
-        enable_vfx = st.checkbox(
-            "Enable Auto VFX / Colour Grade",
-            value=False,
-            help=(
-                "Analyses the transcript and YOLO scene detections to automatically "
-                "select and apply one of five colour grades:\n"
-                "• VIBRANCE — high-energy/hype moments\n"
-                "• DRAMATIC — suspense/tension keywords\n"
-                "• WARMTH — person-dominant clips\n"
-                "• CINEMATIC — action/object scenes without people\n"
-                "• SUBTLE — mild universal lift (fallback)"
-            ),
-            key="enable_vfx_check",
-        )
-        if enable_vfx and active_template.vfx_preset_override:
-            st.caption(
-                f"Template default: **{active_template.vfx_preset_override}** grade applied "
-                "automatically. Override per-clip via the VFX engine."
-            )
-
-        st.markdown("---")
-        st.markdown("### B-Roll Overlay")
-        broll_start = st.slider(
-            "Overlay Start (seconds)",
-            min_value=0.0,
-            max_value=30.0,
-            value=3.0,
-            step=0.5,
-            help="Seconds from the start of the main video at which B-roll begins.",
-            key="broll_start_slider",
-        )
-        broll_duration = st.slider(
-            "Overlay Duration (seconds)",
-            min_value=2.0,
-            max_value=15.0,
-            value=5.0,
-            step=0.5,
-            key="broll_duration_slider",
-        )
-        broll_ken_burns = st.checkbox(
-            "Enable Ken Burns Effect",
-            value=True,
-            help="Apply a slow, continuous zoom-in to B-roll to keep the viewer engaged.",
-            key="broll_ken_burns_check",
-        )
-        broll_split_screen = st.checkbox(
-            "Split-Screen B-Roll",
-            value=False,
-            help="Show the B-roll in the top half and the speaker in the bottom half.",
-            key="broll_split_screen_check",
-        )
-
-        st.markdown("---")
-        st.markdown("### Transitions")
-        transition_style = st.selectbox(
-            "Transition Style",
-            options=["fade", "flash", "none"],
-            format_func=lambda x: {
-                "fade": "Soft Fade (Crossfade)",
-                "flash": "White Flash",
-                "none": "Cut (None)",
-            }.get(x, x),
-            index=0,
-            help="Soft transition applied between the main clip and B-roll, and into the Outro.",
-            key="transition_style_select",
-        )
-        transition_duration = st.slider(
-            "Transition Duration (s)",
-            min_value=0.15,
-            max_value=0.80,
-            value=0.35,
-            step=0.05,
-            help="Duration of the fade or flash transition.",
-            key="transition_duration_slider",
         )
 
         st.markdown("---")
@@ -612,74 +522,6 @@ def _render_sidebar() -> Settings:
                 del st.session_state["outro_tmp_path"]
 
         st.markdown("---")
-        st.markdown("### Background Music")
-        enable_bg_music = st.checkbox(
-            "Enable Background Music",
-            value=True,
-            help="Layers subtle ambient background music under speech with automatic ducking.",
-            key="enable_bg_music_check",
-        )
-
-        bg_music_track = active_template.bg_music_track
-        custom_music_path: Path | None = None
-        bg_music_vol = active_template.bg_music_volume
-        bg_music_duck = active_template.bg_music_ducking
-
-        if enable_bg_music:
-            bg_music_track = st.selectbox(
-                "Sound Bed Preset",
-                options=["ambient_calm", "dramatic_pulse", "upbeat_groove", "custom", "none"],
-                format_func=lambda x: {
-                    "ambient_calm": "Ambient Calm (Warm Acoustic Pad)",
-                    "dramatic_pulse": "Dramatic Pulse (Tension Drone)",
-                    "upbeat_groove": "Upbeat Groove (Modern Light)",
-                    "custom": "Upload Custom Track",
-                    "none": "None",
-                }.get(x, x),
-                index=["ambient_calm", "dramatic_pulse", "upbeat_groove", "custom", "none"].index(
-                    active_template.bg_music_track
-                ),
-                help="Select a bundled royalty-free sound bed or upload your own audio.",
-                key="bg_music_track_select",
-            )
-
-            if bg_music_track == "custom":
-                custom_music_file = st.file_uploader(
-                    "Upload Music Track (.mp3, .wav, .m4a)",
-                    type=["mp3", "wav", "m4a", "aac"],
-                    key="custom_music_uploader",
-                )
-                if custom_music_file is not None:
-                    if "custom_music_tmp_path" not in st.session_state:
-                        suffix = Path(custom_music_file.name).suffix
-                        tmp_music = tempfile.NamedTemporaryFile(delete=False, suffix=suffix, prefix="bgm_")
-                        tmp_music.write(custom_music_file.read())
-                        tmp_music.flush()
-                        tmp_music.close()
-                        st.session_state["custom_music_tmp_path"] = tmp_music.name
-                    custom_music_path = Path(st.session_state["custom_music_tmp_path"])
-                    st.success(f"Track loaded: {custom_music_file.name}")
-                else:
-                    if "custom_music_tmp_path" in st.session_state:
-                        del st.session_state["custom_music_tmp_path"]
-
-            bg_music_vol = st.slider(
-                "Music Volume",
-                min_value=0.02,
-                max_value=0.40,
-                value=active_template.bg_music_volume,
-                step=0.01,
-                format="%.2f",
-                key="bg_music_vol_slider",
-            )
-            bg_music_duck = st.checkbox(
-                "Speech Ducking",
-                value=active_template.bg_music_ducking,
-                help="Automatically lowers background music when the speaker is talking.",
-                key="bg_music_ducking_check",
-            )
-
-        st.markdown("---")
         st.markdown("### 📁 Output Destination")
         default_output_str = str(st.session_state.get("custom_output_dir", DEFAULT_OUTPUT_DIR))
         output_dir_input = st.text_input(
@@ -698,7 +540,7 @@ def _render_sidebar() -> Settings:
         st.markdown("---")
         st.markdown(
             "<div style='font-size:0.72rem;color:#555;text-align:center'>"
-            "Greek Shorts Engine · CPU-only<br>"
+            "Greek Shorts Engine<br>"
             "Keys loaded from <code>.env</code> — never exposed in UI."
             "</div>",
             unsafe_allow_html=True,
@@ -711,18 +553,18 @@ def _render_sidebar() -> Settings:
         whisper_context_hint=str(whisper_context_hint),
 
         enable_face_tracking=bool(enable_face_tracking),
-        enable_vfx=bool(enable_vfx),
-        broll_start_offset=float(broll_start),
-        broll_overlay_duration=float(broll_duration),
-        broll_ken_burns=bool(broll_ken_burns),
-        broll_split_screen=bool(broll_split_screen),
-        transition_type=str(transition_style),
-        transition_duration=float(transition_duration),
-        enable_bg_music=bool(enable_bg_music),
-        bg_music_track=str(bg_music_track),
-        bg_music_path=custom_music_path,
-        bg_music_volume=float(bg_music_vol),
-        bg_music_ducking=bool(bg_music_duck),
+        enable_vfx=False,
+        broll_start_offset=3.0,
+        broll_overlay_duration=5.0,
+        broll_ken_burns=False,
+        broll_split_screen=False,
+        transition_type="fade",
+        transition_duration=0.35,
+        enable_bg_music=True,
+        bg_music_track=active_template.bg_music_track,
+        bg_music_path=None,
+        bg_music_volume=active_template.bg_music_volume,
+        bg_music_ducking=active_template.bg_music_ducking,
         min_clips=3,
         max_clips=int(max_clips),
         clip_min_duration=float(clip_min_dur),
@@ -731,7 +573,7 @@ def _render_sidebar() -> Settings:
         brand_voice=final_brand_voice,
         niche_template=selected_template_name,
         subtitle_position=str(subtitle_position),
-        subtitle_mode=str(subtitle_mode),
+        subtitle_mode="dynamic",
         enable_dynamic_zoom=False,
         outro_path=outro_path,
         output_dir=resolved_output_dir,
