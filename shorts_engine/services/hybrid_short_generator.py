@@ -336,7 +336,8 @@ def _render_ai_subtitled_beat(
     voice_path, beat_segments = synthesize_voiceover_with_segments(
         text=clean_text,
         output_path=voice_path,
-        voice=_DEFAULT_VOICE,
+        voice=getattr(settings, "tts_voice", _DEFAULT_VOICE),
+        speed=getattr(settings, "tts_speed", 1.0),
     )
     beat_dur = probe_duration(voice_path)
     if beat_dur <= 0.2:

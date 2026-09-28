@@ -60,6 +60,7 @@ def test_synthesize_voiceover_with_segments_mocked(tmp_path: Path) -> None:
         out_path, segments = synthesize_voiceover_with_segments(
             text="Αυτά είναι τα πραγματικά γεγονότα.",
             output_path=fake_mp3,
+            voice="el-GR-NestorasNeural",
         )
 
         assert out_path.is_file()
@@ -170,7 +171,7 @@ def test_build_hybrid_short_orchestration(tmp_path: Path) -> None:
         mock_subproc.return_value = MagicMock(returncode=0)
 
         # Mock synth output
-        def _fake_synth(text, output_path, voice):
+        def _fake_synth(text, output_path, *args, **kwargs):
             output_path.touch()
             return output_path, [TranscriptionSegment(0.0, 5.0, text)]
 

@@ -446,6 +446,43 @@ def render_autopilot_tab(settings: Any) -> None:
         settings.bg_music_volume = bg_vol
         settings.bg_music_ducking = True
 
+    # ── Voiceover & Speech Synthesis (Piper TTS & Edge-TTS) ────────────────────
+    st.markdown("#### 🎙️ Voiceover & Greek Speech Engine")
+    v_col1, v_col2 = st.columns([2, 1])
+    with v_col1:
+        voice_engine_label = st.selectbox(
+            "Speech Synthesis Voice & Backend",
+            [
+                "⚡ Piper TTS (Fast Offline Neural • el_GR-rapunzelina-medium)",
+                "⚡ Piper TTS (Ultra-Fast Low Res • el_GR-rapunzelina-low)",
+                "🌐 Microsoft Edge-TTS (Online Neural • el-GR-Nestoras)",
+                "🌐 Microsoft Edge-TTS (Online Neural • el-GR-Athina)",
+            ],
+            index=0,
+            help="Piper TTS runs locally on CPU with zero cloud latency and produces natural, non-robotic Greek voiceover. Edge-TTS provides Microsoft cloud neural voices.",
+        )
+        voice_map = {
+            "⚡ Piper TTS (Fast Offline Neural • el_GR-rapunzelina-medium)": ("piper", "el_GR-rapunzelina-medium"),
+            "⚡ Piper TTS (Ultra-Fast Low Res • el_GR-rapunzelina-low)": ("piper", "el_GR-rapunzelina-low"),
+            "🌐 Microsoft Edge-TTS (Online Neural • el-GR-Nestoras)": ("edge", "el-GR-NestorasNeural"),
+            "🌐 Microsoft Edge-TTS (Online Neural • el-GR-Athina)": ("edge", "el-GR-AthinaNeural"),
+        }
+        engine_name, voice_name = voice_map.get(voice_engine_label, ("piper", "el_GR-rapunzelina-medium"))
+        settings.tts_engine = engine_name
+        settings.tts_voice = voice_name
+
+    with v_col2:
+        voice_speed = st.slider(
+            "Voice Pace / Speed",
+            min_value=0.85,
+            max_value=1.30,
+            value=getattr(settings, "tts_speed", 1.0),
+            step=0.05,
+            format="%.2fx",
+            help="1.0x = standard speaking pace. 1.05x–1.10x is recommended for snappy, high-retention YouTube Shorts.",
+        )
+        settings.tts_speed = voice_speed
+
     # ── Caption Template & Occasion Styling ────────────────────────────────────
     st.markdown("#### 🎨 Caption Template & Occasion Styling")
     cap_c1, cap_c2 = st.columns([2, 1])

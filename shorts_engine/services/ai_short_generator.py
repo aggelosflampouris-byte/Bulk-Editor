@@ -36,6 +36,12 @@ try:
         transcribe,
         write_ass_file,
     )
+    from services.tts_engine import (
+        DEFAULT_EDGE_VOICE,
+        DEFAULT_PIPER_VOICE,
+        synthesize_voiceover as engine_synthesize_voiceover,
+        synthesize_voiceover_with_segments as engine_synthesize_voiceover_with_segments,
+    )
     from services.video_engine import (
         burn_subtitles,
         mix_background_music,
@@ -56,6 +62,12 @@ except ImportError:
         transcribe,
         write_ass_file,
     )
+    from shorts_engine.services.tts_engine import (
+        DEFAULT_EDGE_VOICE,
+        DEFAULT_PIPER_VOICE,
+        synthesize_voiceover as engine_synthesize_voiceover,
+        synthesize_voiceover_with_segments as engine_synthesize_voiceover_with_segments,
+    )
     from shorts_engine.services.video_engine import (
         burn_subtitles,
         mix_background_music,
@@ -64,7 +76,7 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_VOICE = "el-GR-NestorasNeural"
+_DEFAULT_VOICE = DEFAULT_PIPER_VOICE
 
 _AI_SCRIPT_PROMPT = """\
 You are an elite YouTube Shorts producer and investigative news strategist for @DianismaNews.
@@ -227,115 +239,40 @@ def generate_script_and_scenes(
     )
 
 
-async def _async_synthesize_voiceover_stream(
-    text: str,
-    output_path: Path,
-    voice: str = _DEFAULT_VOICE,
-) -> list[TranscriptionSegment]:
-    import edge_tts
-    # Ensure Greek pronunciation for Dianisma / Diansma in speech synthesis
-    clean_speech = re.sub(r"[@#]?dianismanews\b", "κανάλι Διάνυσμα", text, flags=re.IGNORECASE)
-    clean_speech = re.sub(r"\b(στο|από|για|το|του|των|με|σε)\s+dianisma\b", r"\1 Διάνυσμα", clean_speech, flags=re.IGNORECASE)
-    clean_speech = re.sub(r"\b(στο|από|για|το|του|των|με|σε)\s+diansma\b", r"\1 Διάνυσμα", clean_speech, flags=re.IGNORECASE)
-    clean_speech = re.sub(r"[@#]?dianisma\b", "Διάνυσμα", clean_speech, flags=re.IGNORECASE)
-    clean_speech = re.sub(r"[@#]?diansma\b", "Διάνυσμα", clean_speech, flags=re.IGNORECASE)
-    comm = edge_tts.Communicate(clean_speech, voice)
-    audio_bytes = bytearray()
-    raw_sentences: list[dict[str, Any]] = []
-
-    async for chunk in comm.stream():
-        chunk_type = chunk.get("type")
-        if chunk_type == "audio":
-            audio_bytes.extend(chunk.get("data", b""))
-        elif chunk_type == "SentenceBoundary":
-            raw_sentences.append(chunk)
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_bytes(audio_bytes)
-    if not output_path.is_file() or output_path.stat().st_size == 0:
-        raise RuntimeError(f"Edge-TTS synthesis produced empty file at {output_path}")
-
-    segments: list[TranscriptionSegment] = []
-    for s_info in raw_sentences:
-        s_text = str(s_info.get("text", "")).strip()
-        if not s_text:
-            continue
-        # offset and duration in 100-nanosecond ticks
-        s_start = float(s_info.get("offset", 0)) / 10_000_000.0
-        s_dur = float(s_info.get("duration", 0)) / 10_000_000.0
-        s_end = max(s_start + 0.1, s_start + s_dur)
-
-        words_list = s_text.split()
-        if not words_list:
-            continue
-        total_chars = max(1, sum(len(w) for w in words_list))
-        word_tuples: list[tuple[float, float, str]] = []
-        cur_w_start = s_start
-        for w_idx, w in enumerate(words_list):
-            if w_idx == len(words_list) - 1:
-                cur_w_end = s_end
-            else:
-                w_dur = (len(w) / total_chars) * s_dur
-                cur_w_end = cur_w_start + w_dur
-            word_tuples.append((round(cur_w_start, 3), round(max(cur_w_start + 0.06, cur_w_end), 3), w))
-            cur_w_start = cur_w_end
-
-        segments.append(
-            TranscriptionSegment(
-                start=round(s_start, 3),
-                end=round(s_end, 3),
-                text=s_text,
-                words=word_tuples,
-            )
-        )
-
-    if not segments:
-        dur = probe_duration(output_path)
-        words_list = text.split()
-        total_chars = max(1, sum(len(w) for w in words_list))
-        word_tuples = []
-        cur_start = 0.0
-        for w_idx, w in enumerate(words_list):
-            if w_idx == len(words_list) - 1:
-                cur_end = dur
-            else:
-                w_dur = (len(w) / total_chars) * dur
-                cur_end = cur_start + w_dur
-            word_tuples.append((round(cur_start, 3), round(max(cur_start + 0.06, cur_end), 3), w))
-            cur_start = cur_end
-        segments.append(
-            TranscriptionSegment(
-                start=0.0,
-                end=round(dur, 3),
-                text=text,
-                words=word_tuples,
-            )
-        )
-
-    return segments
-
-
 def synthesize_voiceover_with_segments(
     text: str,
     output_path: Path,
     voice: str = _DEFAULT_VOICE,
+    speed: float = 1.0,
 ) -> tuple[Path, list[TranscriptionSegment]]:
     """
-    Synthesize natural Greek voiceover audio using edge-tts and extract
-    exact sentence and word-level timestamps directly from the synthesizer stream.
-    Guarantees 100% speech-to-caption synchronization without Whisper drift.
+    Synthesize natural Greek voiceover audio and extract exact sentence
+    and word-level timestamps directly from the synthesizer stream.
+    Supports Piper offline TTS and Edge-TTS.
     """
-    logger.info("Synthesizing Greek voiceover with boundary alignment (voice: '%s')...", voice)
-    segments = asyncio.run(_async_synthesize_voiceover_stream(text, output_path, voice))
-    return output_path, segments
+    return engine_synthesize_voiceover_with_segments(
+        text=text,
+        output_path=output_path,
+        voice=voice,
+        speed=speed,
+    )
 
 
-def synthesize_voiceover(text: str, output_path: Path, voice: str = _DEFAULT_VOICE) -> Path:
+def synthesize_voiceover(
+    text: str,
+    output_path: Path,
+    voice: str = _DEFAULT_VOICE,
+    speed: float = 1.0,
+) -> Path:
     """
-    Synthesize natural Greek voiceover audio using edge-tts.
+    Synthesize natural Greek voiceover audio.
     """
-    path, _ = synthesize_voiceover_with_segments(text, output_path, voice)
-    return path
+    return engine_synthesize_voiceover(
+        text=text,
+        output_path=output_path,
+        voice=voice,
+        speed=speed,
+    )
 
 
 def _assemble_scene_video(
@@ -463,9 +400,16 @@ def build_full_ai_short(
         gemini_api_key=settings.gemini_api_key,
     )
 
-    _rpt("Synthesizing natural Greek voiceover (Nestoras Neural)...")
+    active_voice = getattr(settings, "tts_voice", _DEFAULT_VOICE)
+    active_speed = getattr(settings, "tts_speed", 1.0)
+    _rpt(f"Synthesizing natural Greek voiceover ({active_voice})...")
     voice_path = tmp_dir / f"ai_voiceover_{uid}.mp3"
-    voice_path, segments = synthesize_voiceover_with_segments(pkg.narration_script, voice_path)
+    voice_path, segments = synthesize_voiceover_with_segments(
+        pkg.narration_script,
+        voice_path,
+        voice=active_voice,
+        speed=active_speed,
+    )
 
     speech_dur = probe_duration(voice_path)
     logger.info("Synthesized voiceover duration: %.2fs", speech_dur)

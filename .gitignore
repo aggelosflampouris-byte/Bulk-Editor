@@ -4,6 +4,8 @@ __pycache__/
 venv/
 *.pt
 *.bin
+*.onnx
+*.onnx.json
 *.mp4
 *.mkv
 *.mov

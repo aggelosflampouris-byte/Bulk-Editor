@@ -284,6 +284,14 @@ class Settings:
     # Optional Brand Voice injection to tailor Gemini's writing tone
     brand_voice: str = ""
 
+    # ── Text-to-Speech Engine ─────────────────────────────────
+    # Primary synthesis backend: "piper" (local offline neural) | "edge" (online Microsoft neural)
+    tts_engine: str = "piper"
+    # Active voice model identifier
+    tts_voice: str = "el_GR-rapunzelina-medium"
+    # Speech tempo multiplier (1.0 = normal, 1.05 = snappy short-form pace)
+    tts_speed: float = 1.0
+
     # ── Background Music ──────────────────────────────────────
     # Enable subtle background audio bed
     enable_bg_music: bool = True
@@ -399,6 +407,12 @@ class Settings:
 
         if self.clip_min_duration >= self.clip_max_duration:
             errors.append("clip_min_duration must be less than clip_max_duration.")
+
+        if self.tts_engine not in {"piper", "edge"}:
+            errors.append(f"Invalid tts_engine '{self.tts_engine}'. Choose from: piper, edge.")
+
+        if not (0.5 <= self.tts_speed <= 2.0):
+            errors.append("tts_speed must be between 0.5 and 2.0.")
 
         if self.max_source_duration_seconds <= 0:
             errors.append("max_source_duration_seconds must be positive.")
