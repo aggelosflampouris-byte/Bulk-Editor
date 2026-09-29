@@ -757,6 +757,14 @@ def _render_engine_panel(settings: Any) -> None:
                         st.caption("Connect your YouTube account above to upload this clip.")
                 st.markdown("<hr style='margin: 0.5rem 0; border-color: #27272a;'>", unsafe_allow_html=True)
 
+    # ── SEO & Metadata Pre-flight Panel ────────────────────────────────────────
+    try:
+        from ui.seo_settings_panel import render_seo_settings_panel
+    except ImportError:
+        from shorts_engine.ui.seo_settings_panel import render_seo_settings_panel
+
+    render_seo_settings_panel(settings)
+
 
 def _render_analyst_panel() -> None:
     """Render the AI Strategy Analyst inside the right column."""
