@@ -318,16 +318,19 @@ def _render_sidebar() -> Settings:
         # ── API Key Status (read-only) ─────────────────────────────────────
         pexels_loaded = bool(os.environ.get("PEXELS_API_KEY", "").strip())
         gemini_loaded = bool(os.environ.get("GEMINI_API_KEY", "").strip())
+        openrouter_loaded = bool(os.environ.get("OPENROUTER_API_KEY", "").strip())
 
         st.markdown("### API Keys")
         pexels_status = '<span style="color:#22c55e;font-size:0.8rem;">Connected</span>' if pexels_loaded else '<span style="color:#ef4444;font-size:0.8rem;">Missing</span>'
         gemini_status = '<span style="color:#22c55e;font-size:0.8rem;">Connected</span>' if gemini_loaded else '<span style="color:#ef4444;font-size:0.8rem;">Missing</span>'
+        or_status = '<span style="color:#22c55e;font-size:0.8rem;">Connected</span>' if openrouter_loaded else '<span style="color:#ef4444;font-size:0.8rem;">Missing</span>'
         st.markdown(
             f"**Pexels** — {pexels_status}  \n"
-            f"**Gemini** — {gemini_status}",
+            f"**Gemini** — {gemini_status}  \n"
+            f"**OpenRouter (AI Analyst)** — {or_status}",
             unsafe_allow_html=True,
         )
-        if not pexels_loaded or not gemini_loaded:
+        if not pexels_loaded or not gemini_loaded or not openrouter_loaded:
             st.caption("Add missing keys to `shorts_engine/.env` and restart.")
 
         st.markdown("---")

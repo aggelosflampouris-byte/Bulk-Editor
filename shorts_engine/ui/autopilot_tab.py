@@ -719,3 +719,27 @@ def render_autopilot_tab(settings: Any) -> None:
                     else:
                         st.caption("Connect your YouTube account above to upload this clip.")
                 st.markdown("<hr style='margin: 0.5rem 0; border-color: #27272a;'>", unsafe_allow_html=True)
+
+    # ── AI Strategy Analyst ────────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("""
+<div style="background:linear-gradient(135deg,#0f1e14,#0d1117);border:1px solid #166534;
+border-radius:12px;padding:1.25rem 1.75rem;margin:1.5rem 0 1rem 0;display:flex;
+align-items:center;gap:1rem;">
+    <div style="font-size:2rem;">🤖</div>
+    <div>
+        <div style="color:#4ade80;font-weight:600;font-size:1.05rem;">AI Strategy Analyst</div>
+        <div style="color:#71717a;font-size:0.85rem;">
+            Powered by <strong style="color:#a1a1aa;">Qwen 2.5 72B</strong> — 
+            Ask about what to upload, when to post, editing improvements, and SEO strategy.
+        </div>
+    </div>
+</div>
+    """, unsafe_allow_html=True)
+
+    try:
+        from ui.analyst_tab import render_analyst_tab
+    except ImportError:
+        from shorts_engine.ui.analyst_tab import render_analyst_tab
+
+    render_analyst_tab()
