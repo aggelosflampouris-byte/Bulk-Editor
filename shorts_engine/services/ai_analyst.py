@@ -29,6 +29,11 @@ logger = logging.getLogger(__name__)
 # OpenRouter Qwen model identifier
 QWEN_MODEL: str = "qwen/qwen3-30b-a3b"
 
+# Token budget allocated for <think> reasoning phase.
+# Qwen3 emits reasoning tokens before content; we must budget for both.
+_THINKING_BUDGET_TOKENS: int = 1024
+_RESPONSE_MAX_TOKENS: int = 2048
+
 # Limits
 MAX_HISTORY_TURNS: int = 20      # Keep at most 20 back-and-forth pairs
 MAX_PROMPT_CHARS: int = 6000     # Guard against runaway user input
@@ -126,6 +131,8 @@ class AIAnalyst:
 
         collected_response: list[str] = []
 
+        import json as _json
+
         try:
             with httpx.Client(timeout=STREAM_TIMEOUT_SECONDS) as client:
                 with client.stream(
@@ -142,7 +149,10 @@ class AIAnalyst:
                         "messages": messages,
                         "stream": True,
                         "temperature": 0.35,
-                        "max_tokens": 2048,
+                        # Total budget = thinking budget + response tokens.
+                        # Qwen3 emits reasoning first, then content; both count
+                        # toward max_tokens, so we must be generous.
+                        "max_tokens": _THINKING_BUDGET_TOKENS + _RESPONSE_MAX_TOKENS,
                     },
                 ) as response:
                     if response.status_code != 200:
@@ -151,6 +161,8 @@ class AIAnalyst:
                             f"OpenRouter API error {response.status_code}: {body[:400]}"
                         )
 
+                    in_thinking_phase = True
+
                     for line in response.iter_lines():
                         if not line or not line.startswith("data: "):
                             continue
@@ -158,16 +170,25 @@ class AIAnalyst:
                         if payload.strip() == "[DONE]":
                             break
                         try:
-                            import json as _json
                             data = _json.loads(payload)
-                            delta = (
-                                data.get("choices", [{}])[0]
-                                .get("delta", {})
-                                .get("content", "")
-                            )
-                            if delta:
-                                collected_response.append(delta)
-                                yield delta
+                            delta = data.get("choices", [{}])[0].get("delta", {})
+
+                            # Qwen3 dual-phase: reasoning tokens come first,
+                            # then content tokens once thinking is complete.
+                            reasoning_chunk: str = delta.get("reasoning") or ""
+                            content_chunk: str = delta.get("content") or ""
+
+                            if in_thinking_phase and content_chunk:
+                                # Transition: thinking phase ended, content starting.
+                                in_thinking_phase = False
+                                # Emit a visual separator so the UI knows to
+                                # stop showing the thinking indicator.
+                                yield "\n"
+
+                            if not in_thinking_phase and content_chunk:
+                                collected_response.append(content_chunk)
+                                yield content_chunk
+
                         except (ValueError, KeyError, IndexError):
                             continue
 

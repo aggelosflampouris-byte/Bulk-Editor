@@ -256,25 +256,40 @@ border-radius:12px;padding:2rem;text-align:center;margin-top:1rem;">
         response_placeholder = st.empty()
         response_placeholder.markdown(
             "<div style='color:#71717a;font-size:0.85rem;font-style:italic;'>"
-            "⏳ Analyzing data…</div>",
+            "⏳ Thinking…</div>",
             unsafe_allow_html=True,
         )
 
         streamed_chunks: list[str] = []
+        content_started = False
         try:
             for chunk in analyst.stream_response(user_input.strip()):
+                # The first non-whitespace chunk marks transition from thinking → content
+                stripped = chunk.strip()
+                if stripped and not content_started:
+                    content_started = True
+
                 streamed_chunks.append(chunk)
-                accumulated = "".join(streamed_chunks)
-                response_placeholder.markdown(
-                    f"<div style='background:#0d1117;border:1px solid #27272a;"
-                    f"border-radius:12px 12px 12px 2px;padding:0.7rem 1rem;"
-                    f"color:#e4e4e7;font-size:0.9rem;line-height:1.6;'>"
-                    f"<div style='color:#4ade80;font-size:0.72rem;font-weight:600;"
-                    f"text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.35rem;'>"
-                    f"🤖 Strategy Analyst</div>"
-                    f"{accumulated}</div>",
-                    unsafe_allow_html=True,
-                )
+                accumulated = "".join(streamed_chunks).strip()
+
+                if not content_started:
+                    # Still in thinking phase — show pulsing indicator
+                    response_placeholder.markdown(
+                        "<div style='color:#71717a;font-size:0.85rem;font-style:italic;'>"
+                        "🧠 Analyzing data…</div>",
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    response_placeholder.markdown(
+                        f"<div style='background:#0d1117;border:1px solid #27272a;"
+                        f"border-radius:12px 12px 12px 2px;padding:0.7rem 1rem;"
+                        f"color:#e4e4e7;font-size:0.9rem;line-height:1.6;'>"
+                        f"<div style='color:#4ade80;font-size:0.72rem;font-weight:600;"
+                        f"text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.35rem;'>"
+                        f"🤖 Strategy Analyst</div>"
+                        f"{accumulated}</div>",
+                        unsafe_allow_html=True,
+                    )
 
             full_response = "".join(streamed_chunks)
             if full_response:
