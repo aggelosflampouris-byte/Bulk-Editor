@@ -167,30 +167,24 @@ border-radius:12px;padding:2rem;text-align:center;margin-top:1rem;">
         """, unsafe_allow_html=True)
         return
 
-    # ── Header ──────────────────────────────────────────────────────────────────
-    hdr_col, btn_col = st.columns([6, 1])
-    with hdr_col:
-        st.markdown("""
-<div style="margin-bottom:1rem;">
-    <h3 style="color:#f4f4f5;margin:0 0 0.25rem 0;">🤖 AI Strategy Analyst</h3>
-    <p style="color:#71717a;font-size:0.85rem;margin:0;">
-        Qwen 2.5 72B — Analyzes your project data and recommends what to upload, 
-        when to upload, and how to optimize editing &amp; metadata.
-    </p>
-</div>
-        """, unsafe_allow_html=True)
-    with btn_col:
-        if st.button("🔄 Refresh Data", key="analyst_refresh_btn", use_container_width=True):
-            st.session_state[_KEY_ANALYST_CONTEXT] = None
-            st.session_state[_KEY_ANALYST_INSTANCE] = None
-            st.rerun()
-
     # ── Load Analytics ──────────────────────────────────────────────────────────
     ctx = st.session_state.get(_KEY_ANALYST_CONTEXT)
     if ctx is None:
         with st.spinner("Collecting analytics data…"):
             ctx = _load_analytics_context()
-        st.success("Analytics snapshot loaded.", icon="✅")
+
+    # ── Compact data header with inline refresh ─────────────────────────────────
+    kpi_l, kpi_m, kpi_r, refresh_col = st.columns([2, 2, 2, 1])
+    kpi_l.metric("Projects", ctx.total_projects)
+    kpi_m.metric("Avg Virality", f"{ctx.avg_virality_score:.1f}/10")
+    kpi_r.metric("Avg Rating", f"{ctx.avg_user_rating:.1f}/5")
+    with refresh_col:
+        st.markdown("<div style='height:1.75rem'></div>", unsafe_allow_html=True)
+        if st.button("🔄", key="analyst_refresh_btn", help="Refresh analytics snapshot",
+                     use_container_width=True):
+            st.session_state[_KEY_ANALYST_CONTEXT] = None
+            st.session_state[_KEY_ANALYST_INSTANCE] = None
+            st.rerun()
 
     _render_analytics_panel(ctx)
 

@@ -4,6 +4,11 @@ ui/autopilot_tab.py — Unified Autopilot Studio.
 Consolidates all intelligent sourcing (Niche Outlier Discovery, Direct URL,
 Local File Drag-and-Drop, Channel Library), AI production strategies,
 royalty-free audio ducking, and one-click YouTube Studio scheduling.
+
+Layout:
+  - Full-width: header banner
+  - Two-column: [Engine (left)] [AI Analyst (right)]
+  - Each panel has a collapse/expand toggle button in its header.
 """
 
 from __future__ import annotations
@@ -19,30 +24,62 @@ import streamlit as st
 
 logger = logging.getLogger(__name__)
 
+# ── Session-state keys for panel visibility ────────────────────────────────────
+_KEY_ENGINE_OPEN   = "panel_engine_open"
+_KEY_ANALYST_OPEN  = "panel_analyst_open"
 
-def render_autopilot_tab(settings: Any) -> None:
-    """Render the unified Greek Shorts Autopilot Studio."""
-    # ── Header Banner ──────────────────────────────────────────────────────────
-    st.markdown("""
-<div style="background: linear-gradient(135deg, #18181b, #27272a); padding: 1.75rem 2rem; border-radius: 12px; border: 1px solid #3f3f46; margin-bottom: 1.5rem;">
-    <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem;">
-        <div>
-            <h2 style="color: white; margin: 0 0 0.4rem 0;">🤖 Greek Shorts Autopilot Studio</h2>
-            <p style="color: #a1a1aa; font-size: 0.95rem; margin: 0; max-width: 780px;">
-                Unified autonomous intelligence for <strong>@DianismaNews</strong>. Discovers viral niche trends (≤ 21 days),
-                tracks speaker faces with YOLO, cross-checks facts via Gemini dossiers, burns dynamic highlight captions,
-                and schedules ready-to-publish 9:16 Shorts directly to YouTube Studio.
-            </p>
-        </div>
-        <div style="background: #09090b; padding: 0.6rem 1.2rem; border-radius: 8px; border: 1px solid #27272a; text-align: right;">
-            <span style="color: #22c55e; font-size: 0.85rem; font-weight: 600;">● Autopilot Active</span>
-            <div style="color: #71717a; font-size: 0.75rem;">YOLO • Gemini • Whisper • YouTube API</div>
-        </div>
-    </div>
-</div>
-""", unsafe_allow_html=True)
 
-    # ── YouTube Authentication & Live Channel Status ────────────────────────────
+def _init_panel_state() -> None:
+    if _KEY_ENGINE_OPEN not in st.session_state:
+        st.session_state[_KEY_ENGINE_OPEN] = True
+    if _KEY_ANALYST_OPEN not in st.session_state:
+        st.session_state[_KEY_ANALYST_OPEN] = False
+
+
+def _panel_header(
+    title: str,
+    subtitle: str,
+    icon: str,
+    state_key: str,
+    is_open: bool,
+) -> None:
+    """
+    Render a collapsible panel header bar with title and toggle button.
+    The toggle button flips the open/closed state and triggers a rerun.
+    """
+    btn_label = "◀ Hide" if is_open else "▶ Show"
+    btn_help  = f"{'Collapse' if is_open else 'Expand'} {title}"
+
+    left, right = st.columns([7, 1])
+    with left:
+        if is_open:
+            st.markdown(
+                f"<div style='padding:0.5rem 0;'>"
+                f"<span style='font-size:1.4rem;'>{icon}</span>&nbsp;"
+                f"<strong style='font-size:1.05rem;color:#f4f4f5;'>{title}</strong>"
+                f"<span style='color:#71717a;font-size:0.82rem;margin-left:0.6rem;'>"
+                f"{subtitle}</span></div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                f"<div style='padding:0.5rem 0;text-align:center;'>"
+                f"<span style='font-size:1.4rem;'>{icon}</span></div>",
+                unsafe_allow_html=True,
+            )
+    with right:
+        if st.button(btn_label, key=f"toggle__{state_key}", help=btn_help,
+                     use_container_width=True):
+            st.session_state[state_key] = not is_open
+            st.rerun()
+
+
+def _render_engine_panel(settings: Any) -> None:
+    """
+    Full engine content: YouTube auth, sourcing modes, production strategy,
+    execution, and output library.
+    """
+    # ── YouTube Authentication & Live Channel Status ───────────────────────────
     try:
         from services.channel_analyzer import (
             DIANISMA_CHANNEL_HANDLE,
@@ -720,26 +757,154 @@ def render_autopilot_tab(settings: Any) -> None:
                         st.caption("Connect your YouTube account above to upload this clip.")
                 st.markdown("<hr style='margin: 0.5rem 0; border-color: #27272a;'>", unsafe_allow_html=True)
 
-    # ── AI Strategy Analyst ────────────────────────────────────────────────────
-    st.markdown("---")
-    st.markdown("""
-<div style="background:linear-gradient(135deg,#0f1e14,#0d1117);border:1px solid #166534;
-border-radius:12px;padding:1.25rem 1.75rem;margin:1.5rem 0 1rem 0;display:flex;
-align-items:center;gap:1rem;">
-    <div style="font-size:2rem;">🤖</div>
-    <div>
-        <div style="color:#4ade80;font-weight:600;font-size:1.05rem;">AI Strategy Analyst</div>
-        <div style="color:#71717a;font-size:0.85rem;">
-            Powered by <strong style="color:#a1a1aa;">Qwen 2.5 72B</strong> — 
-            Ask about what to upload, when to post, editing improvements, and SEO strategy.
-        </div>
-    </div>
-</div>
-    """, unsafe_allow_html=True)
 
+def _render_analyst_panel() -> None:
+    """Render the AI Strategy Analyst inside the right column."""
     try:
         from ui.analyst_tab import render_analyst_tab
     except ImportError:
         from shorts_engine.ui.analyst_tab import render_analyst_tab
-
     render_analyst_tab()
+
+
+def render_autopilot_tab(settings: Any) -> None:
+    """
+    Orchestrator for the Autopilot Studio.
+
+    Layout:
+      1. Full-width: studio header banner
+      2. Full-width: panel toggle control row
+      3. Two-column: [Engine] | [AI Analyst]
+         - Each panel has its own collapse/expand header button.
+         - Column widths adapt to which panels are open.
+    """
+    # ── Full-Width Header Banner ───────────────────────────────────────────────
+    st.markdown("""
+<div style="background: linear-gradient(135deg, #18181b, #27272a); padding: 1.75rem 2rem; border-radius: 12px; border: 1px solid #3f3f46; margin-bottom: 1.5rem;">
+    <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem;">
+        <div>
+            <h2 style="color: white; margin: 0 0 0.4rem 0;">🤖 Greek Shorts Autopilot Studio</h2>
+            <p style="color: #a1a1aa; font-size: 0.95rem; margin: 0; max-width: 780px;">
+                Unified autonomous intelligence for <strong>@DianismaNews</strong>. Discovers viral niche trends (≤ 21 days),
+                tracks speaker faces with YOLO, cross-checks facts via Gemini dossiers, burns dynamic highlight captions,
+                and schedules ready-to-publish 9:16 Shorts directly to YouTube Studio.
+            </p>
+        </div>
+        <div style="background: #09090b; padding: 0.6rem 1.2rem; border-radius: 8px; border: 1px solid #27272a; text-align: right;">
+            <span style="color: #22c55e; font-size: 0.85rem; font-weight: 600;">● Autopilot Active</span>
+            <div style="color: #71717a; font-size: 0.75rem;">YOLO • Gemini • Whisper • YouTube API</div>
+        </div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+    # ── Panel State ────────────────────────────────────────────────────────────
+    _init_panel_state()
+    engine_open  = st.session_state[_KEY_ENGINE_OPEN]
+    analyst_open = st.session_state[_KEY_ANALYST_OPEN]
+
+    # ── Quick-Access Toggle Row (above columns) ────────────────────────────────
+    st.markdown("""
+<style>
+/* Panel toggle button row */
+div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"] button[kind="secondary"]) {
+    background: #111113;
+    border: 1px solid #27272a;
+    border-radius: 8px;
+    padding: 0.4rem 0.75rem;
+    margin-bottom: 1rem;
+}
+</style>
+    """, unsafe_allow_html=True)
+
+    trow_l, trow_mid, trow_r = st.columns([3, 1, 2])
+    with trow_l:
+        engine_lbl = "⬅️ Hide Engine" if engine_open else "▶ Show Engine"
+        if st.button(engine_lbl, key="toprow_toggle_engine", use_container_width=True):
+            st.session_state[_KEY_ENGINE_OPEN] = not engine_open
+            st.rerun()
+    with trow_mid:
+        st.markdown(
+            "<div style='text-align:center;padding-top:0.4rem;"
+            "color:#3f3f46;font-size:0.75rem;'>│</div>",
+            unsafe_allow_html=True,
+        )
+    with trow_r:
+        analyst_lbl = "➡️ Hide AI Analyst" if analyst_open else "🤖 Open AI Analyst"
+        analyst_type = "secondary" if analyst_open else "primary"
+        if st.button(analyst_lbl, key="toprow_toggle_analyst",
+                     type=analyst_type, use_container_width=True):
+            st.session_state[_KEY_ANALYST_OPEN] = not analyst_open
+            st.rerun()
+
+    # ── Compute Column Ratios ──────────────────────────────────────────────────
+    # Safety: always keep at least one panel open
+    if not engine_open and not analyst_open:
+        st.session_state[_KEY_ENGINE_OPEN] = True
+        engine_open = True
+
+    if engine_open and analyst_open:
+        col_ratios = [3, 2]
+    elif engine_open:
+        col_ratios = [1, 0]         # analyst column invisible
+    else:
+        col_ratios = [0, 1]         # engine column invisible
+
+    # ── Two-Column Layout ──────────────────────────────────────────────────────
+    if col_ratios[1] == 0:
+        # Engine only — full width, no right column
+        _panel_header(
+            title="Autopilot Engine",
+            subtitle="sourcing • production • upload",
+            icon="⚙️",
+            state_key=_KEY_ENGINE_OPEN,
+            is_open=True,
+        )
+        st.markdown("<hr style='border-color:#27272a;margin:0.5rem 0 1rem 0;'>",
+                    unsafe_allow_html=True)
+        _render_engine_panel(settings)
+
+    elif col_ratios[0] == 0:
+        # Analyst only — full width, no left column
+        _panel_header(
+            title="AI Strategy Analyst",
+            subtitle="Qwen 2.5 72B • evidence-based recommendations",
+            icon="🤖",
+            state_key=_KEY_ANALYST_OPEN,
+            is_open=True,
+        )
+        st.markdown("<hr style='border-color:#27272a;margin:0.5rem 0 1rem 0;'>",
+                    unsafe_allow_html=True)
+        _render_analyst_panel()
+
+    else:
+        # Both panels open — split layout
+        left_col, right_col = st.columns([3, 2], gap="medium")
+
+        with left_col:
+            _panel_header(
+                title="Autopilot Engine",
+                subtitle="sourcing • production • upload",
+                icon="⚙️",
+                state_key=_KEY_ENGINE_OPEN,
+                is_open=True,
+            )
+            st.markdown(
+                "<hr style='border-color:#27272a;margin:0.5rem 0 1rem 0;'>",
+                unsafe_allow_html=True,
+            )
+            _render_engine_panel(settings)
+
+        with right_col:
+            _panel_header(
+                title="AI Strategy Analyst",
+                subtitle="Qwen 2.5 72B • evidence-based",
+                icon="🤖",
+                state_key=_KEY_ANALYST_OPEN,
+                is_open=True,
+            )
+            st.markdown(
+                "<hr style='border-color:#166534;margin:0.5rem 0 1rem 0;'>",
+                unsafe_allow_html=True,
+            )
+            _render_analyst_panel()
