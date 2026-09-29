@@ -62,7 +62,7 @@ def _auto_load_template_defaults(niche: str, topic: str) -> None:
     st.session_state[_KEY_TOPIC] = topic
 
 
-def render_seo_settings_panel(settings: Any) -> None:
+def render_seo_settings_panel(settings: Any, current_topic: str = "") -> None:
     """
     Render the SEO pre-flight footer panel inside the engine column.
 
@@ -77,9 +77,10 @@ def render_seo_settings_panel(settings: Any) -> None:
     selected_template = st.session_state.get("niche_template_select", "custom")
     detected_niche = _get_niche_from_template(selected_template)
 
-    # Topic context: pull from URL/niche query fields if available
+    # Topic context: prioritize caller's current_topic, then session state
     topic_context = (
-        st.session_state.get("target_niche_input", "")
+        current_topic.strip()
+        or st.session_state.get("target_niche_input", "")
         or st.session_state.get("ap_url_input", "")
         or ""
     )
@@ -89,7 +90,7 @@ def render_seo_settings_panel(settings: Any) -> None:
     last_niche = st.session_state.get(_KEY_NICHE, "")
     last_topic = st.session_state.get(_KEY_TOPIC, "")
 
-    if pkg is None or last_niche != detected_niche or last_topic != topic_context:
+    if pkg is None or last_niche != detected_niche or (topic_context and last_topic != topic_context):
         _auto_load_template_defaults(niche=detected_niche, topic=topic_context)
         pkg = st.session_state[_KEY_SEO]
 
@@ -228,37 +229,60 @@ def render_seo_settings_panel(settings: Any) -> None:
             unsafe_allow_html=True,
         )
 
-        # Title variant cards
+        # Title variant cards with quick-apply buttons
         if pkg.curiosity_title:
-            st.markdown(
-                "<div style='background:#0d1117;border:1px solid #1d4ed8;"
-                "border-radius:8px;padding:0.6rem 0.9rem;margin-bottom:0.5rem;'>"
-                "<div style='color:#93c5fd;font-size:0.7rem;font-weight:600;"
-                "text-transform:uppercase;letter-spacing:0.06em;'>🎯 Curiosity Gap</div>"
-                f"<div style='color:#e4e4e7;font-size:0.85rem;margin-top:0.2rem;'>"
-                f"{pkg.curiosity_title}</div></div>",
-                unsafe_allow_html=True,
-            )
+            c_box, c_btn = st.columns([5, 1])
+            with c_box:
+                st.markdown(
+                    "<div style='background:#0d1117;border:1px solid #1d4ed8;"
+                    "border-radius:8px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;'>"
+                    "<div style='color:#93c5fd;font-size:0.7rem;font-weight:600;"
+                    "text-transform:uppercase;letter-spacing:0.06em;'>🎯 Curiosity Gap</div>"
+                    f"<div style='color:#e4e4e7;font-size:0.85rem;margin-top:0.2rem;'>"
+                    f"{pkg.curiosity_title}</div></div>",
+                    unsafe_allow_html=True,
+                )
+            with c_btn:
+                if st.button("Use", key="btn_use_curiosity", help="Set this as Primary Title"):
+                    pkg.title = pkg.curiosity_title
+                    st.session_state[_KEY_SEO] = pkg
+                    st.rerun()
+
         if pkg.authority_title:
-            st.markdown(
-                "<div style='background:#0d1117;border:1px solid #15803d;"
-                "border-radius:8px;padding:0.6rem 0.9rem;margin-bottom:0.5rem;'>"
-                "<div style='color:#86efac;font-size:0.7rem;font-weight:600;"
-                "text-transform:uppercase;letter-spacing:0.06em;'>📣 Authority</div>"
-                f"<div style='color:#e4e4e7;font-size:0.85rem;margin-top:0.2rem;'>"
-                f"{pkg.authority_title}</div></div>",
-                unsafe_allow_html=True,
-            )
+            a_box, a_btn = st.columns([5, 1])
+            with a_box:
+                st.markdown(
+                    "<div style='background:#0d1117;border:1px solid #15803d;"
+                    "border-radius:8px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;'>"
+                    "<div style='color:#86efac;font-size:0.7rem;font-weight:600;"
+                    "text-transform:uppercase;letter-spacing:0.06em;'>📣 Authority</div>"
+                    f"<div style='color:#e4e4e7;font-size:0.85rem;margin-top:0.2rem;'>"
+                    f"{pkg.authority_title}</div></div>",
+                    unsafe_allow_html=True,
+                )
+            with a_btn:
+                if st.button("Use", key="btn_use_authority", help="Set this as Primary Title"):
+                    pkg.title = pkg.authority_title
+                    st.session_state[_KEY_SEO] = pkg
+                    st.rerun()
+
         if pkg.contrarian_title:
-            st.markdown(
-                "<div style='background:#0d1117;border:1px solid #b45309;"
-                "border-radius:8px;padding:0.6rem 0.9rem;margin-bottom:0.5rem;'>"
-                "<div style='color:#fbbf24;font-size:0.7rem;font-weight:600;"
-                "text-transform:uppercase;letter-spacing:0.06em;'>⚡ Contrarian</div>"
-                f"<div style='color:#e4e4e7;font-size:0.85rem;margin-top:0.2rem;'>"
-                f"{pkg.contrarian_title}</div></div>",
-                unsafe_allow_html=True,
-            )
+            ct_box, ct_btn = st.columns([5, 1])
+            with ct_box:
+                st.markdown(
+                    "<div style='background:#0d1117;border:1px solid #b45309;"
+                    "border-radius:8px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;'>"
+                    "<div style='color:#fbbf24;font-size:0.7rem;font-weight:600;"
+                    "text-transform:uppercase;letter-spacing:0.06em;'>⚡ Contrarian</div>"
+                    f"<div style='color:#e4e4e7;font-size:0.85rem;margin-top:0.2rem;'>"
+                    f"{pkg.contrarian_title}</div></div>",
+                    unsafe_allow_html=True,
+                )
+            with ct_btn:
+                if st.button("Use", key="btn_use_contrarian", help="Set this as Primary Title"):
+                    pkg.title = pkg.contrarian_title
+                    st.session_state[_KEY_SEO] = pkg
+                    st.rerun()
 
         if not any([pkg.curiosity_title, pkg.authority_title, pkg.contrarian_title]):
             st.markdown(

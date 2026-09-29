@@ -657,6 +657,7 @@ def _render_engine_panel(settings: Any) -> None:
         target = override_url.strip()
 
         try:
+            seo_override = st.session_state.get("seo_preflight_package")
             for msg, pct, data in run_autopilot_pipeline(
                 target_url=target,
                 settings=settings,
@@ -666,6 +667,7 @@ def _render_engine_panel(settings: Any) -> None:
                 production_strategy=production_strategy,
                 niche_query=niche_focus_query,
                 local_video_paths=local_saved_paths if local_saved_paths else None,
+                seo_override=seo_override,
             ):
                 progress_bar.progress(pct)
                 status_text.markdown(f"**{pct}%** — {msg}")
@@ -758,12 +760,25 @@ def _render_engine_panel(settings: Any) -> None:
                 st.markdown("<hr style='margin: 0.5rem 0; border-color: #27272a;'>", unsafe_allow_html=True)
 
     # ── SEO & Metadata Pre-flight Panel ────────────────────────────────────────
+    # Compute active topic context from the selected source
+    current_topic = ""
+    if local_saved_paths:
+        current_topic = local_saved_paths[0].stem.replace("_", " ").title()
+    elif selected_video:
+        current_topic = selected_video.title
+    elif override_url.strip():
+        current_topic = override_url.strip()
+    elif niche_focus_query.strip():
+        current_topic = niche_focus_query.strip()
+    else:
+        current_topic = getattr(settings, "niche_template", "")
+
     try:
         from ui.seo_settings_panel import render_seo_settings_panel
     except ImportError:
         from shorts_engine.ui.seo_settings_panel import render_seo_settings_panel
 
-    render_seo_settings_panel(settings)
+    render_seo_settings_panel(settings, current_topic=current_topic)
 
 
 def _render_analyst_panel() -> None:

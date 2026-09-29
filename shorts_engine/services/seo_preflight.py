@@ -14,6 +14,18 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
+from typing import Any
+
+try:
+    from shorts_engine.services.seo_generator import (
+        SeoMetadata,
+        _call_gemini_with_fallback,
+    )
+except ImportError:
+    from services.seo_generator import (
+        SeoMetadata,
+        _call_gemini_with_fallback,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +137,19 @@ class PreflightSeoPackage:
     def tags_display(self) -> str:
         return ", ".join(self.tags)
 
+    def to_seo_metadata(self) -> SeoMetadata:
+        """Convert this preflight package into an immutable SeoMetadata object."""
+        return SeoMetadata(
+            title=self.title,
+            description=self.description,
+            tags=tuple(self.tags),
+            primary_keyword=self.primary_keyword,
+            pinned_comment=self.pinned_comment,
+            curiosity_title=self.curiosity_title,
+            authority_title=self.authority_title,
+            contrarian_title=self.contrarian_title,
+        )
+
 
 def get_template_defaults(niche: str, topic: str = "") -> PreflightSeoPackage:
     """
@@ -229,25 +254,15 @@ Rules:
 """
 
     client = genai.Client(api_key=gemini_api_key)
+    config = genai_types.GenerateContentConfig(max_output_tokens=1500)
 
-    # Try models with fallback
-    models = ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-3.6-flash"]
-    raw_text = ""
-    for model in models:
-        try:
-            response = client.models.generate_content(
-                model=model,
-                contents=prompt,
-                config=genai_types.GenerateContentConfig(max_output_tokens=1500),
-            )
-            raw_text = response.text or ""
-            if raw_text:
-                break
-        except Exception as exc:
-            logger.warning("Gemini model %s failed: %s", model, exc)
+    try:
+        raw_text = _call_gemini_with_fallback(client=client, contents=prompt, config=config)
+    except Exception as exc:
+        raise RuntimeError(f"Gemini API call failed for SEO preflight: {exc}") from exc
 
     if not raw_text:
-        raise RuntimeError("All Gemini models failed for SEO preflight generation.")
+        raise RuntimeError("Empty response from Gemini for SEO preflight generation.")
 
     # Parse JSON
     fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw_text, re.DOTALL)

@@ -80,6 +80,41 @@ except ImportError:
     )
 
 
+def _apply_seo_override(generated_seo: Any, override: Any) -> Any:
+    """Merge custom preflight SEO override into generated SEO if provided."""
+    if not override:
+        return generated_seo
+    try:
+        from services.seo_generator import SeoMetadata
+    except ImportError:
+        from shorts_engine.services.seo_generator import SeoMetadata
+
+    # Pull user customizations if non-empty, otherwise keep generated values
+    title = getattr(override, "title", "").strip() or (generated_seo.title if generated_seo else "")
+    description = getattr(override, "description", "").strip() or (generated_seo.description if generated_seo else "")
+    override_tags = getattr(override, "tags", ())
+    if override_tags:
+        tags = tuple(override_tags) if isinstance(override_tags, (list, tuple)) else ()
+    else:
+        tags = generated_seo.tags if generated_seo else ()
+    primary_kw = getattr(override, "primary_keyword", "").strip() or (getattr(generated_seo, "primary_keyword", "") if generated_seo else "")
+    pinned = getattr(override, "pinned_comment", "").strip() or (getattr(generated_seo, "pinned_comment", "") if generated_seo else "")
+    curiosity = getattr(override, "curiosity_title", "").strip() or (getattr(generated_seo, "curiosity_title", "") if generated_seo else "")
+    authority = getattr(override, "authority_title", "").strip() or (getattr(generated_seo, "authority_title", "") if generated_seo else "")
+    contrarian = getattr(override, "contrarian_title", "").strip() or (getattr(generated_seo, "contrarian_title", "") if generated_seo else "")
+
+    return SeoMetadata(
+        title=title,
+        description=description,
+        tags=tags,
+        primary_keyword=primary_kw,
+        pinned_comment=pinned,
+        curiosity_title=curiosity,
+        authority_title=authority,
+        contrarian_title=contrarian,
+    )
+
+
 def run_autopilot_pipeline(
     target_url: str = "",
     settings: Settings = None,
@@ -89,6 +124,7 @@ def run_autopilot_pipeline(
     production_strategy: str = "auto",
     niche_query: str = "",
     local_video_paths: list[Path] | None = None,
+    seo_override: Any | None = None,
 ) -> Generator[tuple[str, int, Any], None, None]:
     """
     Runs the entire pipeline end-to-end for the top `num_videos` videos.
@@ -349,6 +385,7 @@ def run_autopilot_pipeline(
                         output_dir=ap_settings.output_dir,
                         report_cb=lambda msg: None,
                     )
+                    seo = _apply_seo_override(seo, seo_override)
                     record_processed_video(
                         video_id=f"{best_video.video_id}_ai_{ai_i + 1}",
                         url=best_video.url,
@@ -517,6 +554,7 @@ def run_autopilot_pipeline(
                             output_dir=ap_settings.output_dir,
                             report_cb=lambda msg: None,
                         )
+                        seo = _apply_seo_override(seo, seo_override)
                         record_processed_video(
                             video_id=f"{best_video.video_id}_ai_{ai_i + 1}",
                             url=best_video.url,
@@ -725,6 +763,7 @@ def run_autopilot_pipeline(
                         output_dir=ap_settings.output_dir,
                         report_cb=lambda msg: None,
                     )
+                    seo = _apply_seo_override(seo, seo_override)
                     record_processed_video(
                         video_id=f"{best_video.video_id}_c{best_clip.index}",
                         url=best_video.url,
@@ -795,6 +834,7 @@ def run_autopilot_pipeline(
                         report_cb=lambda msg: None,
                         research_dossier=dossier,
                     )
+                    seo = _apply_seo_override(seo, seo_override)
                     record_processed_video(
                         video_id=f"{best_video.video_id}_c{best_clip.index}",
                         url=best_video.url,
@@ -893,6 +933,7 @@ def run_autopilot_pipeline(
             seo = best_clip.seo if (best_clip.seo and best_clip.seo.title) else generate_seo(
                 transcript_text=sub_transcript_text, api_key=settings.gemini_api_key
             )
+            seo = _apply_seo_override(seo, seo_override)
 
             record_processed_video(
                 video_id=f"{best_video.video_id}_c{best_clip.index}",
